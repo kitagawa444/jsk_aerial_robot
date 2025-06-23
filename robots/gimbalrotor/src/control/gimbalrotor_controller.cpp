@@ -175,14 +175,32 @@ namespace aerial_robot_control
       }
 
     /* vectoring force mapping */
+    // change!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // Eigen::MatrixXd integrated_map_inv = aerial_robot_model::pseudoinverse(integrated_map);
+    // integrated_map_inv_trans_ = integrated_map_inv.leftCols(underactuate_ ? 1 : 3);
+    // integrated_map_inv_rot_ = integrated_map_inv.rightCols(3);
+    // if(underactuate_)
+    //   target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog(0);
+    // else
+    //   target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog.topRows(3);
+    // target_vectoring_f_rot_ = integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3); //debug
+    // last_col = 0;
+
+    Eigen::MatrixXd I = Eigen::MatrixXd::Identity(8, 8);
+    double coeff1 = 1.0;
+    double coeff2 = 0.0;
+    Eigen::MatrixXd integrated_map_trans = integrated_map.topRows(3); // 並進成分（上部3行）
+    Eigen::MatrixXd integrated_map_rot = integrated_map.bottomRows(3); // 回転成分（下部3行）
     Eigen::MatrixXd integrated_map_inv = aerial_robot_model::pseudoinverse(integrated_map);
     integrated_map_inv_trans_ = integrated_map_inv.leftCols(underactuate_ ? 1 : 3);
     integrated_map_inv_rot_ = integrated_map_inv.rightCols(3);
     if(underactuate_)
       target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog(0);
     else
-      target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog.topRows(3);
-    target_vectoring_f_rot_ = integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3); //debug
+      target_vectoring_f_trans_ = coeff1 * (integrated_map_inv_trans_ * target_wrench_acc_cog.topRows(3)) + coeff2 * (I - integrated_map_inv_trans_ * integrated_map_trans) * target_vectoring_f_trans_prev_;
+    target_vectoring_f_trans_prev_ = target_vectoring_f_trans_;
+    target_vectoring_f_rot_ = coeff1 * (integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3)) + coeff2 * (I - integrated_map_inv_rot_ * integrated_map_rot) * target_vectoring_f_rot_prev_; //debug
+    target_vectoring_f_rot_prev_ = target_vectoring_f_rot_;
     last_col = 0;
 
     /* under actuated axis  */

@@ -45,6 +45,9 @@ namespace aerial_robot_control
     Eigen::VectorXd target_vectoring_f_;
     Eigen::VectorXd target_vectoring_f_trans_;
     Eigen::VectorXd target_vectoring_f_rot_;
+    Eigen::VectorXd target_vectoring_f_prev_ = Eigen::VectorXd::Zero(8);
+    Eigen::VectorXd target_vectoring_f_trans_prev_ = Eigen::VectorXd::Zero(8);
+    Eigen::VectorXd target_vectoring_f_rot_prev_ = Eigen::VectorXd::Zero(8);
     Eigen::MatrixXd integrated_map_inv_trans_;
     Eigen::MatrixXd integrated_map_inv_rot_;
     double candidate_yaw_term_;
