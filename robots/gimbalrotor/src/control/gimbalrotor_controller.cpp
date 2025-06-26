@@ -90,9 +90,10 @@ namespace aerial_robot_control
     double target_ang_acc_y = pid_controllers_.at(PITCH).result();
     double target_ang_acc_z = pid_controllers_.at(YAW).result();
     Eigen::Matrix3d inertia = gimbalrotor_robot_model_->getInertia<Eigen::Matrix3d>();
+    Eigen::Matrix3d inertia_inv = inertia.inverse();
     Eigen::Vector3d omega;
     tf::vectorTFToEigen(omega_, omega);
-    Eigen::Vector3d gyro = omega.cross(inertia * omega);
+    Eigen::Vector3d gyro = inertia_inv * omega.cross(inertia * omega);
 
     if(gimbal_calc_in_fc_)
       target_wrench_acc_cog.tail(3) = Eigen::Vector3d(target_ang_acc_x, target_ang_acc_y, target_ang_acc_z);
@@ -119,8 +120,6 @@ namespace aerial_robot_control
     Eigen::MatrixXd full_q_mat = Eigen::MatrixXd::Zero(6, 3 * motor_num_);
 
     double mass_inv = 1 / gimbalrotor_robot_model_->getMass();
-
-    Eigen::Matrix3d inertia_inv = inertia.inverse();
 
     std::vector<Eigen::Vector3d> rotors_origin_from_cog = gimbalrotor_robot_model_->getRotorsOriginFromCog<Eigen::Vector3d>();
     const auto& rotor_direction = gimbalrotor_robot_model_->getRotorDirection();
