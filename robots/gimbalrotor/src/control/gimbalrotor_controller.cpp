@@ -32,6 +32,8 @@ namespace aerial_robot_control
     gimbal_state_pub_ = nh_.advertise<sensor_msgs::JointState>("joint_states", 1);
     target_vectoring_force_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("debug/target_vectoring_force", 1);
     rpy_gain_pub_ = nh_.advertise<spinal::RollPitchYawTerms>("rpy/gain", 1);
+    robot_inertia_matrix_pub_ = nh_.advertise<spinal::RobotInertiaMatrix>("robot_inertia_matrix", 1);
+    robot_inertia_matrix_inv_pub_ = nh_.advertise<spinal::RobotInertiaMatrixInv>("robot_inertia_matrix_inv", 1);
     torque_allocation_matrix_inv_pub_ = nh_.advertise<spinal::TorqueAllocationMatrixInv>("torque_allocation_matrix_inv", 1);
     gimbal_dof_pub_ = nh_.advertise<std_msgs::UInt8>("gimbal_dof", 1);
   }
@@ -81,7 +83,7 @@ namespace aerial_robot_control
     double target_ang_acc_x = pid_controllers_.at(ROLL).result();
     double target_ang_acc_y = pid_controllers_.at(PITCH).result();
     double target_ang_acc_z = pid_controllers_.at(YAW).result();
-    Eigen::Matrix3d inertia = gimbalrotor_robot_model_->getInertia<Eigen::Matrix3d>();
+    inertia = gimbalrotor_robot_model_->getInertia<Eigen::Matrix3d>();
     Eigen::Vector3d omega;
     tf::vectorTFToEigen(omega_, omega);
     Eigen::Vector3d gyro = omega.cross(inertia * omega);
@@ -245,6 +247,7 @@ namespace aerial_robot_control
 
     if(gimbal_calc_in_fc_){
       sendTorqueAllocationMatrixInv();
+      sendRobotInertia();
     }
     else
       {
@@ -332,6 +335,39 @@ namespace aerial_robot_control
       }
     torque_allocation_matrix_inv_pub_.publish(torque_allocation_matrix_inv_msg);
   }
+
+ void GimbalrotorController::sendRobotInertia()
+{
+  // Publish the robot inertia matrix as int[6]
+  spinal::RobotInertiaMatrix robot_inertia_msg;
+  Eigen::Matrix3d inertia_mat = inertia;
+
+  // Fill the message with the inertia matrix values in row-major order
+  robot_inertia_msg.data[0] = inertia_mat(0, 0) * 1000;
+  robot_inertia_msg.data[1] = inertia_mat(0, 1) * 1000;
+  robot_inertia_msg.data[2] = inertia_mat(0, 2) * 1000;
+  robot_inertia_msg.data[3] = inertia_mat(1, 0) * 1000;
+  robot_inertia_msg.data[4] = inertia_mat(1, 1) * 1000;
+  robot_inertia_msg.data[5] = inertia_mat(1, 2) * 1000;
+
+  robot_inertia_matrix_pub_.publish(robot_inertia_msg);
+
+  // Publish the inverse of the robot inertia matrix as int[6]
+  spinal::RobotInertiaMatrixInv robot_inertia_inv_msg;
+  Eigen::Matrix3d inertia_mat_inv = inertia_mat.inverse();
+
+  // Fill the message with the inverse inertia matrix values in row-major order
+  robot_inertia_inv_msg.data[0] = inertia_mat_inv(0, 0) * 1000;
+  robot_inertia_inv_msg.data[1] = inertia_mat_inv(0, 1) * 1000;
+  robot_inertia_inv_msg.data[2] = inertia_mat_inv(0, 2) * 1000;
+  robot_inertia_inv_msg.data[3] = inertia_mat_inv(1, 0) * 1000;
+  robot_inertia_inv_msg.data[4] = inertia_mat_inv(1, 1) * 1000;
+  robot_inertia_inv_msg.data[5] = inertia_mat_inv(1, 2) * 1000;
+
+  robot_inertia_matrix_inv_pub_.publish(robot_inertia_inv_msg);
+}
+
+
 
   void GimbalrotorController::setAttitudeGains()
   {

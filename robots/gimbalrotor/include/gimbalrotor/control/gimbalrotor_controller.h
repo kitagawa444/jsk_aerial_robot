@@ -9,6 +9,8 @@
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/UInt32.h>
 #include <gimbalrotor/model/gimbalrotor_robot_model.h>
+#include <spinal/RobotInertiaMatrix.h>
+#include <spinal/RobotInertiaMatrixInv.h>
 
 namespace aerial_robot_control
 {
@@ -31,6 +33,8 @@ namespace aerial_robot_control
     ros::Publisher gimbal_state_pub_;
     ros::Publisher target_vectoring_force_pub_;
     ros::Publisher rpy_gain_pub_; //for spinal
+    ros::Publisher robot_inertia_matrix_pub_; //for spinal
+    ros::Publisher robot_inertia_matrix_inv_pub_; //for spinal
     ros::Publisher torque_allocation_matrix_inv_pub_; //for spinal
     ros::Publisher gimbal_dof_pub_; //for spinal
 
@@ -50,6 +54,8 @@ namespace aerial_robot_control
     bool gimbal_calc_in_fc_;
     bool underactuate_;
     double target_roll_ = 0.0, target_pitch_ = 0.0;
+    Eigen::Matrix3d inertia ;
+
 
     void rosParamInit();
     bool update() override;
@@ -59,6 +65,7 @@ namespace aerial_robot_control
     void sendFourAxisCommand();
     void sendGimbalCommand();
     void sendTorqueAllocationMatrixInv();
+    void sendRobotInertia();
     void setAttitudeGains();
 
   };

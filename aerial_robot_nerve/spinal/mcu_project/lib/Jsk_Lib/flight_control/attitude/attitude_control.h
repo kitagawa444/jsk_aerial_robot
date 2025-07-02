@@ -52,6 +52,8 @@
 #include <spinal/UavInfo.h>
 #include <spinal/PMatrixPseudoInverseWithInertia.h>
 #include <spinal/TorqueAllocationMatrixInv.h>
+#include <spinal/RobotInertiaMatrix.h>
+#include <spinal/RobotInertiaMatrixInv.h>
 
 #define IDLE_DUTY 0.5f
 #define FORCE_LANDING_INTEGRAL 0.0025f // 500Hz * 0.0025 = 1.25 N / sec
@@ -133,6 +135,8 @@ private:
   ros::Subscriber pwm_test_sub_;
   ros::Subscriber p_matrix_pseudo_inverse_inertia_sub_;
   ros::Subscriber torque_allocation_matrix_inv_sub_;
+  ros::Subscriber robot_inertia_matrix_sub_;
+  ros::Subscriber robot_inertia_matrix_inv_sub_;
   ros::Subscriber sim_vol_sub_;
   ros::Subscriber offset_rot_sub_;
   ros::Publisher anti_gyro_pub_;
@@ -150,6 +154,9 @@ private:
   ros::Subscriber<spinal::PwmTest, AttitudeController> pwm_test_sub_;
   ros::Subscriber<spinal::PMatrixPseudoInverseWithInertia, AttitudeController> p_matrix_pseudo_inverse_inertia_sub_;
   ros::Subscriber<spinal::TorqueAllocationMatrixInv, AttitudeController> torque_allocation_matrix_inv_sub_;
+  ros::Subscriber<spinal::RobotInertiaMatrix, AttitudeController> robot_inertia_matrix_sub_;
+  ros::Subscriber<spinal::RobotInertiaMatrixInv, AttitudeController> robot_inertia_matrix_inv_sub_;
+
   ros::Subscriber<spinal::DesireCoord, AttitudeController> offset_rot_sub_;
   ros::ServiceServer<std_srvs::SetBool::Request, std_srvs::SetBool::Response, AttitudeController> att_control_srv_;
 
@@ -191,6 +198,9 @@ private:
   float thrust_i_gain_[MAX_MOTOR_NUMBER][3];
   float thrust_d_gain_[MAX_MOTOR_NUMBER][3];
   float torque_allocation_matrix_inv_[MAX_MOTOR_NUMBER][3];
+  float robot_inertia_matrix_[6];
+  float robot_inertia_matrix_inv_[6];
+
   float base_thrust_term_[MAX_MOTOR_NUMBER]; //[N]
   float roll_pitch_term_[MAX_MOTOR_NUMBER]; //[N]
   float yaw_term_[MAX_MOTOR_NUMBER]; //[N]
@@ -203,6 +213,7 @@ private:
   // Gyro Moment Compensation
   float p_matrix_pseudo_inverse_[MAX_MOTOR_NUMBER][4];
   ap::Matrix3f inertia_;
+  ap::Matrix3f inertia_inv_;
 
   // Failsafe
   bool failsafe_;
@@ -231,6 +242,9 @@ private:
   void rpyGainCallback( const spinal::RollPitchYawTerms &gain_msg);
   void pMatrixInertiaCallback(const spinal::PMatrixPseudoInverseWithInertia& msg);
   void torqueAllocationMatrixInvCallback(const spinal::TorqueAllocationMatrixInv& msg);
+  void robotInertiaMatrixCallback(const spinal::RobotInertiaMatrix& msg);
+  void robotInertiaMatrixInvCallback(const spinal::RobotInertiaMatrixInv& msg);
+  
   void offsetRotCallback(const spinal::DesireCoord& msg);
 
   void thrustGainMapping();

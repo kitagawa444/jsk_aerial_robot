@@ -33,6 +33,8 @@ void AttitudeController::init(ros::NodeHandle* nh, StateEstimate* estimator)
   pwm_test_sub_ = nh_->subscribe("pwm_test", 1, &AttitudeController::pwmTestCallback, this);
   att_control_srv_ = nh_->advertiseService("set_attitude_control", &AttitudeController::setAttitudeControlCallback, this);
   torque_allocation_matrix_inv_sub_ = nh_->subscribe("torque_allocation_matrix_inv", 1, &AttitudeController::torqueAllocationMatrixInvCallback, this);
+  robot_inertia_matrix_sub_ = nh_->subscribe("robot_inertia_matrix", 1, &AttitudeController::robotInertiaMatrixCallback, this);
+  robot_inertia_matrix_inv_sub_ = nh_->subscribe("robot_inertia_matrix_inv", 1, &AttitudeController::robotInertiaMatrixInvCallback, this);
   sim_vol_sub_ = nh_->subscribe("set_sim_voltage", 1, &AttitudeController::setSimVolCallback, this);
   offset_rot_sub_ = nh_->subscribe("desire_coordinate", 1, &AttitudeController::offsetRotCallback, this);
   baseInit();
@@ -51,6 +53,8 @@ AttitudeController::AttitudeController():
   pwm_test_sub_("pwm_test", &AttitudeController::pwmTestCallback, this ),
   p_matrix_pseudo_inverse_inertia_sub_("p_matrix_pseudo_inverse_inertia", &AttitudeController::pMatrixInertiaCallback, this),
   torque_allocation_matrix_inv_sub_("torque_allocation_matrix_inv", &AttitudeController::torqueAllocationMatrixInvCallback, this),
+  robotInertiaMatrixCallback_("robot_inertia_matrix", &AttitudeController::robotInertiaMatrixCallback, this),
+  robotInertiaMatrixInvCallback_("robot_inertia_matrix_inv", &AttitudeController::robotInertiaMatrixInvCallback, this),
   offset_rot_sub_("desire_coordinate", &AttitudeController::offsetRotCallback, this ),
   att_control_srv_("set_attitude_control", &AttitudeController::setAttitudeControlCallback, this),
   esc_telem_pub_("esc_telem", &esc_telem_msg_)
@@ -119,6 +123,8 @@ void AttitudeController::init(TIM_HandleTypeDef* htim1, TIM_HandleTypeDef* htim2
   nh_->subscribe(pwm_test_sub_);
   nh_->subscribe(p_matrix_pseudo_inverse_inertia_sub_);
   nh_->subscribe(torque_allocation_matrix_inv_sub_);
+  nh_->subscribe(robotInertiaMatrixCallback_);
+  nh_->subscribe(robotInertiaMatrixInvCallback_);
   nh_->subscribe(offset_rot_sub_);
 
   nh_->advertiseService(att_control_srv_);
@@ -348,7 +354,7 @@ void AttitudeController::update(void)
       // linear control method
       {
         /* gyro moment */
-        ap::Vector3f gyro_moment = vel % (inertia_ * vel);
+        ap::Vector3f gyro_moment =  inertia_inv_ * vel % (inertia_ * vel);
 #ifdef SIMULATION
         std_msgs::Float32MultiArray anti_gyro_msg;
 #endif
@@ -370,7 +376,6 @@ void AttitudeController::update(void)
                 control_feedback_state_msg_.pitch_p = error_angle[axis] * 1000;
                 control_feedback_state_msg_.pitch_i = error_angle_i_[axis] * 1000;
                 control_feedback_state_msg_.pitch_d = vel[axis]  * 1000;
-
               }
             if(axis == Z)
               {
@@ -410,19 +415,16 @@ void AttitudeController::update(void)
               }
 
             /* gyro moment compensation */
-            float gyro_moment_compensate =
-              p_matrix_pseudo_inverse_[i][0] * gyro_moment.x +
-              p_matrix_pseudo_inverse_[i][1] * gyro_moment.y +
-              p_matrix_pseudo_inverse_[i][2] * gyro_moment.z;
-            roll_pitch_term_[i] += gyro_moment_compensate;
+            roll_pitch_term_[i] += gyro_moment[0] + gyro_moment[1];
+            yaw_term_[i] += gyro_moment[2];
 
 #ifdef SIMULATION
-            anti_gyro_msg.data.push_back(gyro_moment_compensate);
+            // anti_gyro_msg.data.push_back(gyro_moment);
 #endif
           }
 
 #ifdef SIMULATION
-        anti_gyro_pub_.publish(anti_gyro_msg);
+        // anti_gyro_pub_.publish(gyro_moment);
 #endif
       }
 
@@ -726,6 +728,41 @@ void AttitudeController::maxYawGainIndex()
     }
 }
 
+void AttitudeController::robotInertiaMatrixCallback(const spinal::RobotInertiaMatrix & msg)
+{
+#ifndef SIMULATION
+  /* mutex to protect the completion of following update  */
+  if(mutex_ != NULL) osMutexWait(*mutex_, osWaitForever);
+#endif
+
+  inertia_ = ap::Matrix3f(msg.data[0] * 0.001f, msg.data[3] * 0.001f, msg.data[5] * 0.001f,
+                          msg.data[3] * 0.001f, msg.data[1] * 0.001f, msg.data[4] * 0.001f,
+                          msg.data[5] * 0.001f, msg.data[4] * 0.001f, msg.data[2] * 0.001f);
+
+#ifndef SIMULATION
+  /* mutex to protect the completion of following update  */
+  if(mutex_ != NULL) osMutexRelease(*mutex_);
+#endif
+}
+
+void AttitudeController::robotInertiaMatrixInvCallback(const spinal::RobotInertiaMatrixInv & msg)
+{
+#ifndef SIMULATION
+  /* mutex to protect the completion of following update  */
+  if(mutex_ != NULL) osMutexWait(*mutex_, osWaitForever);
+#endif
+
+  inertia_inv_ = ap::Matrix3f(msg.data[0] * 0.001f, msg.data[3] * 0.001f, msg.data[5] * 0.001f,
+                          msg.data[3] * 0.001f, msg.data[1] * 0.001f, msg.data[4] * 0.001f,
+                          msg.data[5] * 0.001f, msg.data[4] * 0.001f, msg.data[2] * 0.001f);
+
+#ifndef SIMULATION
+  /* mutex to protect the completion of following update  */
+  if(mutex_ != NULL) osMutexRelease(*mutex_);
+#endif
+}
+
+
 void AttitudeController::pwmTestCallback(const spinal::PwmTest& pwm_msg)
 {
 #ifndef SIMULATION  
@@ -866,10 +903,10 @@ void AttitudeController::pMatrixInertiaCallback(const spinal::PMatrixPseudoInver
       p_matrix_pseudo_inverse_[i][2] = msg.pseudo_inverse[i].y * 0.001f;
     }
 
-  /* inertia */
-  inertia_ = ap::Matrix3f(msg.inertia[0] * 0.001f, msg.inertia[3] * 0.001f, msg.inertia[5] * 0.001f,
-                          msg.inertia[3] * 0.001f, msg.inertia[1] * 0.001f, msg.inertia[4] * 0.001f,
-                          msg.inertia[5] * 0.001f, msg.inertia[4] * 0.001f, msg.inertia[2] * 0.001f);
+  // /* inertia */
+  // inertia_ = ap::Matrix3f(msg.inertia[0] * 0.001f, msg.inertia[3] * 0.001f, msg.inertia[5] * 0.001f,
+  //                         msg.inertia[3] * 0.001f, msg.inertia[1] * 0.001f, msg.inertia[4] * 0.001f,
+  //                         msg.inertia[5] * 0.001f, msg.inertia[4] * 0.001f, msg.inertia[2] * 0.001f);
 
 #ifndef SIMULATION
   /* mutex to protect the completion of following update  */
