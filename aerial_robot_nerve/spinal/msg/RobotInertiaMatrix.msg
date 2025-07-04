@@ -1,1 +1,1 @@
-int16[6] data  # xx, yy, zz, xy, yz, xz
+int32[6] data  # xx, yy, zz, xy, yz, xz

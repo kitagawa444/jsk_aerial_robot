@@ -341,10 +341,10 @@ namespace aerial_robot_control
   // Publish the robot inertia matrix as int[6]
   spinal::RobotInertiaMatrix robot_inertia_msg;
   Eigen::Matrix3d inertia_mat = inertia;
-  // printf("Inertia matrix:\n%f %f %f\n%f %f %f\n%f %f %f\n",
-  //       inertia_mat(0, 0), inertia_mat(0, 1), inertia_mat(0, 2),
-  //       inertia_mat(1, 0), inertia_mat(1, 1), inertia_mat(1, 2),
-  //       inertia_mat(2, 0), inertia_mat(2, 1), inertia_mat(2, 2));
+  printf("Inertia matrix:\n%f %f %f\n%f %f %f\n%f %f %f\n",
+        inertia_mat(0, 0), inertia_mat(0, 1), inertia_mat(0, 2),
+        inertia_mat(1, 0), inertia_mat(1, 1), inertia_mat(1, 2),
+        inertia_mat(2, 0), inertia_mat(2, 1), inertia_mat(2, 2));
 
   // Fill the message with the inertia matrix values in row-major order
   robot_inertia_msg.data[0] = inertia_mat(0, 0) * 1000;
@@ -360,19 +360,22 @@ namespace aerial_robot_control
   spinal::RobotInertiaMatrixInv robot_inertia_inv_msg;
   Eigen::Matrix3d inertia_mat_inv = inertia_mat.inverse();
 
-  // printf("Inverse inertia matrix:\n%f %f %f\n%f %f %f\n%f %f %f\n",
-  //       inertia_mat_inv(0, 0), inertia_mat_inv(0, 1), inertia_mat_inv(0, 2),
-  //       inertia_mat_inv(1, 0), inertia_mat_inv(1, 1), inertia_mat_inv(1, 2),
-  //       inertia_mat_inv(2, 0), inertia_mat_inv(2, 1), inertia_mat_inv(2, 2));
+  printf("Inverse inertia matrix:\n%f %f %f\n%f %f %f\n%f %f %f\n",
+        inertia_mat_inv(0, 0), inertia_mat_inv(0, 1), inertia_mat_inv(0, 2),
+        inertia_mat_inv(1, 0), inertia_mat_inv(1, 1), inertia_mat_inv(1, 2),
+        inertia_mat_inv(2, 0), inertia_mat_inv(2, 1), inertia_mat_inv(2, 2));
 
   // Fill the message with the inverse inertia matrix values in row-major order
-  robot_inertia_inv_msg.data[0] = inertia_mat_inv(0, 0) * 1000;
-  robot_inertia_inv_msg.data[1] = inertia_mat_inv(1, 1) * 1000;
-  robot_inertia_inv_msg.data[2] = inertia_mat_inv(2, 2) * 1000;
-  robot_inertia_inv_msg.data[3] = inertia_mat_inv(0, 1) * 1000;
-  robot_inertia_inv_msg.data[4] = inertia_mat_inv(1, 2) * 1000;
-  robot_inertia_inv_msg.data[5] = inertia_mat_inv(2, 0) * 1000;
+  robot_inertia_inv_msg.data[0] = static_cast<int>(round(inertia_mat_inv(0, 0) * 1000));
+  robot_inertia_inv_msg.data[1] = static_cast<int>(round(inertia_mat_inv(1, 1) * 1000));
+  robot_inertia_inv_msg.data[2] = static_cast<int>(round(inertia_mat_inv(2, 2) * 1000));
+  robot_inertia_inv_msg.data[3] = static_cast<int>(round(inertia_mat_inv(0, 1) * 1000));
+  robot_inertia_inv_msg.data[4] = static_cast<int>(round(inertia_mat_inv(1, 2) * 1000));
+  robot_inertia_inv_msg.data[5] = static_cast<int>(round(inertia_mat_inv(2, 0) * 1000));
 
+  printf("Inverse inertia matrix (scaled):\n%d %d %d\n%d %d %d\n",
+        robot_inertia_inv_msg.data[0], robot_inertia_inv_msg.data[1], robot_inertia_inv_msg.data[2],
+         robot_inertia_inv_msg.data[3], robot_inertia_inv_msg.data[4], robot_inertia_inv_msg.data[5]);
   robot_inertia_matrix_inv_pub_.publish(robot_inertia_inv_msg);
 }
 
