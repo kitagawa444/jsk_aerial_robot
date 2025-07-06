@@ -32,7 +32,7 @@
             izz="0.00468030" />
       </inertial>
       <visual>
-        <origin xyz="0 0 -0.0165" rpy="0 0 0"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
           <mesh filename="package://gimbalrotor/urdf/bee/mesh/base_link.STL"/>
         </geometry>
@@ -60,7 +60,7 @@
     <joint name="fc_joint" type="fixed">
       <child link="fc"/>
       <parent link="base_link"/>
-      <origin rpy="0 0 0" xyz="-0.0175 0 0.0375"/>
+      <origin rpy="0 0 0" xyz="-0.0175 0 0.0540"/>
       <axis xyz="0 0 1"/>
     </joint>
 
@@ -79,7 +79,7 @@
     <joint name="base_arm_joint${child1}" type="fixed">
       <parent link="base_link"/>
       <child link="rotor_arm${child1}"/>
-      <origin rpy="0 0 ${pi/4}" xyz="0.036 0.036 0.0"/>
+      <origin rpy="0 0 ${pi/4}" xyz="0.036 0.036 0.0165"/>
       <axis xyz="0 0 1"/>
     </joint>
 
@@ -96,7 +96,7 @@
     <joint name="base_arm_joint${child2}" type="fixed">
       <parent link="base_link"/>
       <child link="rotor_arm${child2}"/>
-      <origin rpy="0 0 ${3*pi/4}" xyz="-0.036 0.036 0.0"/>
+      <origin rpy="0 0 ${3*pi/4}" xyz="-0.036 0.036 0.0165"/>
       <axis xyz="0 0 1"/>
     </joint>
 
@@ -113,7 +113,7 @@
     <joint name="base_arm_joint${child3}" type="fixed">
       <parent link="base_link"/>
       <child link="rotor_arm${child3}"/>
-      <origin rpy="0 0 -${1/4*pi}" xyz="0.036 -0.036 0.0"/>
+      <origin rpy="0 0 -${1/4*pi}" xyz="0.036 -0.036 0.0165"/>
       <axis xyz="0 0 1"/>
     </joint>
 
@@ -130,7 +130,7 @@
     <joint name="base_arm_joint${child4}" type="fixed">
       <parent link="base_link"/>
       <child link="rotor_arm${child4}"/>
-      <origin rpy="0 0 -${3/4*pi}" xyz="-0.036 -0.036 0.0"/>
+      <origin rpy="0 0 -${3/4*pi}" xyz="-0.036 -0.036 0.0165"/>
       <axis xyz="0 0 1"/>
     </joint>
 
