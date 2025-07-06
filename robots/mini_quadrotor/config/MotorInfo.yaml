@@ -1,24 +1,37 @@
-motor_info: # TODO: update
-        min_pwm: 0.6 # 1200 [ms]
-        max_pwm: 0.975 # 1950 [ms]
-        min_thrust: 0 #  [N]
-        force_landing_thrust: 1.0 #[N]
-        pwm_conversion_mode: 1 # Polynominal Mode
-        vel_ref_num: 2
-        ref1:
-                voltage: 11
-                max_thrust: 7.2 # N
-                polynominal4: -168.952346    #  -0.0168952346 x10^4
-                polynominal3: 308.7473666    #   0.3087473666 x10^3
-                polynominal2: -203.28702334  #  -2.0328702334 x10^2
-                polynominal1: 106.787265636  #  10.6787265636 x10
-                polynominal0: 56.3518258750  #  56.3518258750 x1
+motor_info:
+        min_pwm: 0.5 # = 1000 [ms]
+        max_pwm: 0.95 #0.92 # = 1840 [ms]             
+        min_thrust: 2.0 #[N]
+        force_landing_thrust: 6.0 #[N]
+        m_f_rate: -0.0113 # should be zero, because of the dual rotor
+        pwm_conversion_mode: 0 # Polynominal Mode
+        vel_ref_num: 4
+        
+        ref1:        
+                voltage: 25.2
+                max_thrust: 15.30 #20.26
+                polynominal2: 0.031041913 # x10^2
+                polynominal1: -0.778073161 # x10
+                polynominal0: -4.7654610721 # x1
         ref2:
-                voltage: 12
-                max_thrust: 8.0 # N
-                polynominal4: -39.838825     #  -0.0039838825 x10^4
-                polynominal3: 112.1897517    #   0.1121897517 x10^3
-                polynominal2: -101.84075291  #  -1.0184075291 x10^2
-                polynominal1:  81.582961230  #   8.1582961230 x10
-                polynominal0:  56.9010618089 #  56.9010618089 x1
+                voltage: 24.2
+                max_thrust: 14.69 #18.07
+                polynominal2: 0.033128306 # x10^2
+                polynominal1: -1.266340150 # x10
+                polynominal0: -2.6877971508 # x1
+        ref3:
+                voltage: 23.2
+                max_thrust: 13.8 #17.35
+                polynominal2: 0.032405393 # x10^2
+                polynominal1: -1.436591507 # x10
+                polynominal0: -1.4498614161 # x1 
+        ref4:        
+                voltage: 22.2
+                max_thrust: 13.16 #15.91
+                polynominal2: 0.037290157 # x10^2
+                polynominal1: -2.355944130 # x10
+                polynominal0: 2.2934849178 # x1
 
+        # for simualtion
+        rotor_damping_rate: 0.1 # = 0.001 / (0.01 + 0.001); 0.01: time constant; 0.001: dt
+        rotor_force_noise: 0.01 # [N] but good performance in gazebo
