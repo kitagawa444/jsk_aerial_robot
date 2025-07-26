@@ -41,6 +41,7 @@ namespace aerial_robot_control
     std::vector<float> target_base_thrust_;
     std::vector<float> target_full_thrust_;
     std::vector<double> target_gimbal_angles_;
+    std::vector<double> trans_gimbal_angles_;
     bool hovering_approximate_;
     Eigen::VectorXd target_vectoring_f_;
     Eigen::VectorXd target_vectoring_f_trans_;
@@ -51,6 +52,7 @@ namespace aerial_robot_control
     int gimbal_dof_;
     int rotor_coef_;
     bool gimbal_calc_in_fc_;
+    bool gimbal_angle_calc_in_fc_;
     bool underactuate_;
     double target_roll_ = 0.0, target_pitch_ = 0.0;
 
