@@ -4,6 +4,7 @@ estimation:
         sensor_list:
         - sensor_plugin/imu
         - sensor_plugin/mocap
+        - sensor_plugin/vo
 
         # egomotion estimation
         egomotion_list:
