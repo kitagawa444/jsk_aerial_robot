@@ -6,7 +6,7 @@
 
 using namespace aerial_robot_model;
 
-class GimbalrotorRobotModel : public aerial_robot_model::RobotModel{
+class GimbalrotorRobotModel : public transformable::RobotModel{
 public:
   GimbalrotorRobotModel(bool init_with_rosparam = true,
                     bool verbose = false,
@@ -18,15 +18,13 @@ public:
   template <class T> std::vector<T> getThrustCoordRot();
 
 private:
+  void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
 
   KDL::JntArray gimbal_processed_joint_;
   std::vector<KDL::Rotation> links_rotation_from_cog_;
   std::vector<KDL::Rotation> thrust_coords_rot_;
   std::mutex links_rotation_mutex_;
   std::mutex thrust_rotation_mutex_;
-
-protected:
-  void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
 
 };
 
