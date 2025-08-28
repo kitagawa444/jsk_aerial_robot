@@ -23,7 +23,6 @@
 #include "aerial_robot_msgs/PredXU.h"
 #include "aerial_robot_msgs/FixRotor.h"
 #include "spinal/FourAxisCommand.h"
-#include "spinal/SetControlMode.h"
 #include "spinal/DesireCoord.h"
 
 /* action */
@@ -63,7 +62,6 @@ protected:
   ros::Publisher pub_flight_cmd_;      // for spinal
   ros::Publisher pub_gimbal_control_;  // for gimbal control
 
-  ros::ServiceClient srv_set_control_mode_;
   std::vector<boost::shared_ptr<NMPCControlDynamicConfig>> nmpc_reconf_servers_;
 
   ros::Subscriber sub_joint_states_;
@@ -72,8 +70,6 @@ protected:
   ros::Subscriber sub_set_traj_;
   ros::Subscriber sub_set_fixed_rotor_;
 
-  bool is_attitude_ctrl_;
-  bool is_body_rate_ctrl_;
   bool is_print_phys_params_;
   bool is_debug_;
 

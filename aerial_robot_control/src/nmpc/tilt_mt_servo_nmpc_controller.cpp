@@ -34,9 +34,6 @@ void nmpc::TiltMtServoNMPC::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   pub_flight_cmd_ = nh_.advertise<spinal::FourAxisCommand>("four_axes/command", 1);
   pub_gimbal_control_ = nh_.advertise<sensor_msgs::JointState>("gimbals_ctrl", 1);
 
-  /* services */
-  srv_set_control_mode_ = nh_.serviceClient<spinal::SetControlMode>("set_control_mode");
-
   /* subscribers */
   sub_joint_states_ = nh_.subscribe("joint_states", 5, &TiltMtServoNMPC::callbackJointStates, this);
   sub_set_rpy_ = nh_.subscribe("set_rpy", 5, &TiltMtServoNMPC::callbackSetRPY, this);
@@ -147,8 +144,6 @@ void nmpc::TiltMtServoNMPC::initGeneralParams()
         "The NMPC sampling time T_samp is not equal to the control loop time! Please set T_step to 1/ctrl_loop_du_ in "
         "the config.");
 
-  getParam<bool>(nmpc_nh, "is_attitude_ctrl", is_attitude_ctrl_, true);
-  getParam<bool>(nmpc_nh, "is_body_rate_ctrl", is_body_rate_ctrl_, false);
   getParam<bool>(nmpc_nh, "is_print_phys_params", is_print_phys_params_, false);
   getParam<bool>(nmpc_nh, "is_debug", is_debug_, false);
 
@@ -290,15 +285,6 @@ void nmpc::TiltMtServoNMPC::setControlMode()
     ROS_ERROR("cannot find service named set_control_mode");
   }
   ros::Duration(2.0).sleep();
-  spinal::SetControlMode set_control_mode_srv;
-  set_control_mode_srv.request.is_attitude = is_attitude_ctrl_;
-  set_control_mode_srv.request.is_body_rate = is_body_rate_ctrl_;
-  while (!srv_set_control_mode_.call(set_control_mode_srv))
-    ROS_WARN_THROTTLE(1,
-                      "Waiting for set_control_mode service.... If you always see this message, the robot cannot fly.");
-
-  ROS_INFO("Set control mode: attitude = %d and body rate = %d", set_control_mode_srv.request.is_attitude,
-           set_control_mode_srv.request.is_body_rate);
 }
 
 void nmpc::TiltMtServoNMPC::initAllocMat()

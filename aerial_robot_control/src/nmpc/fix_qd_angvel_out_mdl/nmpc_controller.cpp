@@ -41,8 +41,6 @@ void nmpc_under_act_body_rate::NMPCController::initialize(
   getParam<double>(control_nh, "nmpc/yaw_p_gain", yaw_p_gain, 40.0);
   getParam<double>(control_nh, "nmpc/yaw_d_gain", yaw_d_gain, 1.0);
 
-  getParam<bool>(control_nh, "nmpc/is_attitude_ctrl", is_attitude_ctrl_, true);
-  getParam<bool>(control_nh, "nmpc/is_body_rate_ctrl", is_body_rate_ctrl_, false);
 
   /* timers */
   tmr_viz_ = nh_.createTimer(ros::Duration(0.05), &NMPCController::callbackViz, this);
@@ -56,9 +54,6 @@ void nmpc_under_act_body_rate::NMPCController::initialize(
   pub_p_matrix_pseudo_inverse_inertia_ =
       nh_.advertise<spinal::PMatrixPseudoInverseWithInertia>("p_matrix_pseudo_inverse_inertia", 1);  // tmp
 
-  /* services */
-  srv_set_control_mode_ = nh_.serviceClient<spinal::SetControlMode>("set_control_mode");
-  bool res = ros::service::waitForService("set_control_mode", ros::Duration(5));
 
   /* init some values */
   odom_ = nav_msgs::Odometry();
@@ -71,17 +66,6 @@ void nmpc_under_act_body_rate::NMPCController::initialize(
     ROS_ERROR("cannot find service named set_control_mode");
   }
   ros::Duration(2.0).sleep();
-  spinal::SetControlMode set_control_mode_srv;
-  set_control_mode_srv.request.is_attitude = is_attitude_ctrl_;
-  set_control_mode_srv.request.is_body_rate = is_body_rate_ctrl_;
-  while (!srv_set_control_mode_.call(set_control_mode_srv))
-    ROS_WARN_THROTTLE(1,
-                      "Waiting for set_control_mode service.... If you always see this message, the robot cannot fly.");
-
-  ROS_INFO("Set control mode: attitude = %d and body rate = %d", set_control_mode_srv.request.is_attitude,
-           set_control_mode_srv.request.is_body_rate);
-
-  ROS_INFO("MPC Controller initialized!");
 }
 
 bool nmpc_under_act_body_rate::NMPCController::update()
@@ -330,30 +314,30 @@ void nmpc_under_act_body_rate::NMPCController::sendRPYGain()
   rpy_gain_msg.motors[3].pitch_d = 393;
   rpy_gain_msg.motors[3].yaw_d = -1423;
 
-  if (!is_attitude_ctrl_ && is_body_rate_ctrl_)
-  {
-    ros::NodeHandle control_nh(nh_, "controller");
-    double roll_rate_p_gain, pitch_rate_p_gain, yaw_rate_p_gain;
-    getParam<double>(control_nh, "nmpc/roll_rate_p_gain", roll_rate_p_gain, 0.4);
-    getParam<double>(control_nh, "nmpc/pitch_rate_p_gain", pitch_rate_p_gain, 0.4);
-    getParam<double>(control_nh, "nmpc/yaw_rate_p_gain", yaw_rate_p_gain, 1.5);
+  // if (!is_attitude_ctrl_ && is_body_rate_ctrl_)
+  // {
+  //   ros::NodeHandle control_nh(nh_, "controller");
+  //   double roll_rate_p_gain, pitch_rate_p_gain, yaw_rate_p_gain;
+  //   getParam<double>(control_nh, "nmpc/roll_rate_p_gain", roll_rate_p_gain, 0.4);
+  //   getParam<double>(control_nh, "nmpc/pitch_rate_p_gain", pitch_rate_p_gain, 0.4);
+  //   getParam<double>(control_nh, "nmpc/yaw_rate_p_gain", yaw_rate_p_gain, 1.5);
 
-    rpy_gain_msg.motors[0].roll_d = (short)(-roll_rate_p_gain * 1000);
-    rpy_gain_msg.motors[0].pitch_d = (short)(pitch_rate_p_gain * 1000);
-    rpy_gain_msg.motors[0].yaw_d = (short)(yaw_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[0].roll_d = (short)(-roll_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[0].pitch_d = (short)(pitch_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[0].yaw_d = (short)(yaw_rate_p_gain * 1000);
 
-    rpy_gain_msg.motors[1].roll_d = (short)(-roll_rate_p_gain * 1000);
-    rpy_gain_msg.motors[1].pitch_d = (short)(-pitch_rate_p_gain * 1000);
-    rpy_gain_msg.motors[1].yaw_d = (short)(-yaw_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[1].roll_d = (short)(-roll_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[1].pitch_d = (short)(-pitch_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[1].yaw_d = (short)(-yaw_rate_p_gain * 1000);
 
-    rpy_gain_msg.motors[2].roll_d = (short)(roll_rate_p_gain * 1000);
-    rpy_gain_msg.motors[2].pitch_d = (short)(-pitch_rate_p_gain * 1000);
-    rpy_gain_msg.motors[2].yaw_d = (short)(yaw_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[2].roll_d = (short)(roll_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[2].pitch_d = (short)(-pitch_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[2].yaw_d = (short)(yaw_rate_p_gain * 1000);
 
-    rpy_gain_msg.motors[3].roll_d = (short)(roll_rate_p_gain * 1000);
-    rpy_gain_msg.motors[3].pitch_d = (short)(pitch_rate_p_gain * 1000);
-    rpy_gain_msg.motors[3].yaw_d = (short)(-yaw_rate_p_gain * 1000);
-  }
+  //   rpy_gain_msg.motors[3].roll_d = (short)(roll_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[3].pitch_d = (short)(pitch_rate_p_gain * 1000);
+  //   rpy_gain_msg.motors[3].yaw_d = (short)(-yaw_rate_p_gain * 1000);
+  // }
 
   pub_rpy_gain_.publish(rpy_gain_msg);
 }
