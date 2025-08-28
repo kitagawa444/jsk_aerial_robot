@@ -72,21 +72,25 @@ namespace sensor_plugin
     int calib_count_;
     double acc_scale_, gyro_scale_, mag_scale_; /* the scale of sensor value */
     double level_acc_noise_sigma_, z_acc_noise_sigma_, level_acc_bias_noise_sigma_, z_acc_bias_noise_sigma_, angle_bias_noise_sigma_; /* sigma for kf */
+    double landing_shock_force_thre_;     /* force */
 
     /* sensor internal */
     double sensor_dt_;
 
     /* imu */
+    tf::Vector3 g_b_; /* the *opposite* gravity vector in baselink frame */
     tf::Vector3 omega_; /* the omega both of body frame */
     tf::Vector3 mag_; /* the magnetometer of body frame */
-    tf::Vector3 acc_b_; /* the acceleration in baselink frame */
-    tf::Matrix3x3 raw_rot_; /* the raw rotation matrix from IMU */
     /* acc */
+    tf::Vector3 acc_b_; /* the acceleration in baselink frame */
     std::array<tf::Vector3, 2> acc_w_; /* the acceleration in world frame, for estimate_mode and expriment_mode */
     std::array<tf::Vector3, 2> acc_non_bias_w_; /* the acceleration without bias in world frame for estimate_mode and expriment_mode */
     /* acc bias */
     tf::Vector3 acc_bias_b_; /* the acceleration bias in baselink frame, only use z axis  */
     std::array<tf::Vector3, 2> acc_bias_w_; /* the acceleration bias in world frame for estimate_mode and expriment_mode*/
+
+    /* orientation */
+    std::array<tf::Matrix3x3, 2> cog_rot_, base_rot_;
 
     aerial_robot_msgs::States state_; /* for debug */
 

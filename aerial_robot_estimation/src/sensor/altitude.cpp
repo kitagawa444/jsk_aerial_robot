@@ -335,7 +335,7 @@ namespace sensor_plugin
       switch(range_sensor_sanity_)
         {
         case TOTAL_INSANE:
-          if(!estimator_->getSensorFusionFlag())
+          if(!estimator_->getSensorFusionFlag() || estimator_->getLandedFlag())
             {
               /* this is for the repeat mode */
               if(!estimator_->getSensorFusionFlag()) calibrate_cnt = 0;
@@ -391,7 +391,8 @@ namespace sensor_plugin
             }
           return;
         case POTENTIALLY_INSANE:
-          if(prev_raw_range_pos_z_ < min_range_ + ascending_check_range_ &&
+          if(estimator_->getLandingMode() &&
+             prev_raw_range_pos_z_ < min_range_ + ascending_check_range_ &&
              prev_raw_range_pos_z_ > min_range_ &&
              raw_range_pos_z_ < min_range_ &&
              raw_range_pos_z_ > min_range_ - ascending_check_range_)
@@ -537,12 +538,12 @@ namespace sensor_plugin
                     {
                       state_on_terrain_ = NORMAL;
                       height_offset_ = (kf->getEstimateState())(0) - raw_range_sensor_value_;
+                      /* also update the landing height */
+                      estimator_->setLandingHeight(height_offset_ - range_sensor_offset_);
                       ROS_WARN("We we find the new terrain, the new height_offset is %f", height_offset_);
-                      return true;
                     }
                 }
-              //break;
-              return false;
+              break;
             case MAX_EXCEED:
               /* the sensor value is below the max value ath the MAX_EXCEED state */
               /*we first turn back to ABNORMAL mode to verify the validity of the value */
@@ -579,7 +580,6 @@ namespace sensor_plugin
             }
           return true;
         }
-      return false;
     }
 
     void baroCallback(const spinal::BarometerConstPtr & baro_msg)
@@ -616,6 +616,7 @@ namespace sensor_plugin
           baro_bias_kf_->setInitState(-baro_pos_z_, 0);
         }
       /* reset */
+      if(estimator_->getLandedFlag()) inflight_state_ = false;
       baroEstimateProcess(baro_msg->stamp);
 
       /* publish */

@@ -42,14 +42,13 @@ namespace
   ros::Time prev_time;
 }
 
-using namespace aerial_robot_estimation;
-
 namespace sensor_plugin
 {
   Imu::Imu ():
     sensor_plugin::SensorBase(),
     calib_count_(200),
     acc_b_(0, 0, 0),
+    g_b_(0, 0, 0),
     omega_(0, 0, 0),
     mag_(0, 0, 0),
     acc_bias_b_(0, 0, 0),
@@ -70,7 +69,6 @@ namespace sensor_plugin
     acc_bias_w_.at(0) = tf::Vector3(0, 0, 0);
     acc_bias_w_.at(1) = tf::Vector3(0, 0, 0);
 
-    raw_rot_.setIdentity();
   }
 
   void Imu::initialize(ros::NodeHandle nh,
@@ -94,27 +92,18 @@ namespace sensor_plugin
 
     for(int i = 0; i < 3; i++)
       {
-        if(std::isnan(imu_msg->acc[i]) || std::isnan(imu_msg->gyro[i]) || std::isnan(imu_msg->mag[i]))
+        if(std::isnan(imu_msg->acc_data[i]) || std::isnan(imu_msg->angles[i]) ||
+           std::isnan(imu_msg->gyro_data[i]) || std::isnan(imu_msg->mag_data[i]))
           {
-            ROS_ERROR_THROTTLE(1.0, "IMU plugin receives Nan value in IMU sensors !");
+            ROS_ERROR_THROTTLE(1.0, "IMU sensor publishes Nan value!");
             return;
           }
 
-        acc_b_[i] = imu_msg->acc[i]; // baselink frame
-        omega_[i] = imu_msg->gyro[i];  // baselink frame
-        mag_[i] = imu_msg->mag[i];  // baselink frame
-       }
-
-    if(std::isnan(imu_msg->quaternion[0]) || std::isnan(imu_msg->quaternion[1]) ||
-       std::isnan(imu_msg->quaternion[2]) || std::isnan(imu_msg->quaternion[3]))
-      {
-        ROS_ERROR_THROTTLE(1.0, "IMU plugin receives Nan value in Quaternion!");
-        return;
+        acc_b_[i] = imu_msg->acc_data[i]; // baselink frame
+        omega_[i] = imu_msg->gyro_data[i];  // baselink frame
+        mag_[i] = imu_msg->mag_data[i];  // baselink frame
+        g_b_[i] = imu_msg->angles[i];  // workaround to avoid the singularity of RPY Euler angles.
       }
-
-    tf::Quaternion raw_q(imu_msg->quaternion[0], imu_msg->quaternion[1],
-                         imu_msg->quaternion[2], imu_msg->quaternion[3]);
-    raw_rot_ = tf::Matrix3x3(raw_q);
 
     estimateProcess();
     updateHealthStamp();
@@ -135,59 +124,92 @@ namespace sensor_plugin
     tf::Transform cog2baselink_tf;
     tf::transformKDLToTF(robot_model_->getCog2Baselink<KDL::Frame>(), cog2baselink_tf);
 
-    tf::Vector3 wx_b = raw_rot_.getRow(0);
-    tf::Vector3 wy_b = raw_rot_.getRow(1);
-    tf::Vector3 wz_b = raw_rot_.getRow(2);
+    tf::Vector3 wz_b = g_b_.normalize();
+    tf::Vector3 wx_b = tf::Vector3(0, wz_b.z(), -wz_b.y()); // TODO: change to magnetic one
+    wx_b.normalize();
 
-    tf::Vector3 wz_c = cog2baselink_tf.getBasis() * wz_b;
-    tf::Vector3 omega_c = cog2baselink_tf.getBasis() * omega_;
+    // 1. egomotion estimate mode
+    //  check whether have valid rotation from VO sensor
+    for(const auto& handler: estimator_->getVoHandlers())
+      {
+        if(handler->getStatus() == Status::ACTIVE)
+          {
+            auto vo_handler = boost::dynamic_pointer_cast<sensor_plugin::VisualOdometry>(handler);
 
-    // 1. mode for EGOMOTION_ESTIMATE and EXPERIMENT_ESTIMATE
-    std::map<int, tf::Matrix3x3> rots;
+            if (vo_handler->rotValid())
+              {
+                tf::Matrix3x3 vo_rot = vo_handler->getRawBaselinkTF().getBasis();
+                // we replace the wx_c with the value from VO.
+                wx_b = vo_rot.transpose() * tf::Vector3(1,0,0);
+                break;
+              }
+          }
+      }
+
+    tf::Vector3 wy_b = wz_b.cross(wx_b);
+    wy_b.normalize();
+    tf::Matrix3x3 rot(wx_b.x(), wx_b.y(), wx_b.z(),
+                      wy_b.x(), wy_b.y(), wy_b.z(),
+                      wz_b.x(), wz_b.y(), wz_b.z());
+    base_rot_.at(aerial_robot_estimation::EGOMOTION_ESTIMATE) = rot;
+    estimator_->setOrientation(Frame::BASELINK, aerial_robot_estimation::EGOMOTION_ESTIMATE, rot);
+
+    tf::Matrix3x3 rot_c = rot * cog2baselink_tf.getBasis().transpose();
+    cog_rot_.at(aerial_robot_estimation::EGOMOTION_ESTIMATE) = rot_c;
+    estimator_->setOrientation(Frame::COG, aerial_robot_estimation::EGOMOTION_ESTIMATE, rot_c);
+
+    estimator_->setAngularVel(Frame::COG, aerial_robot_estimation::EGOMOTION_ESTIMATE, cog2baselink_tf.getBasis() * omega_);
+    estimator_->setAngularVel(Frame::BASELINK, aerial_robot_estimation::EGOMOTION_ESTIMATE, omega_);
+
+    // 2. experiment estimate mode
+    if(estimator_->getStateStatus(State::CoG::Rot, aerial_robot_estimation::GROUND_TRUTH))
+      {
+        tf::Matrix3x3 gt_rot = estimator_->getOrientation(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH);
+        wx_b = gt_rot.transpose() * tf::Vector3(1,0,0);
+      }
+
+    wy_b = wz_b.cross(wx_b);
+    wy_b.normalize();
+    rot = tf::Matrix3x3(wx_b.x(), wx_b.y(), wx_b.z(),
+                        wy_b.x(), wy_b.y(), wy_b.z(),
+                        wz_b.x(), wz_b.y(), wz_b.z());
+    base_rot_.at(aerial_robot_estimation::EXPERIMENT_ESTIMATE) = rot;
+    estimator_->setOrientation(Frame::BASELINK, aerial_robot_estimation::EXPERIMENT_ESTIMATE, rot);
+
+    rot_c = rot * cog2baselink_tf.getBasis().transpose();
+    cog_rot_.at(aerial_robot_estimation::EXPERIMENT_ESTIMATE) = rot_c;
+    estimator_->setOrientation(Frame::COG, aerial_robot_estimation::EXPERIMENT_ESTIMATE, rot_c);
+
+    estimator_->setAngularVel(Frame::COG, aerial_robot_estimation::EXPERIMENT_ESTIMATE, cog2baselink_tf.getBasis() * omega_);
+    estimator_->setAngularVel(Frame::BASELINK, aerial_robot_estimation::EXPERIMENT_ESTIMATE, omega_);
+
+    // 3.  ground truth mode
+    if (!estimator_->hasGroundTruthOdom())
+      {
+        /* set baselink angular velocity for all axes using imu omega */
+        estimator_->setAngularVel(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH, omega_);
+        /* set cog angular velocity for all axes using imu omega */
+        estimator_->setAngularVel(Frame::COG, aerial_robot_estimation::GROUND_TRUTH, cog2baselink_tf.getBasis() * omega_);
+      }
+
+    // 4. set the rotation and angular velocity for the temporal queue for other sensor with time delay
+    estimator_->updateQueue(imu_stamp_.toSec(), base_rot_.at(aerial_robot_estimation::EGOMOTION_ESTIMATE),
+                            base_rot_.at(aerial_robot_estimation::EXPERIMENT_ESTIMATE), omega_);
+
+
     for (int i = 0; i < 2; i++)
       {
-        // check if there is a refined (better) yaw estimation handler (e.g. VO, RTK-GPS)
-        if (estimator_->hasRefinedYawEstimate(i))
-          {
-            // only update the wz_b vector (the vector only related to gravity)
-            estimator_->setOrientationWzB(Frame::BASELINK, i, wz_b);
-            estimator_->setOrientationWzB(Frame::COG, i, wz_c);
-          }
-        else
-          {
-            estimator_->setOrientation(Frame::BASELINK, i, raw_rot_);
-            tf::Matrix3x3 rot_c = raw_rot_ * cog2baselink_tf.getBasis().transpose();
-            estimator_->setOrientation(Frame::COG, i, rot_c);
-          }
-
-        // angular velocity
-        estimator_->setAngularVel(Frame::BASELINK, i, omega_);
-        estimator_->setAngularVel(Frame::COG, i, omega_c);
-
-        // re-obtain the rotation and store to a map for later usage
-        rots[i] = estimator_->getOrientation(Frame::BASELINK, i);
-
-        acc_w_.at(i) = rots.at(i) * acc_b_ - tf::Vector3(0, 0, aerial_robot_estimation::G);
+        acc_w_.at(i) = base_rot_.at(i) * acc_b_ - tf::Vector3(0, 0, aerial_robot_estimation::G);
         acc_non_bias_w_.at(i) = acc_w_.at(i) - acc_bias_w_.at(i);
       }
 
-    // 2. mode for GROUND_TRUTH
-    if (!estimator_->hasGroundTruthOdom())
+    if(estimator_->getLandingMode() &&
+       !estimator_->getLandedFlag() &&
+       acc_w_.at(0).z() > landing_shock_force_thre_)
       {
-        // the orientation is set from ground truth plugin (mocap)
-
-        /* set baselink angular velocity for all axes using imu omega */
-        estimator_->setAngularVel(Frame::BASELINK, GROUND_TRUTH, omega_);
-        /* set cog angular velocity for all axes using imu omega */
-        estimator_->setAngularVel(Frame::COG, GROUND_TRUTH, omega_c);
+        ROS_WARN("imu: touch to ground");
+        estimator_->setLandedFlag(true);
       }
-
-    // 3. set the rotation and angular velocity for the temporal queue for other sensor with time delay
-    estimator_->updateQueue(imu_stamp_.toSec(),
-                            rots.at(EGOMOTION_ESTIMATE),
-                            rots.at(EXPERIMENT_ESTIMATE),
-                            omega_);
-
 
     /* bais calibration */
     if(bias_calib < calib_count_)
@@ -211,8 +233,7 @@ namespace sensor_plugin
             for (int i = 0; i < 2; i++)
               acc_bias_w_.at(i) /= calib_count_;
 
-            tf::Matrix3x3 rot_inv = rots.at(EGOMOTION_ESTIMATE).inverse();
-            tf::Vector3 acc_bias_b = rot_inv * acc_bias_w_.at(EGOMOTION_ESTIMATE);
+            tf::Vector3 acc_bias_b = base_rot_.at(aerial_robot_estimation::EGOMOTION_ESTIMATE).inverse() * acc_bias_w_.at(aerial_robot_estimation::EGOMOTION_ESTIMATE);
             ROS_INFO("acc bias w.r.t body frame: [%f, %f, %f], dt: %f[sec]", acc_bias_b.x(), acc_bias_b.y(), acc_bias_b.z(), sensor_dt_);
 
             estimator_->setQueueSize(1/sensor_dt_);
@@ -331,10 +352,10 @@ namespace sensor_plugin
 
                     if(plugin_name == "aerial_robot_base/kf_xy_roll_pitch_bias")
                       {
-                        tf::Matrix3x3 rot = rots.at(mode);
-                        tf::Vector3 acc_bias_b = rot.inverse() * acc_bias_w_.at(mode);
+                        tf::Vector3 acc_bias_b = base_rot_.at(mode).inverse() * acc_bias_w_.at(mode);
 
-                        double r, p, y; rot.getRPY(r, p, y);
+                        double r, p, y;
+                        base_rot_.at(mode).getRPY(r, p, y);
                         if(id & (1 << State::X_BASE) && (id & (1 << State::Y_BASE)))
                           {
                             params.push_back(r);
@@ -368,6 +389,7 @@ namespace sensor_plugin
         for (int i = 0; i < 2; i++)
           estimator_->setState(State::Z_BASE, i, 2, acc_non_bias_w_.at(i).z());
 
+
         /* calculate the state in COG frame using the Baselink frame */
         /* TODO: the joint velocity */
         for (int i = 0; i < 2; i++)
@@ -382,6 +404,7 @@ namespace sensor_plugin
                                * (estimator_->getAngularVel(Frame::BASELINK, i).cross(cog2baselink_tf.inverse().getOrigin())));
           }
 
+
         publishAccData();
         publishRosImuData();
 
@@ -391,15 +414,15 @@ namespace sensor_plugin
           {
             tf::Vector3 pos = estimator_->getPos(Frame::BASELINK, i);
             tf::Vector3 vel = estimator_->getVel(Frame::BASELINK, i);
-            state_.states[0].state[i].x = pos.x();
-            state_.states[1].state[i].x = pos.y();
-            state_.states[2].state[i].x = pos.z();
-            state_.states[0].state[i].y = vel.x();
-            state_.states[1].state[i].y = vel.y();
-            state_.states[2].state[i].y = vel.z();
-            state_.states[0].state[i].z = acc_w_.at(i).x();
-            state_.states[1].state[i].z = acc_w_.at(i).y();
-            state_.states[2].state[i].z = acc_w_.at(i).z();
+            state_.states[0].state[0].x = pos.x();
+            state_.states[1].state[0].x = pos.y();
+            state_.states[2].state[0].x = pos.z();
+            state_.states[0].state[0].y = vel.x();
+            state_.states[1].state[0].y = vel.y();
+            state_.states[2].state[0].y = vel.z();
+            state_.states[0].state[0].z = acc_w_.at(i).x();
+            state_.states[1].state[0].z = acc_w_.at(i).y();
+            state_.states[2].state[0].z = acc_w_.at(i).z();
           }
         state_pub_.publish(state_);
       }
@@ -423,7 +446,7 @@ namespace sensor_plugin
     sensor_msgs::Imu imu_data;
     imu_data.header.stamp = imu_stamp_;
     tf::Quaternion q;
-    raw_rot_.getRotation(q);
+    base_rot_.at(0).getRotation(q);
     tf::quaternionTFToMsg(q, imu_data.orientation);
     tf::vector3TFToMsg(omega_, imu_data.angular_velocity);
     tf::vector3TFToMsg(acc_b_, imu_data.linear_acceleration);
@@ -440,6 +463,7 @@ namespace sensor_plugin
     getParam<double>("z_acc_bias_noise_sigma", z_acc_bias_noise_sigma_, 0.0);
     getParam<double>("angle_bias_noise_sigma", angle_bias_noise_sigma_, 0.001 );
     getParam<double>("calib_time", calib_time_, 2.0 );
+    getParam<double>("landing_shock_force_thre", landing_shock_force_thre_, 5.0 );
 
     /* important scale, record here
        {
