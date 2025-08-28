@@ -16,9 +16,16 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(Eigen3 REQUIRED)
 
+
+#list(APPEND CMAKE_PREFIX_PATH "~/acados/install/cmake")
+find_package(acados) # if we use REQUIED, then will cause OpenBLAS and FortranLib Find_Package error
+
+
 generate_dynamic_reconfigure_options(
   cfg/PID.cfg
   cfg/LQI.cfg
+  cfg/NMPC.cfg
+  cfg/ITerm.cfg
   )
 
 ### Temporary soulition because of https://github.com/ros/ros_comm/issues/1404
@@ -38,7 +45,7 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG")
 
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES control_utils flight_control_pluginlib flight_navigation trajectory_generation
+  LIBRARIES control_utils flight_control_pluginlib flight_navigation wrench_est_plugins
   CATKIN_DEPENDS aerial_robot_estimation aerial_robot_model aerial_robot_msgs dynamic_reconfigure pluginlib roscpp spinal tf
 )
 
@@ -51,8 +58,44 @@ include_directories(
 ### control utils
 add_library(control_utils
   src/control/utils/care.cpp
-  )
+)
 target_link_libraries(control_utils ${EIGEN3_LIBRARIES})
+
+### acados code generation
+add_custom_target(gen_acados_code ALL
+  COMMAND bash ${PROJECT_SOURCE_DIR}/scripts/nmpc/gen_nmpc_code_all.sh
+  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/scripts/nmpc/
+  COMMENT "Generating acados code for NMPC models"
+)
+
+### wrench estimation plugin
+add_library(wrench_est_plugins src/wrench_est/wrench_est_actuator_meas.cpp)
+target_link_libraries(wrench_est_plugins ${catkin_LIBRARIES} acados
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/wrench_est/mhe_wrench_est_acc_mom_mdl/c_generated_code/libacados_ocp_solver_mhe_wrench_est_acc_mom_mdl.so
+)
+add_dependencies(wrench_est_plugins  ${PROJECT_NAME}_gencfg  gen_acados_code)
+
+catkin_install_python(PROGRAMS
+  scripts/wrench_est/viz_ext_wrench_ring.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+### mpc solver plugin
+add_library(mpc_solver_plugins src/nmpc/mpc_solver_plugins.cpp)
+target_link_libraries(mpc_solver_plugins ${catkin_LIBRARIES} acados
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/fix_qd_thrust_out_mdl/c_generated_code/libacados_ocp_solver_fix_qd_thrust_out_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_no_servo_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_no_servo_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_servo_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_dist_mdl/c_generated_code/libacados_sim_solver_tilt_qd_servo_dist_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_dist_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_servo_dist_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_dist_imp_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_servo_dist_imp_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_thrust_dist_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_servo_thrust_dist_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_qd_servo_thrust_dist_imp_mdl/c_generated_code/libacados_ocp_solver_tilt_qd_servo_thrust_dist_imp_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_tri_servo_mdl/c_generated_code/libacados_ocp_solver_tilt_tri_servo_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_bi_servo_mdl/c_generated_code/libacados_ocp_solver_tilt_bi_servo_mdl.so
+        ${PROJECT_SOURCE_DIR}/include/aerial_robot_control/nmpc/tilt_bi_2_ord_servo_mdl/c_generated_code/libacados_ocp_solver_tilt_bi_2_ord_servo_mdl.so
+)
+add_dependencies(mpc_solver_plugins gen_acados_code)
 
 ### flight control plugin
 add_library(flight_control_pluginlib
@@ -60,45 +103,31 @@ add_library(flight_control_pluginlib
   src/control/fully_actuated_controller.cpp
   src/control/under_actuated_controller.cpp
   src/control/under_actuated_lqi_controller.cpp
-  src/control/under_actuated_tilted_lqi_controller.cpp)
-
-target_link_libraries(flight_control_pluginlib ${catkin_LIBRARIES} control_utils)
-add_dependencies(flight_control_pluginlib  ${PROJECT_NAME}_gencfg)
+  src/control/under_actuated_tilted_lqi_controller.cpp
+#  src/nmpc/fix_qd_angvel_out_mdl/nmpc_solver.cpp
+#  src/nmpc/fix_qd_angvel_out_mdl/nmpc_controller.cpp
+        src/nmpc/fix_qd_thrust_out_mdl/nmpc_controller.cpp
+#  src/nmpc/tilt_qd_no_servo_mdl/nmpc_solver.cpp
+#  src/nmpc/tilt_qd_no_servo_mdl/nmpc_controller.cpp
+        src/nmpc/tilt_mt_servo_nmpc_controller.cpp
+        src/nmpc/tilt_mt_servo_dist_nmpc_controller.cpp
+        src/nmpc/tilt_mt_servo_imp_nmpc_controller.cpp
+        src/nmpc/tilt_mt_servo_thrust_dist_nmpc_controller.cpp
+        src/nmpc/tilt_mt_servo_thrust_imp_nmpc_controller.cpp
+        src/nmpc/tilt_bi_2_ord_servo_mdl/nmpc_controller.cpp
+  )
+target_link_libraries(flight_control_pluginlib ${catkin_LIBRARIES} control_utils mpc_solver_plugins wrench_est_plugins)
+add_dependencies(flight_control_pluginlib  ${PROJECT_NAME}_gencfg mpc_solver_plugins wrench_est_plugins)
 
 ### flight navigation
-add_library (flight_navigation src/flight_navigation.cpp src/util/joy_parser.cpp)
+add_library (flight_navigation src/flight_navigation.cpp)
 target_link_libraries (flight_navigation ${catkin_LIBRARIES})
-
-### trajectory generate based on dodgelib
-add_library (trajectory_generation
-  src/trajectory/reference_base.cpp
-  src/trajectory/trajectory_reference/polynomial.cpp
-  src/trajectory/trajectory_reference/polynomial_trajectory.cpp
-  src/trajectory/trajectory_reference/sampled_trajectory.cpp
-  src/trajectory/base/parameter_base.cpp
-  src/trajectory/math/math.cpp
-  src/trajectory/types/command.cpp
-  src/trajectory/types/quad_state.cpp
-  src/trajectory/types/quadrotor.cpp
-  src/trajectory/utils/logger.cpp
-  src/trajectory/utils/timer.cpp
-  )
-target_link_libraries (trajectory_generation ${catkin_LIBRARIES})
-
-add_executable(trajectory_generation_node src/trajectory/test.cpp)
-target_link_libraries (trajectory_generation_node ${catkin_LIBRARIES} trajectory_generation)
-
-
 
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
 
-install(TARGETS control_utils flight_control_pluginlib flight_navigation trajectory_generation
+install(TARGETS control_utils flight_control_pluginlib flight_navigation wrench_est_plugins
   DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-)
-
-install(TARGETS trajectory_generation_node
-  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY scripts plugins
