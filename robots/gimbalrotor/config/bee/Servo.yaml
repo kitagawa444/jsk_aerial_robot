@@ -9,7 +9,7 @@ servo_controller:
       id: 0
       name: gimbal1
       simulation:
-        pid: {p: 5.0, i: 0.1, d: 0.1, i_clamp_max: 3.14.0, i_clamp_min: -3.14}
+        pid: {p: 5.0, i: 0.1, d: 0.1, i_clamp_max: 3.14, i_clamp_min: -3.14}
         init_value: 0
         type: effort_controllers/JointPositionController
 
