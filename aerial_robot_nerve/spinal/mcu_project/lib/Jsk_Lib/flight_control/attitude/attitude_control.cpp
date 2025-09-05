@@ -1107,7 +1107,7 @@ void AttitudeController::pwmConversion()
                 f_i.x = target_thrust_[i*3];
                 f_i.y = target_thrust_[i*3+1];
                 f_i.z = target_thrust_[i*3+2];
-            
+
                 float gimbal_candidate_roll = atan2f(-f_i.y, f_i.z);
                 float gimbal_candidate_pitch = atan2f(f_i.x, -f_i.y * sin(gimbal_candidate_roll) + f_i.z * cos(gimbal_candidate_roll));
                 target_thrust_[i] = ap::pythagorous3(f_i.x,f_i.y,f_i.z);
@@ -1116,7 +1116,7 @@ void AttitudeController::pwmConversion()
                 if(std::isfinite(gimbal_candidate_roll) && std::isfinite(gimbal_candidate_pitch)){
                   target_gimbal_angles_[2*i] =(target_gimbal_angles_[2*i]+ gimbal_candidate_roll)/2;
                   target_gimbal_angles_[2*i+1] =(target_gimbal_angles_[2*i+1]+ gimbal_candidate_pitch)/2;
-            
+
                 }
                 break;
               }
@@ -1129,8 +1129,13 @@ void AttitudeController::pwmConversion()
                 target_thrust_[i] = ap::pythagorous2(f_i.x,f_i.z);
 
                 /* simple lpf */
-                if(std::isfinite(gimbal_candidate)) target_gimbal_angles_[i] =(target_gimbal_angles_[i]+ gimbal_candidate)/2;
+                if(std::isfinite(gimbal_candidate)){
+                  float prev_candidate = target_gimbal_angles_[i];
+                  float shortest_diff = atan2f(sinf(gimbal_candidate - prev_candidate), cosf(gimbal_candidate - prev_candidate));
+                  float next_candidate = prev_candidate + shortest_diff;
+                  target_gimbal_angles_[i] =(prev_candidate+ next_candidate)/2;
 
+                }
                 break;
               }
             default:
@@ -1160,7 +1165,7 @@ void AttitudeController::pwmConversion()
           gimbal_control_msg.position.push_back(target_gimbal_angles_[2*i]);
           gimbal_control_msg.position.push_back(target_gimbal_angles_[2*i+1]);
         }
-        gimbal_control_pub_.publish(gimbal_control_msg);    
+        gimbal_control_pub_.publish(gimbal_control_msg);
         break;
       }
     case 1:
@@ -1186,7 +1191,7 @@ void AttitudeController::pwmConversion()
         for(int i = 0; i < motor_number_ / (rotor_coef_); i++){
           if(start_control_flag_)
             {
-              gimbal_map[2*i] =  target_gimbal_angles_[2*i];
+              gimbal_map[2*i] = target_gimbal_angles_[2*i];
               gimbal_map[2*i+1] = target_gimbal_angles_[2*i+1];
             }
           else

@@ -794,7 +794,7 @@ int8_t DynamixelSerial::readStatusPacket(uint8_t status_packet_instruction)
                   }
                   else {
                     if (s->first_get_pos_flag_) {
-                      s->internal_offset_ = std::floor(present_position / 4096.0) * -4096; // to convert [0, 4096]
+                      // s->internal_offset_ = std::floor(present_position / 4096.0) * -4096; // to convert [0, 4096]
                       s->first_get_pos_flag_ = false;
                     }
                     s->setPresentPosition(present_position);
