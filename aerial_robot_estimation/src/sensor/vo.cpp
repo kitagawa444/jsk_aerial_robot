@@ -193,8 +193,8 @@ namespace sensor_plugin
           }
 
         /* can not start fusion from this sensor if the sensor is downward and the height is too low */
-        double downward_rate = (sensor_view_rot * tf::Vector3(1,0,0)).z();
-        if(downward_rate < -0.8 &&
+        double downward_rate = (sensor_view_rot * tf::Vector3(0,0,1)).z();
+        if(downward_rate < downwards_rate_thresh_ &&
            estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0] < downwards_vo_min_height_)
           {
             return;
@@ -450,20 +450,15 @@ namespace sensor_plugin
     if(vio_mode_)
       sensor_view_rot = baselink_tf_.getBasis() * sensor_tf_.getBasis();
     else sensor_view_rot = baselink_r * sensor_tf_.getBasis();
+    double downward_rate = (sensor_view_rot * tf::Vector3(0,0,1)).z();
+    double height = estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0];
 
-    if((sensor_view_rot * tf::Vector3(1,0,0)).z() < -0.8)
+    if(downward_rate < downwards_rate_thresh_ && (height < downwards_vo_min_height_ || height > downwards_vo_max_height_))
       {
-        double height = estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0];
-
-        if(height < downwards_vo_min_height_ || height > downwards_vo_max_height_)
+        if (estimator_->hasRefinedYawEstimate(EGOMOTION_ESTIMATE))
           {
-            if (estimator_->hasRefinedYawEstimate(EGOMOTION_ESTIMATE))
-              {
-                ROS_WARN_STREAM(indexed_nhp_.getNamespace() <<": refined yaw estimate becomes false");
-                estimator_->SetRefinedYawEstimate(EGOMOTION_ESTIMATE, false);
-              }
-
-            return;
+            ROS_WARN_STREAM(indexed_nhp_.getNamespace() <<": refined yaw estimate becomes false");
+            estimator_->SetRefinedYawEstimate(EGOMOTION_ESTIMATE, false);
           }
       }
     else
@@ -638,6 +633,7 @@ namespace sensor_plugin
     getParam<double>("vel_outlier_thresh", vel_outlier_thresh_, 1.0);
     getParam<double>("downwards_vo_min_height", downwards_vo_min_height_, 0.8);
     getParam<double>("downwards_vo_max_height", downwards_vo_max_height_, 10.0);
+    getParam<double>("downwards_rate_thresh", downwards_rate_thresh_, -0.8);
 
     getParam<std::string>("joint", joint_name_, std::string("servo"));
     getParam<bool>("servo_auto_change_flag", servo_auto_change_flag_, false );
