@@ -41,11 +41,7 @@ namespace aerial_robot_control
 
   void GimbalrotorController::reset()
   {
-    ROS_INFO("GimbalrotorController::reset() called at %.3f (node=%s)",
-             ros::Time::now().toSec(), ros::this_node::getName().c_str());
-
     PoseLinearController::reset();
-    resetGains();
   }
 
   void GimbalrotorController::rosParamInit()
@@ -267,7 +263,7 @@ namespace aerial_robot_control
     sendFourAxisCommand();
 
     if(gimbal_calc_in_fc_){
-      sendTorqueAllocationMatrixInv();
+      // sendTorqueAllocationMatrixInv();
       setAttitudeGains();
     }
     else
@@ -376,7 +372,7 @@ namespace aerial_robot_control
     Eigen::MatrixXd torque_allocation_matrix_inv = integrated_map_inv_rot_;
     int expected_rows = motor_num_ * rotor_coef_;
 
-        if (integrated_map_inv_rot_.rows() == 0 || integrated_map_inv_rot_.cols() < 3) {
+    if (integrated_map_inv_rot_.rows() == 0 || integrated_map_inv_rot_.cols() < 3) {
       ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ not ready (rows=%d cols=%d). skipping.",
                (int)integrated_map_inv_rot_.rows(), (int)integrated_map_inv_rot_.cols());
       return;
@@ -385,7 +381,6 @@ namespace aerial_robot_control
       ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ rows (%d) < expected (%d). Using min rows.",
                (int)integrated_map_inv_rot_.rows(), expected_rows);
     }
-
 
     for(int i = 0; i < motor_num_* rotor_coef_; ++i)
       {
