@@ -41,9 +41,11 @@ namespace aerial_robot_control
 
   void GimbalrotorController::reset()
   {
-    PoseLinearController::reset();
+    ROS_INFO("GimbalrotorController::reset() called at %.3f (node=%s)",
+             ros::Time::now().toSec(), ros::this_node::getName().c_str());
 
-    setAttitudeGains();
+    PoseLinearController::reset();
+    resetGains();
   }
 
   void GimbalrotorController::rosParamInit()
@@ -67,7 +69,6 @@ namespace aerial_robot_control
 
     if(ros::Time::now().toSec() - last_gain_set_time_ > gain_set_interval_)
       {
-	setAttitudeGains();
 	last_gain_set_time_ = ros::Time::now().toSec();
       }
 
@@ -267,6 +268,7 @@ namespace aerial_robot_control
 
     if(gimbal_calc_in_fc_){
       sendTorqueAllocationMatrixInv();
+      setAttitudeGains();
     }
     else
       {
@@ -341,9 +343,20 @@ namespace aerial_robot_control
 
   void GimbalrotorController::sendTorqueAllocationMatrixInv()
   {
+    int expected_rows = motor_num_ * rotor_coef_;
+    if (integrated_map_inv_rot_.rows() == 0 || integrated_map_inv_rot_.cols() < 3) {
+      ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ not ready (rows=%d cols=%d). skipping.",
+               (int)integrated_map_inv_rot_.rows(), (int)integrated_map_inv_rot_.cols());
+      return;
+    }
+    if (integrated_map_inv_rot_.rows() < expected_rows) {
+      ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ rows (%d) < expected (%d). Using min rows.",
+               (int)integrated_map_inv_rot_.rows(), expected_rows);
+    }
+
     spinal::TorqueAllocationMatrixInv torque_allocation_matrix_inv_msg;
     torque_allocation_matrix_inv_msg.rows.resize(motor_num_ * rotor_coef_);
-    Eigen::MatrixXd torque_allocation_matrix_inv = integrated_map_inv_rot_; 
+    Eigen::MatrixXd torque_allocation_matrix_inv = integrated_map_inv_rot_;
     if (torque_allocation_matrix_inv.cwiseAbs().maxCoeff() > INT16_MAX * 0.001f)
       ROS_ERROR("Torque Allocation Matrix overflow");
     for (unsigned int i = 0; i < motor_num_* rotor_coef_; i++)
@@ -352,24 +365,68 @@ namespace aerial_robot_control
         torque_allocation_matrix_inv_msg.rows.at(i).y = torque_allocation_matrix_inv(i,1) * 1000;
         torque_allocation_matrix_inv_msg.rows.at(i).z = torque_allocation_matrix_inv(i,2) * 1000;
       }
-    torque_allocation_matrix_inv_pub_.publish(torque_allocation_matrix_inv_msg);
+    // torque_allocation_matrix_inv_pub_.publish(torque_allocation_matrix_inv_msg);
   }
 
   void GimbalrotorController::setAttitudeGains()
   {
     spinal::RollPitchYawTerms rpy_gain_msg; //for rosserial
     /* to flight controller via rosserial scaling by 1000 */
-    rpy_gain_msg.motors.resize(1);
-    rpy_gain_msg.motors.at(0).roll_p = pid_controllers_.at(ROLL).getPGain() * 1000;
-    rpy_gain_msg.motors.at(0).roll_i = pid_controllers_.at(ROLL).getIGain() * 1000;
-    rpy_gain_msg.motors.at(0).roll_d = pid_controllers_.at(ROLL).getDGain() * 1000;
-    rpy_gain_msg.motors.at(0).pitch_p = pid_controllers_.at(PITCH).getPGain() * 1000;
-    rpy_gain_msg.motors.at(0).pitch_i = pid_controllers_.at(PITCH).getIGain() * 1000;
-    rpy_gain_msg.motors.at(0).pitch_d = pid_controllers_.at(PITCH).getDGain() * 1000;
-    rpy_gain_msg.motors.at(0).yaw_d = pid_controllers_.at(YAW).getDGain() * 1000;
+    rpy_gain_msg.motors.resize( motor_num_* rotor_coef_);
+    Eigen::MatrixXd torque_allocation_matrix_inv = integrated_map_inv_rot_;
+    int expected_rows = motor_num_ * rotor_coef_;
+
+        if (integrated_map_inv_rot_.rows() == 0 || integrated_map_inv_rot_.cols() < 3) {
+      ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ not ready (rows=%d cols=%d). skipping.",
+               (int)integrated_map_inv_rot_.rows(), (int)integrated_map_inv_rot_.cols());
+      return;
+    }
+    if (integrated_map_inv_rot_.rows() < expected_rows) {
+      ROS_WARN("setAttitudeGains: integrated_map_inv_rot_ rows (%d) < expected (%d). Using min rows.",
+               (int)integrated_map_inv_rot_.rows(), expected_rows);
+    }
+
+
+    for(int i = 0; i < motor_num_* rotor_coef_; ++i)
+      {
+        rpy_gain_msg.motors.at(i).roll_p =torque_allocation_matrix_inv(i,0) * pid_controllers_.at(ROLL).getPGain() * 1000;
+        rpy_gain_msg.motors.at(i).roll_i =torque_allocation_matrix_inv(i,0) * pid_controllers_.at(ROLL).getIGain() * 1000;
+        rpy_gain_msg.motors.at(i).roll_d =torque_allocation_matrix_inv(i,0) * pid_controllers_.at(ROLL).getDGain() * 1000;
+
+        rpy_gain_msg.motors.at(i).pitch_p =torque_allocation_matrix_inv(i,1) * pid_controllers_.at(PITCH).getPGain() * 1000;
+        rpy_gain_msg.motors.at(i).pitch_i =torque_allocation_matrix_inv(i,1) * pid_controllers_.at(PITCH).getIGain() * 1000;
+        rpy_gain_msg.motors.at(i).pitch_d =torque_allocation_matrix_inv(i,1) * pid_controllers_.at(PITCH).getDGain() * 1000;
+
+        rpy_gain_msg.motors.at(i).yaw_d =torque_allocation_matrix_inv(i,2) * pid_controllers_.at(YAW).getDGain() * 1000;
+      }
     rpy_gain_pub_.publish(rpy_gain_msg);
   }
+
+  void GimbalrotorController::resetGains()
+  {
+    spinal::RollPitchYawTerms rpy_gain_msg; //for rosserial
+    /* to flight controller via rosserial scaling by 1000 */
+    rpy_gain_msg.motors.resize( motor_num_* rotor_coef_);
+
+    for(int i = 0; i < motor_num_* rotor_coef_; ++i)
+      {
+        
+        rpy_gain_msg.motors.at(i).roll_p = 0;
+        rpy_gain_msg.motors.at(i).roll_i = 0;
+        rpy_gain_msg.motors.at(i).roll_d = 0;
+
+        rpy_gain_msg.motors.at(i).pitch_p = 0;
+        rpy_gain_msg.motors.at(i).pitch_i = 0;
+        rpy_gain_msg.motors.at(i).pitch_d = 0;
+
+        rpy_gain_msg.motors.at(i).yaw_d = 0;
+      }
+    rpy_gain_pub_.publish(rpy_gain_msg);
+
+  }
 } //namespace aerial_robot_controller
+
+
 
 
 

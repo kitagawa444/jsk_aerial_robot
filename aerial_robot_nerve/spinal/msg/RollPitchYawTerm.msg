@@ -1,14 +1,14 @@
 #gain: only roll, pitch, yaw_d (throttle and yaw pi is calculated in PC side)
 
 # roll
-uint16 roll_p
-uint16 roll_i
-uint16 roll_d
+int16 roll_p
+int16 roll_i
+int16 roll_d
 
 # pitch
-uint16 pitch_p
-uint16 pitch_i
-uint16 pitch_d
+int16 pitch_p
+int16 pitch_i
+int16 pitch_d
 
 # yaw
-uint16 yaw_d
+int16 yaw_d

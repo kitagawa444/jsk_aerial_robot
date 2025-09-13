@@ -65,6 +65,6 @@ namespace aerial_robot_control
     void sendGimbalCommand();
     void sendTorqueAllocationMatrixInv();
     void setAttitudeGains();
-
+    void resetGains();
   };
 };
