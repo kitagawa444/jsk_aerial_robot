@@ -179,7 +179,6 @@ private:
   bool force_landing_flag_;
   bool att_control_flag_;
 
-
   float target_angle_[3];
   float error_angle_i_[3];
   float error_angle_i_limit_[3];
@@ -212,6 +211,7 @@ private:
   float target_thrust_[MAX_MOTOR_NUMBER];
   float target_pwm_[MAX_MOTOR_NUMBER];
   float target_gimbal_angles_[MAX_MOTOR_NUMBER];
+  float prev_gimbal_angles_[MAX_MOTOR_NUMBER];
   float min_duty_;
   float max_duty_;
   float min_thrust_; // max thrust is variant according to the voltage
@@ -240,14 +240,6 @@ private:
   void pwmsControl(void);
 
   void reset(void);
-
-
-  float limit(float input, float limit)
-  {
-    if (input > limit) return limit;
-    else if(input < -limit) return -limit;
-    else return input;
-  }
 
 #ifdef SIMULATION
   uint32_t HAL_GetTick(){ return ros::Time::now().toSec() * 1000; }

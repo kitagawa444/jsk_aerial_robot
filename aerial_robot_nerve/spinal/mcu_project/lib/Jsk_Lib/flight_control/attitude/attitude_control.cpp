@@ -488,6 +488,11 @@ void AttitudeController::reset(void)
 #ifdef SIMULATION
   prev_time_ = -1;
 #endif
+  for(int i = 0; i < motor_number_ / (rotor_coef_); i++){
+    target_gimbal_angles_[i]=0.0f;
+    prev_gimbal_angles_[i]=0.0f;
+  }
+
 }
 
 void AttitudeController::fourAxisCommandCallback( const spinal::FourAxisCommand &cmd_msg)
@@ -709,6 +714,7 @@ void AttitudeController::thrustGainMapping()
       thrust_d_gain_[i][Y] = torque_allocation_matrix_inv_[i][Y] * torque_d_gain_[Y];
       thrust_d_gain_[i][Z] = torque_allocation_matrix_inv_[i][Z] * torque_d_gain_[Z];
     }
+
 }
 
 void AttitudeController::maxYawGainIndex()
@@ -758,7 +764,7 @@ void AttitudeController::pwmTestCallback(const spinal::PwmTest& pwm_msg)
             pwm_test_value_[motor_index] = pwm_msg.pwms[i];
           }
         else
-          {
+         {
             nh_->logwarn("FAIL SAFE!  Invaild PWM value for motor");
             pwm_test_value_[motor_index] = IDLE_DUTY;
           }
@@ -1128,13 +1134,23 @@ void AttitudeController::pwmConversion()
                 float gimbal_candidate = atan2f(-f_i.x, f_i.z);
                 target_thrust_[i] = ap::pythagorous2(f_i.x,f_i.z);
 
-                /* simple lpf */
-                if(std::isfinite(gimbal_candidate)){
-                  float prev_candidate = target_gimbal_angles_[i];
-                  float shortest_diff = atan2f(sinf(gimbal_candidate - prev_candidate), cosf(gimbal_candidate - prev_candidate));
-                  float next_candidate = prev_candidate + shortest_diff;
-                  target_gimbal_angles_[i] =(prev_candidate+ next_candidate)/2;
+                if (std::isfinite(gimbal_candidate)) {
+                  prev_gimbal_angles_[i] = target_gimbal_angles_[i];
 
+                  float delta = gimbal_candidate - prev_gimbal_angles_[i];
+                  if (delta > M_PI) {
+                    gimbal_candidate -= 2.0f * M_PI;
+                  } else if (delta < -M_PI) {
+                    gimbal_candidate += 2.0f * M_PI;
+                  }
+
+                  if (gimbal_candidate > 4.0f) {
+                    gimbal_candidate -= 2.0f * M_PI; // Wrap down
+                  } else if (gimbal_candidate < -4.0f) {
+                    gimbal_candidate += 2.0f * M_PI; // Wrap up
+                  }
+
+                  target_gimbal_angles_[i] = gimbal_candidate;
                 }
                 break;
               }
