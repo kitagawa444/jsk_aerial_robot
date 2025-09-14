@@ -111,3 +111,21 @@ tags
 # mujoco
 MUJOCO_LOG.txt
 robots/**/mujoco
+
+# acados
+*c_generated_code/
+*acados_ocp.json
+*acados_sim.json
+*model.json
+
+# Datasets
+**/neural_nmpc/data/
+
+# Videos
+*.mp4
+
+# Trained torch models
+**/results/
+
+# TEMPORARY skip ml_casadi -> TODO use as submodule
+**/ml_casadi/
