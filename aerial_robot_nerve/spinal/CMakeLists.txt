@@ -58,6 +58,7 @@ add_service_files(
   ImuCalib.srv
   MagDeclination.srv
   SetDirectServoConfig.srv
+  SetControlMode.srv
 )
 
 generate_messages(
