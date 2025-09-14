@@ -274,6 +274,14 @@ namespace aerial_robot_estimation
       return tf::Vector3(r, p, y);
     }
 
+    tf::Quaternion getQuat(int frame, int estimate_mode)
+    {
+      tf::Matrix3x3 rot = getOrientation(frame, estimate_mode);
+      tf::Quaternion q;
+      rot.getRotation(q);
+      return q;
+    }
+
     tf::Vector3 getAngularVel(int frame, int estimate_mode)
     {
       boost::lock_guard<boost::mutex> lock(state_mutex_);
@@ -420,6 +428,20 @@ namespace aerial_robot_estimation
     inline void receiveGroundTruthOdom(bool flag) {has_groundtruth_odom_ = flag; }
     inline const bool hasRefinedYawEstimate(int i) const {return has_refined_yaw_estimate_.at(i); }
     inline void SetRefinedYawEstimate(int i, bool flag) {has_refined_yaw_estimate_.at(i) = flag; }
+
+    // start landing mode
+    virtual bool getLandingMode() {  return  landing_mode_flag_;}
+    virtual void setLandingMode(bool flag){  landing_mode_flag_ = flag;}
+    // landed flag (acc_z check, ground shock)
+    virtual bool getLandedFlag() {  return  landed_flag_;}
+    virtual void setLandedFlag(bool flag){  landed_flag_ = flag;}
+    /* landing height is set for landing to different terrain */
+    virtual void setLandingHeight(float landing_height){ landing_height_ = landing_height;}
+    virtual float getLandingHeight(){ return landing_height_;}
+    bool landing_mode_flag_;
+    bool landed_flag_;
+    float landing_height_;
+
 
 
     const SensorFuser& getFuser(int mode)
