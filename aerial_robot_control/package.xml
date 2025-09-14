@@ -12,6 +12,7 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <depend>acados</depend>
   <depend>aerial_robot_estimation</depend>
   <depend>aerial_robot_model</depend>
   <depend>aerial_robot_msgs</depend>
@@ -23,6 +24,8 @@
 
   <export>
     <aerial_robot_control plugin="${prefix}/plugins/flight_control_plugins.xml" />
+    <aerial_robot_control plugin="${prefix}/plugins/wrench_est_plugins.xml" />
+    <aerial_robot_control plugin="${prefix}/plugins/mpc_solver_plugins.xml" />
   </export>
 
 </package>
