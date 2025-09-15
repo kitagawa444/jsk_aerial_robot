@@ -1,0 +1,605 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# @Time : 2025/3/19 12:22
+# @Author : Jason.LI
+# @File : hand_ctrl_modes.py
+# @Software: PyCharm
+
+import math
+from abc import ABC, abstractmethod
+from tf_conversions import transformations as tf
+import numpy as np
+
+import rospy
+from geometry_msgs.msg import Twist, Vector3, Quaternion, Transform
+from pub_mpc_joint_traj import MPCPubJointTraj
+from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
+
+from sub_pos_objects import HandPose, ArmPose, Glove
+
+
+##########################################
+# Derived Class : HandControlBaseMode
+##########################################
+"""
+For example: From arm to hand, denoted as a2h; from hand to drone, denoted as h2d.
+"""
+
+
+class HandControlBaseMode(MPCPubJointTraj, ABC):
+    def __init__(
+        self,
+        robot_name: str,
+        hand_pose: HandPose,
+        arm_pose: ArmPose,
+        glove: Glove,
+        node_name: str,
+    ):
+        super().__init__(robot_name=robot_name, node_name=node_name, is_calc_rmse=False)
+        self.hand_pose = hand_pose
+        self.arm_pose = arm_pose
+        self.glove = glove
+
+        self.is_finished = False
+        # initialize vel_twist and acc_twist
+        r_rate, p_rate, y_rate = 0.0, 0.0, 0.0
+        r_acc, p_acc, y_acc = 0.0, 0.0, 0.0
+        vx, vy, vz = 0.0, 0.0, 0.0
+        ax, ay, az = 0.0, 0.0, 0.0
+        self.vel_twist = Twist(linear=Vector3(vx, vy, vz), angular=Vector3(r_rate, p_rate, y_rate))
+        self.acc_twist = Twist(linear=Vector3(ax, ay, az), angular=Vector3(r_acc, p_acc, y_acc))
+
+        self._check_last_time = None
+        self._check_last_position = None
+        self._check_last_orientation = None
+        self._check_time_threshold = 5
+        self._check_position_tolerance = 0.1
+        self._check_orientation_tolerance = 6
+
+        self.to_return_control_mode = None
+        self.last_state = None
+
+        self.mode_num = self._init_mode_num()
+
+        self.start_timer()
+
+    @staticmethod
+    @abstractmethod
+    def _init_mode_num():
+        return int()
+
+    def _check_finish_auto(self):
+        """
+        When the hand maintains its pose for a certain time, it exits the control.
+        """
+        current_time = rospy.Time.now().to_sec()
+        if not hasattr(self, "last_check_time"):
+            self._last_check_time = current_time
+            self._check_last_position = [
+                self.hand_pose.pose_msg.pose.position.x,
+                self.hand_pose.pose_msg.pose.position.y,
+                self.hand_pose.pose_msg.pose.position.z,
+            ]
+            self._check_last_orientation = [
+                self.hand_pose.pose_msg.pose.orientation.x,
+                self.hand_pose.pose_msg.pose.orientation.y,
+                self.hand_pose.pose_msg.pose.orientation.z,
+                self.hand_pose.pose_msg.pose.orientation.w,
+            ]
+            return
+
+        current_check_position = [
+            self.hand_pose.pose_msg.pose.position.x,
+            self.hand_pose.pose_msg.pose.position.y,
+            self.hand_pose.pose_msg.pose.position.z,
+        ]
+        current_check_orientation = [
+            self.hand_pose.pose_msg.pose.orientation.x,
+            self.hand_pose.pose_msg.pose.orientation.y,
+            self.hand_pose.pose_msg.pose.orientation.z,
+            self.hand_pose.pose_msg.pose.orientation.w,
+        ]
+
+        position_change = [abs(current_check_position[i] - self._check_last_position[i]) for i in range(3)]
+        orientation_change = [abs(current_check_orientation[i] - self._check_last_orientation[i]) for i in range(4)]
+
+        goal_reached = all(change < self._check_position_tolerance for change in position_change) and all(
+            change < self._check_orientation_tolerance for change in orientation_change
+        )
+
+        new_state = "goal_reached" if goal_reached else "goal_not_reached"
+        if new_state != self.last_state:
+            rospy.loginfo("Now state: reach the goal" if goal_reached else "Now state:not reach the goal")
+            self.last_state = new_state
+
+        if goal_reached:
+            if current_time - self._last_check_time > self._check_time_threshold:
+                rospy.loginfo("Exit control")
+                self.is_finished = True
+        else:
+            self._last_check_time = current_time
+
+    def check_finished(self, t_elapsed=None):
+        """
+        Checks if the task is finished. If the glove is not enabled, uses _check_finish_auto
+        to check if the task is completed.
+        """
+        if self.glove is None:
+            self._check_finish_auto()
+            return self.is_finished
+
+        current_ctrl_mode = self.glove.get_control_mode()
+        if self.mode_num != current_ctrl_mode:  # if the control mode is changed by the glove
+            self.to_return_control_mode = current_ctrl_mode
+            self.is_finished = True
+
+        return self.is_finished
+
+    def get_control_mode(self):
+        return self.to_return_control_mode
+
+
+##########################################
+# Derived Class : OperationMode
+##########################################
+class OperationMode(HandControlBaseMode):
+    def __init__(
+        self,
+        robot_name: str,
+        hand_pose: HandPose,
+        arm_pose: ArmPose,
+        glove: Glove,
+    ):
+        super().__init__(robot_name, hand_pose, arm_pose, glove, node_name="operation_mode_traj_pub")
+
+        self.initial_hand_position = None
+        self.initial_drone_position = None
+        self.position_hand_change = None
+
+        # for continuous rotation
+        self.cont_rot_gen = ContRotationGen()
+
+    @staticmethod
+    def _init_mode_num():
+        return 1
+
+    def fill_trajectory_points(self, t_elapsed: float) -> MultiDOFJointTrajectory:
+        """
+        When entering this state, record the first pose of the drone and hand.
+        Check the changes in the hand's pose compared to the first recorded pose.
+        Add the change in the hand's pose to the initial pose recorded by the drone to determine the target pose for the drone at the next moment.
+        """
+        if self.initial_hand_position is None:
+            self.initial_hand_position = [
+                self.hand_pose.pose_msg.pose.position.x,
+                self.hand_pose.pose_msg.pose.position.y,
+                self.hand_pose.pose_msg.pose.position.z,
+            ]
+            self.initial_drone_position = [
+                self.uav_odom.pose.pose.position.x,
+                self.uav_odom.pose.pose.position.y,
+                self.hand_pose.pose_msg.pose.position.z,
+            ]
+            rospy.loginfo(f"initial drone position is {self.initial_drone_position}")
+            rospy.loginfo(f"initial hand position is {self.initial_hand_position}")
+
+        current_hand_position = [
+            self.hand_pose.pose_msg.pose.position.x,
+            self.hand_pose.pose_msg.pose.position.y,
+            self.hand_pose.pose_msg.pose.position.z,
+        ]
+
+        self.position_hand_change = [current_hand_position[i] - self.initial_hand_position[i] for i in range(3)]
+
+        target_position = [
+            self.initial_drone_position[0] + self.position_hand_change[0],
+            self.initial_drone_position[1] + self.position_hand_change[1],
+            self.initial_drone_position[2] + self.position_hand_change[2],
+        ]
+
+        # === detect continuous rotation ===  TODO: add a parameter to enable/disable this feature
+        hand_quat = self.hand_pose.pose_msg.pose.orientation
+        robot_quat = self.uav_odom.pose.pose.orientation
+        robot_quat_ref, self.vel_twist = self.cont_rot_gen.update(hand_quat, robot_quat, self.vel_twist)
+        # ==================================
+
+        multi_dof_joint_traj = MultiDOFJointTrajectory()
+        t_has_started = rospy.Time.now().to_sec() - self.start_time
+
+        for i in range(self.N_nmpc + 1):
+            traj_pt = MultiDOFJointTrajectoryPoint()
+            traj_pt.transforms.append(
+                Transform(
+                    translation=Vector3(*target_position),
+                    rotation=robot_quat_ref,
+                )
+            )
+            traj_pt.velocities.append(self.vel_twist)
+            traj_pt.accelerations.append(self.acc_twist)
+
+            t_pred = i * 0.1
+            t_cal = t_pred + t_has_started
+            traj_pt.time_from_start = rospy.Duration.from_sec(t_cal)
+
+            multi_dof_joint_traj.points.append(traj_pt)
+
+        return multi_dof_joint_traj
+
+
+class ContRotationGen:
+    """
+    Note: the quat_start should be generated from RPY.
+    But the second condition should use quaternion rotation axis and angle.
+    """
+
+    def __init__(self, roll_start=0.0, pitch_start=np.pi / 2.0, yaw_start=0.0, axes="rzyx"):  # pitch = 90 degrees
+        self.cont_rot_start_t = None
+        self.cont_rot_dir = None  # +1 for right rotation, -1 for left rotation
+        self.cont_rot_init_yaw = None
+
+        # hyper-parameters
+        self.cont_rot_period = 30.0  # seconds
+        q_list = tf.quaternion_from_euler(roll_start, pitch_start, yaw_start, axes=axes)
+        self.quat_start = Quaternion(*q_list)
+
+    def is_rotating(self) -> bool:
+        return self.cont_rot_start_t is not None
+
+    def reset(self):
+        self.cont_rot_start_t = None
+        self.cont_rot_dir = None
+        self.cont_rot_init_yaw = None
+
+    def update(self, hand_quat: Quaternion, robot_quat: Quaternion, vel_twist: Twist) -> (Quaternion, Twist):
+        quat_start_flipped = self._handle_quat_flip(self.quat_start, hand_quat)
+        qe = self._get_quat_error(hand_quat, quat_start_flipped)
+        qe_3d = np.sign(qe.w) * np.array([qe.x, qe.y, qe.z])  # sign(qe.w) * V(qe_xyz)
+
+        # print(f"sgn(qew)*V(qe_xyz): {np.sign(qe.w)}, {np.sign(qe.w) * qe.x:.2f}, {np.sign(qe.w) * qe.y:.2f}, {np.sign(qe.w) * qe.z:.2f}")
+
+        if not self.is_rotating():
+            # Entry
+            if self._check_vec_align(qe_3d[0:2], np.zeros(2), 0.2):  # Note: no z
+                rospy.loginfo_throttle(1, f"Enter vertical mode: rotate qez = {qe_3d[2]:.2f}")
+
+                if abs(qe_3d[2]) > 0.4:  # TODO: figure out the physical meaning and the conversion to Euler angle
+                    self.cont_rot_start_t = rospy.Time.now().to_sec()
+                    self.cont_rot_init_yaw = self._qez_init_to_yaw(qe_3d[2])
+                    rospy.loginfo(f"Initial yaw angle: {self.cont_rot_init_yaw:.2f} rad")
+                    self.cont_rot_dir = 1 if qe_3d[2] > 0 else -1
+
+                    direction = "right" if qe_3d[2] > 0 else "left"
+                    rospy.loginfo(f"Enter vertical mode: {direction} rotation")
+
+            return hand_quat, vel_twist
+
+        # Continuous rotation
+        rotate_t = rospy.Time.now().to_sec() - self.cont_rot_start_t
+
+        # Exit
+        robot_quat_flipped = self._handle_quat_flip(robot_quat, hand_quat)  # avoid quaternion flip issue
+        qe_r2h = self._get_quat_error(robot_quat_flipped, hand_quat)
+        qe_r2h_3d = np.sign(qe_r2h.w) * np.array([qe_r2h.x, qe_r2h.y, qe_r2h.z])  # sign(qe.w) * V(qe_xyz)
+
+        # robot is close to hand
+        cond_1 = self._check_vec_align(qe_r2h_3d, np.zeros(3), 0.1)  # robot is close to hand
+        cond_2 = rotate_t > self.cont_rot_period  # seconds
+        if (cond_1 or cond_2) and rotate_t > 5.0:
+            rospy.loginfo(f"Exit vertical mode: cond_1: {cond_1}, cond_2: {cond_2}, rotate_t: {rotate_t:.2f}")
+            self.reset()
+            return hand_quat, vel_twist
+
+        # Stay
+        # - angular vel
+        omega = 2 * np.pi / self.cont_rot_period * self.cont_rot_dir
+        # - attitude quat
+        target_robot_quat_list = tf.quaternion_from_euler(
+            0.0, np.pi / 2.0, omega * rotate_t + self.cont_rot_init_yaw, axes="rxyz"
+        )
+
+        # - assign data
+        target_robot_quat = Quaternion(*target_robot_quat_list)
+        target_robot_quat = self._handle_quat_flip(target_robot_quat, robot_quat)  # avoid quaternion flip issue
+        vel_twist.angular.x = 0.0
+        vel_twist.angular.y = 0.0
+        vel_twist.angular.z = omega
+
+        return target_robot_quat, vel_twist
+
+    @staticmethod
+    def _qez_init_to_yaw(qez_init: float) -> float:
+        """
+        Convert the initial quaternion error to yaw angle.
+        :param qez_init: The z-component of the quaternion error (qe.z).
+        :return: The yaw angle in radians.
+        """
+        qe_ref_init = np.zeros(4)  # [x, y, z, w]
+        qe_ref_init[2] = qez_init
+        qe_ref_init[3] = np.sqrt(1 - qe_ref_init[2] ** 2)  # w = sqrt(1 - x^2 - y^2 - z^2)
+
+        euler = tf.euler_from_quaternion(qe_ref_init, axes="rxyz")
+
+        return euler[2]  # return yaw angle
+
+    @staticmethod
+    def _handle_quat_flip(quat_checked: Quaternion, quat_const: Quaternion) -> Quaternion:
+        """Handle the quaternion flip issue.
+        If the w component is negative, flip the quaternion to ensure a consistent representation.
+        :param quat_checked: The quaternion to check.
+        :param quat_const: The constant quaternion to compare against.
+        :return: The quaternion with a positive w component.
+        """
+        q_element_dot = (
+            quat_checked.x * quat_const.x
+            + quat_checked.y * quat_const.y
+            + quat_checked.z * quat_const.z
+            + quat_checked.w * quat_const.w
+        )
+
+        if q_element_dot < 0:
+            return Quaternion(-quat_checked.x, -quat_checked.y, -quat_checked.z, -quat_checked.w)
+
+        return quat_checked
+
+    @staticmethod
+    def _get_quat_error(quat: Quaternion, quat_ref: Quaternion) -> Quaternion:
+        # error = x - x_r = q_r^* @ q
+        quat_error = tf.quaternion_multiply(
+            tf.quaternion_conjugate([quat_ref.x, quat_ref.y, quat_ref.z, quat_ref.w]), [quat.x, quat.y, quat.z, quat.w]
+        )
+        return Quaternion(*quat_error)
+
+    @staticmethod
+    def _get_axis_angle_from_quat(quat: Quaternion) -> (np.ndarray, float):
+        """
+        Get the rotation axis and angle from a quaternion.
+        :param quat: The quaternion to convert.
+        :return: A tuple of the rotation axis and angle in radians.
+        """
+        quat_array = np.array([quat.x, quat.y, quat.z, quat.w])
+        if np.linalg.norm(quat_array) < 1e-6:
+            return np.array([0.0, 0.0, 0.0]), 0.0
+
+        angle = 2 * np.arccos(quat.w)
+        sin_half_angle = np.sqrt(1 - quat.w**2)
+
+        if sin_half_angle < 1e-6:
+            return np.array([1.0, 0.0, 0.0]), angle
+
+        axis = quat_array[:3] / sin_half_angle
+        return axis, angle
+
+    @staticmethod
+    def _get_quat_from_axis_angle(axis: np.ndarray, angle: float) -> Quaternion:
+        """
+        Convert a rotation axis and angle to a quaternion.
+        :param axis: The rotation axis.
+        :param angle: The rotation angle in radians.
+        :return: The resulting quaternion.
+        """
+        half_angle = angle / 2.0
+        sin_half_angle = np.sin(angle / 2.0)
+        return Quaternion(
+            x=axis[0] * sin_half_angle, y=axis[1] * sin_half_angle, z=axis[2] * sin_half_angle, w=np.cos(half_angle)
+        )
+
+    @staticmethod
+    def _check_vec_align(quat_axis: np.ndarray, ref_axis: np.ndarray, thresh: float = 0.2) -> bool:
+        """
+        Check if the quaternion axis is aligned with the reference axis within a threshold.
+        :param quat_axis: The quaternion axis to check.
+        :param ref_axis: The reference axis to compare against.
+        :param thresh: The threshold for alignment.
+        :return: True if aligned, False otherwise.
+        """
+        return np.linalg.norm(quat_axis - ref_axis) < thresh
+
+
+##########################################
+# Derived Class : SphericalMode
+##########################################
+class SphericalMode(HandControlBaseMode):
+    def __init__(self, robot_name: str, hand_pose: HandPose, arm_pose: ArmPose, glove: Glove):
+        super().__init__(robot_name, hand_pose, arm_pose, glove, node_name="spherical_mode_traj_pub")
+        self.expected_a2d_distance = 2.2
+
+    @staticmethod
+    def _init_mode_num():
+        return 3
+
+    def fill_trajectory_points(self, t_elapsed: float) -> MultiDOFJointTrajectory:
+        """
+        The shoulder as the origin of the polar coordinate system.
+        Calculate the directional vector from the shoulder to the hand as the direction of the polar axis.
+        Calculate the distance from the shoulder to the hand to adjust the radial distance of the target point.
+        """
+        a2h_direction = [
+            self.hand_pose.pose_msg.pose.position.x - self.arm_pose.pose_msg.pose.position.x,
+            self.hand_pose.pose_msg.pose.position.y - self.arm_pose.pose_msg.pose.position.y,
+        ]
+        a2h_distance = math.hypot(a2h_direction[0], a2h_direction[1])
+        a2h_unit_vector = [a2h_direction[0] / a2h_distance, a2h_direction[1] / a2h_distance]
+
+        hand_orientation = [
+            self.hand_pose.pose_msg.pose.orientation.x,
+            self.hand_pose.pose_msg.pose.orientation.y,
+            self.hand_pose.pose_msg.pose.orientation.z,
+            self.hand_pose.pose_msg.pose.orientation.w,
+        ]
+
+        if a2h_distance > 0.4:
+            self.expected_a2d_distance = self.expected_a2d_distance + 0.01
+        elif 0.4 > a2h_distance > 0.2:
+            pass
+        else:
+            self.expected_a2d_distance = self.expected_a2d_distance - 0.01
+
+        self.expected_a2d_distance = max(1, min(20, self.expected_a2d_distance))
+
+        target_position = [
+            a2h_unit_vector[i] * self.expected_a2d_distance + getattr(self.hand_pose.pose_msg.pose.position, axis)
+            for i, axis in enumerate(["x", "y"])
+        ] + [self.hand_pose.pose_msg.pose.position.z]
+
+        multi_dof_joint_traj = MultiDOFJointTrajectory()
+        t_has_started = rospy.Time.now().to_sec() - self.start_time
+
+        for i in range(self.N_nmpc + 1):
+            traj_pt = MultiDOFJointTrajectoryPoint()
+            traj_pt.transforms.append(
+                Transform(
+                    translation=Vector3(*target_position),
+                    rotation=Quaternion(*hand_orientation),
+                )
+            )
+            traj_pt.velocities.append(self.vel_twist)
+            traj_pt.accelerations.append(self.acc_twist)
+
+            t_pred = i * 0.1
+            t_cal = t_pred + t_has_started
+            traj_pt.time_from_start = rospy.Duration.from_sec(t_cal)
+
+            multi_dof_joint_traj.points.append(traj_pt)
+
+        return multi_dof_joint_traj
+
+
+##########################################
+# Derived Class : CartesianMode
+##########################################
+class CartesianMode(HandControlBaseMode):
+    def __init__(self, robot_name: str, hand_pose: HandPose, arm_pose: ArmPose, glove: Glove):
+        super().__init__(robot_name, hand_pose, arm_pose, glove, node_name="cartesian_mode_traj_pub")
+        self.expected_d2target_distance = 0.0
+        self.last_target_position = None
+        self.origin_position = None
+
+    @staticmethod
+    def _init_mode_num():
+        return 2
+
+    def fill_trajectory_points(self, t_elapsed: float) -> MultiDOFJointTrajectory:
+        """
+        The point 0.3 meters in front of the shoulder as the origin of the Cartesian coordinate system.
+        The vector from the origin to the hand is the direction of movement for the drone.
+        When the vector from the origin to the hand reaches a certain length, the drone moves.
+        """
+        self.origin_position = [
+            self.arm_pose.pose_msg.pose.position.x + 0.3,
+            self.arm_pose.pose_msg.pose.position.y,
+        ]
+
+        current_hand_position = [
+            self.hand_pose.pose_msg.pose.position.x,
+            self.hand_pose.pose_msg.pose.position.y,
+            self.hand_pose.pose_msg.pose.position.z,
+        ]
+        hand_orientation = [
+            self.hand_pose.pose_msg.pose.orientation.x,
+            self.hand_pose.pose_msg.pose.orientation.y,
+            self.hand_pose.pose_msg.pose.orientation.z,
+            self.hand_pose.pose_msg.pose.orientation.w,
+        ]
+
+        o2h_direction = [
+            current_hand_position[0] - self.origin_position[0],
+            current_hand_position[1] - self.origin_position[1],
+        ]
+        o2h_distance = math.hypot(o2h_direction[0], o2h_direction[1])
+        o2h_unit_vector = [o2h_direction[0] / o2h_distance, o2h_direction[1] / o2h_distance]
+
+        """ The movement distance, maintained at a constant value. """
+        if o2h_distance < 0.15:
+            self.expected_d2target_distance = 0.0
+        else:
+            self.expected_d2target_distance = 0.2
+
+        target_position = [
+            o2h_unit_vector[i] * self.expected_d2target_distance + getattr(self.uav_odom.pose.pose.position, axis)
+            for i, axis in enumerate(["x", "y"])
+        ] + [self.hand_pose.pose_msg.pose.position.z]
+
+        target_hand_distance = math.hypot(
+            target_position[0] - current_hand_position[0], target_position[1] - current_hand_position[1]
+        )
+
+        if target_hand_distance < 1.5:
+            target_position = [
+                self.uav_odom.pose.pose.position.x,
+                self.uav_odom.pose.pose.position.y,
+                self.uav_odom.pose.pose.position.z,
+            ]
+
+        multi_dof_joint_traj = MultiDOFJointTrajectory()
+        t_has_started = rospy.Time.now().to_sec() - self.start_time
+
+        for i in range(self.N_nmpc + 1):
+            traj_pt = MultiDOFJointTrajectoryPoint()
+            traj_pt.transforms.append(
+                Transform(
+                    translation=Vector3(*target_position),
+                    rotation=Quaternion(*hand_orientation),
+                )
+            )
+            traj_pt.velocities.append(self.vel_twist)
+            traj_pt.accelerations.append(self.acc_twist)
+
+            t_pred = i * 0.1
+            t_cal = t_pred + t_has_started
+            traj_pt.time_from_start = rospy.Duration.from_sec(t_cal)
+
+            multi_dof_joint_traj.points.append(traj_pt)
+
+        return multi_dof_joint_traj
+
+
+##########################################
+# Derived Class : LockingMode
+##########################################
+class LockingMode(HandControlBaseMode):
+    def __init__(self, robot_name: str, hand_pose: HandPose, arm_pose: ArmPose, glove: Glove):
+        super().__init__(robot_name, hand_pose, arm_pose, glove, node_name="locking_mode_traj_pub")
+        self._init_origin_drone_position = None
+        self._init_origin_hand_orientation = None
+
+    @staticmethod
+    def _init_mode_num():
+        return 4
+
+    def fill_trajectory_points(self, t_elapsed: float) -> MultiDOFJointTrajectory:
+        """The first pose recorded when the drone enters this state."""
+
+        if self._init_origin_drone_position is None:
+            self._init_origin_drone_position = [
+                self.uav_odom.pose.pose.position.x,
+                self.uav_odom.pose.pose.position.y,
+                self.uav_odom.pose.pose.position.z,
+            ]
+            self._init_origin_hand_orientation = [
+                self.hand_pose.pose_msg.pose.orientation.x,
+                self.hand_pose.pose_msg.pose.orientation.y,
+                self.hand_pose.pose_msg.pose.orientation.z,
+                self.hand_pose.pose_msg.pose.orientation.w,
+            ]
+
+        multi_dof_joint_traj = MultiDOFJointTrajectory()
+        t_has_started = rospy.Time.now().to_sec() - self.start_time
+
+        for i in range(self.N_nmpc + 1):
+            traj_pt = MultiDOFJointTrajectoryPoint()
+            traj_pt.transforms.append(
+                Transform(
+                    translation=Vector3(*self._init_origin_drone_position),
+                    rotation=Quaternion(*self._init_origin_hand_orientation),
+                )
+            )
+            traj_pt.velocities.append(self.vel_twist)
+            traj_pt.accelerations.append(self.acc_twist)
+
+            t_pred = i * 0.1
+            t_cal = t_pred + t_has_started
+            traj_pt.time_from_start = rospy.Duration.from_sec(t_cal)
+
+            multi_dof_joint_traj.points.append(traj_pt)
+
+        return multi_dof_joint_traj
