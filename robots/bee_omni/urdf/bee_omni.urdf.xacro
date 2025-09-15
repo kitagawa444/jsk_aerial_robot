@@ -18,7 +18,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://gimbalrotor/urdf/bee/mesh/base_link.STL"/>
+          <mesh filename="package://gimbalrotor/urdf/bee/mesh/base_link.dae"/>
         </geometry>
       </visual>
       <collision>
@@ -103,7 +103,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://gimbalrotor/urdf/bee/mesh/rotor_module.STL"/>
+          <mesh filename="package://gimbalrotor/urdf/bee/mesh/rotor_module.dae"/>
         </geometry>
       </visual>
     </link>
