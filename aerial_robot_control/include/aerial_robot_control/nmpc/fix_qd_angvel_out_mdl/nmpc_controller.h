@@ -27,7 +27,6 @@
 #include "spinal/FourAxisCommand.h"
 #include "spinal/RollPitchYawTerms.h"
 #include "spinal/PMatrixPseudoInverseWithInertia.h"
-#include "spinal/SetControlMode.h"
 
 /* action */
 #include "actionlib/server/simple_action_server.h"
@@ -67,7 +66,6 @@ protected:
   ros::Publisher pub_rpy_gain_;                         // for gains of attitude controller
   ros::Publisher pub_p_matrix_pseudo_inverse_inertia_;  // for pseudo inverse inertia
 
-  ros::ServiceClient srv_set_control_mode_;
   bool is_attitude_ctrl_;
   bool is_body_rate_ctrl_;
 

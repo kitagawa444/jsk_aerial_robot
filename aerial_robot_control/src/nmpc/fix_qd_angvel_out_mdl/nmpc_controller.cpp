@@ -56,30 +56,11 @@ void nmpc_under_act_body_rate::NMPCController::initialize(
   pub_p_matrix_pseudo_inverse_inertia_ =
       nh_.advertise<spinal::PMatrixPseudoInverseWithInertia>("p_matrix_pseudo_inverse_inertia", 1);  // tmp
 
-  /* services */
-  srv_set_control_mode_ = nh_.serviceClient<spinal::SetControlMode>("set_control_mode");
-  bool res = ros::service::waitForService("set_control_mode", ros::Duration(5));
 
   /* init some values */
   odom_ = nav_msgs::Odometry();
   odom_.pose.pose.orientation.w = 1;
   reset();
-
-  /* set control mode */
-  if (!res)
-  {
-    ROS_ERROR("cannot find service named set_control_mode");
-  }
-  ros::Duration(2.0).sleep();
-  spinal::SetControlMode set_control_mode_srv;
-  set_control_mode_srv.request.is_attitude = is_attitude_ctrl_;
-  set_control_mode_srv.request.is_body_rate = is_body_rate_ctrl_;
-  while (!srv_set_control_mode_.call(set_control_mode_srv))
-    ROS_WARN_THROTTLE(1,
-                      "Waiting for set_control_mode service.... If you always see this message, the robot cannot fly.");
-
-  ROS_INFO("Set control mode: attitude = %d and body rate = %d", set_control_mode_srv.request.is_attitude,
-           set_control_mode_srv.request.is_body_rate);
 
   ROS_INFO("MPC Controller initialized!");
 }

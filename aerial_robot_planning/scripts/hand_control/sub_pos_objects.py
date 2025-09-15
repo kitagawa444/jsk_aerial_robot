@@ -94,15 +94,6 @@ class Glove:
         """
         return rospy.get_param(self.param_name)
 
-    @staticmethod
-    def set_control_mode(new_mode: int):
-        """
-        Updates the control mode parameter.
-
-        :param new_mode: The new control mode value to set.
-        """
-        rospy.set_param("/hand/control_mode", new_mode)
-
     def print_current_mode(self):
         """
         Prints the current control mode.
