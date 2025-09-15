@@ -16,47 +16,50 @@ namespace aerial_robot_model {
     thrust_min_(0),
     mass_(0),
     initialized_(false)
-  {
-    if (init_with_rosparam)
-      getParamFromRos();
+{
+  if (init_with_rosparam)
+    getParamFromRos();
 
-    gravity_.resize(6);
-    gravity_ <<  0, 0, 9.80665, 0, 0, 0;
-    gravity_3d_.resize(3);
-    gravity_3d_ << 0, 0, 9.80665;
+  // the gravity constant at Tokyo.
+  // Ref: Fundamental Gravity Value in Japan
+  // https://www.jstage.jst.go.jp/article/sokuchi1954/16/3/16_3_169/_pdf/-char/en
+  gravity_.resize(6);
+  gravity_ << 0, 0, 9.798015, 0, 0, 0;
+  gravity_3d_.resize(3);
+  gravity_3d_ << 0, 0, 9.798015;
 
-    kinematicsInit();
-    stabilityInit();
-    staticsInit();
+  kinematicsInit();
+  stabilityInit();
+  staticsInit();
 
-    // update robot model instantly for fixed model
-    if (fixed_model_) {
-      updateRobotModel();
-    }
+  // update robot model instantly for fixed model
+  if (fixed_model_) {
+    updateRobotModel();
   }
+}
 
-  void RobotModel::getParamFromRos()
+void RobotModel::getParamFromRos()
+{
+  ros::NodeHandle nh;
+  nh.param("kinematic_verbose", verbose_, false);
+  nh.param("fc_f_min_thre", fc_f_min_thre_, 0.0);
+  nh.param("fc_t_min_thre", fc_t_min_thre_, 0.0);
+  nh.param("epsilon", epsilon_, 10.0);
+}
+
+void RobotModel::kinematicsInit()
+{
+  /* robot model */
+  if (!model_.initParam("robot_description"))
   {
-    ros::NodeHandle nh;
-    nh.param("kinematic_verbose", verbose_, false);
-    nh.param("fc_f_min_thre", fc_f_min_thre_, 0.0);
-    nh.param("fc_t_min_thre", fc_t_min_thre_, 0.0);
-    nh.param("epsilon", epsilon_, 10.0);
+    ROS_ERROR("Failed to extract urdf model from rosparam");
+    return;
   }
-
-  void RobotModel::kinematicsInit()
+  if (!kdl_parser::treeFromUrdfModel(model_, tree_))
   {
-    /* robot model */
-    if (!model_.initParam("robot_description"))
-      {
-        ROS_ERROR("Failed to extract urdf model from rosparam");
-        return;
-      }
-    if (!kdl_parser::treeFromUrdfModel(model_, tree_))
-      {
-        ROS_ERROR("Failed to extract kdl tree from xml robot description");
-        return;
-      }
+    ROS_ERROR("Failed to extract kdl tree from xml robot description");
+    return;
+  }
     /* get baselink and thrust_link from robot model */
     auto robot_model_xml = getRobotModelXml("robot_description");
     TiXmlElement* baselink_attr = robot_model_xml.FirstChildElement("robot")->FirstChildElement("baselink");
@@ -653,6 +656,30 @@ namespace aerial_robot_model {
     }
     return joint_positions;
   }
+
+void RobotModel::convertFromCoGToEEContact(const tf::Vector3& cog_pos_in_w, const tf::Vector3& cog_vel_in_w,
+                                           const tf::Quaternion& cog_quat, const tf::Vector3& cog_omega,
+                                           tf::Vector3& ee_pos_in_w, tf::Vector3& ee_vel_in_w, tf::Quaternion& ee_quat,
+                                           tf::Vector3& ee_omega) const
+{
+  // get the conversion from CoG to end-effector (EE) contact frame
+  std::vector<double> cog_to_ee_p, cog_to_ee_q;
+  getCoGtoFramePosQuat("ee_contact", cog_to_ee_p, cog_to_ee_q);
+
+  tf::Vector3 p_ee_in_cog(cog_to_ee_p[0], cog_to_ee_p[1], cog_to_ee_p[2]);
+  tf::Matrix3x3 cog_to_ee_mtx;
+  cog_to_ee_mtx.setRotation(tf::Quaternion(cog_to_ee_q[1], cog_to_ee_q[2], cog_to_ee_q[3], cog_to_ee_q[0]));  // qxyzw
+
+  // make conversion
+  tf::Matrix3x3 cog_mtx;
+  cog_mtx.setRotation(cog_quat);
+
+  ee_pos_in_w = cog_pos_in_w + cog_mtx * p_ee_in_cog;
+  ee_vel_in_w = cog_vel_in_w + cog_mtx * cog_omega.cross(p_ee_in_cog);
+  tf::Matrix3x3 ee_mtx = cog_mtx * cog_to_ee_mtx;
+  ee_mtx.getRotation(ee_quat);
+  ee_omega = cog_to_ee_mtx.inverse() * cog_omega;
+}
 
 } //namespace aerial_robot_model
 

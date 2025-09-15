@@ -91,8 +91,15 @@ void RobotModel::calcFeasibleControlJacobian()
         fc_t_dists_jacobian_.row(index) = d_t_min;
       }
 
-      index++;
-
+        for(int l = 0; l < ndof; l++)
+          {
+            if(std::isnan(fc_f_dists_jacobian_.row(index)(0, l)))
+              fc_f_dists_jacobian_.row(index)(0, l) = 0;
+            if(std::isnan(fc_t_dists_jacobian_.row(index)(0, l)))
+              fc_t_dists_jacobian_.row(index)(0, l) = 0;
+          }
+        index++;
+      
     } //j
   } //i
 }
