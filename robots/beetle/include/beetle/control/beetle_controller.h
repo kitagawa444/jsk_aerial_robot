@@ -2,19 +2,29 @@
 
 #pragma once
 #include <beetle/model/beetle_robot_model.h>
+#include <beetle/beetle_navigation.h>
+#include <beetle/TaggedWrench.h>
+#include <beetle/TaggedWrenches.h>
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 #include <beetle/sensor/imu.h>
 
 namespace aerial_robot_control
 {
+  enum
+    {
+     FX = YAW +1,
+     FY,
+     FZ,
+     TX,
+     TY,
+     TZ,
+    };
+
   class BeetleController: public GimbalrotorController
   {
   public:
     BeetleController();
-    ~BeetleController(){
-      wrench_estimate_thread_.interrupt();
-      wrench_estimate_thread_.join();
-    }
+    ~BeetleController() = default;
 
     void initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
                     boost::shared_ptr<aerial_robot_model::RobotModel> robot_model,
@@ -22,26 +32,24 @@ namespace aerial_robot_control
                     boost::shared_ptr<aerial_robot_navigation::BaseNavigator> navigator,
                     double ctrl_loop_rate
                     ) override;
+    void setFfInterWrench(int id, Eigen::VectorXd des_int_wrench){ff_inter_wrench_list_[id] = des_int_wrench;}
   private:
     boost::shared_ptr<BeetleRobotModel> beetle_robot_model_;
+    boost::shared_ptr<aerial_robot_navigation::BeetleNavigator> beetle_navigator_;
     
-    ros::Publisher estimate_external_wrench_pub_;
-    ros::Publisher external_wrench_compensation_pub_;
+    map<string, ros::Subscriber> ff_inter_wrench_subs_;
 
-    /* external wrench */
-    boost::thread wrench_estimate_thread_;
-    Eigen::VectorXd init_sum_momentum_;
-    Eigen::VectorXd est_external_wrench_;
-    Eigen::MatrixXd momentum_observer_matrix_;
-    Eigen::VectorXd integrate_term_;
-    double prev_est_wrench_timestamp_;
+    aerial_robot_msgs::PoseControlPid wrench_pid_msg_;
 
-    /*low-pass filter*/
-    IirFilter lpf_est_external_wrench_;
-    double sample_freq_;
-    double cutoff_freq_;
-    bool lpf_init_flag_;
-    Eigen::VectorXd filterd_est_external_wrench_;
+    map<string, ros::Subscriber> est_wrench_subs_;
+    
+    void estExternalWrenchCallback(const beetle::TaggedWrench & msg);
+
+  protected:
+    std::map<int, Eigen::VectorXd> est_wrench_list_;
+    std::map<int, Eigen::VectorXd> inter_wrench_list_;
+    std::map<int, Eigen::VectorXd> wrench_comp_list_;
+    std::map<int, Eigen::VectorXd> ff_inter_wrench_list_;
 
     /* external wrench compensation */
     bool pd_wrench_comp_mode_;
@@ -49,17 +57,33 @@ namespace aerial_robot_control
     Eigen::VectorXd external_wrench_lower_limit_;
 
     int pre_module_state_;
-    double ErrI_X_;
-    double ErrI_Y_;
-    double ErrI_Z_;
-    double ErrI_ROLL_;
-    double ErrI_PITCH_;
-    double ErrI_YAW_;
-    
-    void controlCore() override;
-    void externalWrenchEstimate();
 
-  protected:
-    void rosParamInit() override; 
+    bool des_wrench_pub_flag_;
+
+    double comp_term_update_freq_;
+    double prev_comp_update_time_;
+    double wrench_comp_p_gain_;
+    double wrench_comp_i_gain_;
+    double wrench_comp_d_gain_;
+    double I_comp_Fx_;
+    double I_comp_Fy_;
+    double I_comp_Fz_;
+    double I_comp_Tx_;
+    double I_comp_Ty_;
+    double I_comp_Tz_;    
+
+    virtual void calcInteractionWrench();
+    ros::Publisher tagged_external_wrench_pub_;
+    ros::Publisher external_wrench_compensation_pub_;
+    ros::Publisher whole_external_wrench_pub_;
+    ros::Publisher internal_wrench_pub_;
+    ros::Publisher wrench_comp_pid_pub_;
+    ros::Publisher des_inter_wrench_pub_;
+    void controlCore() override;
+    
+    virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
+    void rosParamInit() override;
+    void externalWrenchEstimate() override;
+    void reset() override;
   };
 };
