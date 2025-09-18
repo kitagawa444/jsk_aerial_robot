@@ -1,16 +1,16 @@
 physical:  # with original ball and battery
-  mass: 1.813  # kg
+  # mass: 1.813  # kg
   gravity: 9.798  #9.80665 # m/s^2   Tokyo 9.798; in sim: 9.80665
-  inertia_diag: [0.00988973, 0.001011048, 0.01252455]  # kg m^2
-  dr1: 1  # direction of motor 1
-  p1: [0.09892, 0.09628, -0.01712]  # position of motor 1
-  dr2: -1  # direction of motor 2
-  p2: [-0.09892, 0.09628, -0.01712]  # position of motor 2
-  dr3: -1  # direction of motor 3
-  p3: [0.09892, -0.09628, -0.01712]  # position of motor 3
-  dr4: 1  # direction of motor 4
-  p4: [-0.09892, -0.09628, -0.01712]  # position of motor 4
-  kq_d_kt: 0.0165
+  # inertia_diag: [0.00988973, 0.001011048, 0.01252455]  # kg m^2
+  # dr1: 1  # direction of motor 1
+  # p1: [0.09892, 0.09628, -0.01712]  # position of motor 1
+  # dr2: -1  # direction of motor 2
+  # p2: [-0.09892, 0.09628, -0.01712]  # position of motor 2
+  # dr3: -1  # direction of motor 3
+  # p3: [0.09892, -0.09628, -0.01712]  # position of motor 3
+  # dr4: 1  # direction of motor 4
+  # p4: [-0.09892, -0.09628, -0.01712]  # position of motor 4
+  kq_d_kt: 0.0113
 
   num_rotors: 4
   t_rotor: 0.0942
