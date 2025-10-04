@@ -32,4 +32,9 @@
     <description>Plane Detection sensor plugin.</description>
   </class>
 
+    <class name="sensor_plugin/gicp" type="sensor_plugin::GlobalICP" base_class_type="sensor_plugin::SensorBase">
+    <description>Global ICP Localization plugin.</description>
+  </class>
+
+
 </library>

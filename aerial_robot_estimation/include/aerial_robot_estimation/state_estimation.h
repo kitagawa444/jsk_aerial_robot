@@ -469,12 +469,16 @@ namespace aerial_robot_estimation
     const vector<boost::shared_ptr<sensor_plugin::SensorBase> >& getVoHandlers() const { return vo_handlers_;}
     const vector<boost::shared_ptr<sensor_plugin::SensorBase> >& getGpsHandlers() const { return gps_handlers_;}
     const vector<boost::shared_ptr<sensor_plugin::SensorBase> >& getPlaneDetectionHandlers() const { return plane_detection_handlers_;}
+    const vector<boost::shared_ptr<sensor_plugin::SensorBase> >& getGicpHandlers() const { return gicp_handlers_;}
+
 
     const boost::shared_ptr<sensor_plugin::SensorBase> getImuHandler(int i) const { return imu_handlers_.at(i);}
     const boost::shared_ptr<sensor_plugin::SensorBase> getAltHandlers(int i) const { return alt_handlers_.at(i);}
     const boost::shared_ptr<sensor_plugin::SensorBase> getVoHandlers(int i) const { return vo_handlers_.at(i);}
     const boost::shared_ptr<sensor_plugin::SensorBase> getGpsHandlers(int i) const { return gps_handlers_.at(i);}
     const boost::shared_ptr<sensor_plugin::SensorBase> getPlaneDetectionHandlers(int i) const { return plane_detection_handlers_.at(i);}
+    const boost::shared_ptr<sensor_plugin::SensorBase> getGicpHandlers(int i) const { return gicp_handlers_.at(i);}
+
 
   protected:
 
@@ -491,6 +495,7 @@ namespace aerial_robot_estimation
     vector<boost::shared_ptr<sensor_plugin::SensorBase> > vo_handlers_;
     vector<boost::shared_ptr<sensor_plugin::SensorBase> > gps_handlers_;
     vector<boost::shared_ptr<sensor_plugin::SensorBase> > plane_detection_handlers_;
+    vector<boost::shared_ptr<sensor_plugin::SensorBase> > gicp_handlers_;
 
     /* mutex */
     boost::mutex state_mutex_;
