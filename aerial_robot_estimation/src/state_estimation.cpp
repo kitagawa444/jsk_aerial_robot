@@ -169,10 +169,17 @@ void StateEstimator::statePublish(const ros::TimerEvent & e)
     }
   full_state_pub_.publish(full_state);
 
+  std::string world_frame;
+  if(shared_world_){
+    world_frame = std::string("/world");
+  }else{
+    world_frame = tf::resolve(tf_prefix_, std::string("world"));
+  }
+
   nav_msgs::Odometry odom_state;
   odom_state.header.stamp = imu_stamp;
-  odom_state.header.frame_id = std::string("/world");
-
+  odom_state.header.frame_id = world_frame;
+  
   /* Baselink */
   /* Rotation */
   tf::Quaternion q; getOrientation(Frame::BASELINK, estimate_mode_).getRotation(q);
@@ -201,7 +208,7 @@ void StateEstimator::statePublish(const ros::TimerEvent & e)
       tf::poseMsgToTF(odom_state.pose.pose, world2baselink_tf);
       geometry_msgs::TransformStamped transformStamped;
       tf::transformStampedTFToMsg(tf::StampedTransform(world2baselink_tf * root2baselink_tf.inverse(),
-                                                       imu_stamp, "world",
+                                                       imu_stamp, world_frame,
                                                        tf::resolve(tf_prefix_, std::string("root"))),
                                   transformStamped);
       br_.sendTransform(transformStamped);
@@ -242,6 +249,7 @@ void StateEstimator::rosParamInit()
   nhp_.param ("param_verbose", param_verbose_, true);
 
   ros::NodeHandle nh = ros::NodeHandle(nh_, "estimation");
+  nh.param("shared_world", shared_world_, true);
   nh.param ("mode", estimate_mode_, 0); //EGOMOTION_ESTIMATE: 0
   ROS_WARN("mode is %s", (estimate_mode_ == EGOMOTION_ESTIMATE)?string("EGOMOTION_ESTIMATE").c_str():((estimate_mode_ == EXPERIMENT_ESTIMATE)?string("EXPERIMENT_ESTIMATE").c_str():((estimate_mode_ == GROUND_TRUTH)?string("GROUND_TRUTH").c_str():string("WRONG_MODE").c_str())));
 

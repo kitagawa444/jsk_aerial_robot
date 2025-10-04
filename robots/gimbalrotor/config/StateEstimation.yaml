@@ -1,5 +1,8 @@
 # Sensor Fuser Loader
 estimation:
+        # use shared world or prefix/world
+        shared_world: false
+        
         # sensor plugin
         sensor_list:
         - sensor_plugin/imu

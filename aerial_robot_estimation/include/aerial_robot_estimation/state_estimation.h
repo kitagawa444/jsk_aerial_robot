@@ -502,6 +502,7 @@ namespace aerial_robot_estimation
     /* robot model (kinematics)  */
     boost::shared_ptr<aerial_robot_model::RobotModel> robot_model_;
     std::string tf_prefix_;
+    bool shared_world_;
 
     /* 6: x_w, y_w, z_w, x_b, y_b */
     /* TODO: check to vector3 */
