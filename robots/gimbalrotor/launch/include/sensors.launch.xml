@@ -4,7 +4,7 @@
   <arg name="simulation" default="false" />
   <arg name="robot_ns" default="gimbalrotor" />
   <arg name="room" default="8-0066"/>
-  <arg name="pcd_filepath" default="$(find aerialrobot_estimation)/PCD/$(arg room).pcd" />
+  <arg name="pcd_filepath" default="$(find aerial_robot_estimation)/PCD/$(arg room).pcd" />
 
   <group ns="$(arg robot_ns)">
 
@@ -26,8 +26,8 @@
           <arg name="rviz" value="false" />
         </include>
 
-        <!-- livox mid360 & fast lio -->
-        <node pkg="pcl_ros" type="pcd_to_pointcloud" name="map_publisher" output="screen" args="$(arg map) 0 _frame_id:=map cloud_pcd:=/$(arg prefix)/3d_map _latch:=true" />
+        <!-- gicp -->
+        <node pkg="pcl_ros" type="pcd_to_pointcloud" name="map_publisher" output="screen" args="$(arg pcd_filepath) 0 _frame_id:=map cloud_pcd:=/$(arg robot_ns)/3d_map _latch:=true" />
 
       </group>
     </group>
