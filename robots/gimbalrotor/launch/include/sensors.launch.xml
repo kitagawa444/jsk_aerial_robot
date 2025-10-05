@@ -3,6 +3,8 @@
   <arg name="real_machine" default="false" />
   <arg name="simulation" default="false" />
   <arg name="robot_ns" default="gimbalrotor" />
+  <arg name="room" default="8-0066"/>
+  <arg name="pcd_filepath" default="$(find aerialrobot_estimation)/PCD/$(arg room).pcd" />
 
   <group ns="$(arg robot_ns)">
 
@@ -24,6 +26,9 @@
           <arg name="rviz" value="false" />
         </include>
 
+        <!-- livox mid360 & fast lio -->
+        <node pkg="pcl_ros" type="pcd_to_pointcloud" name="map_publisher" output="screen" args="$(arg map) 0 _frame_id:=map cloud_pcd:=/$(arg prefix)/3d_map _latch:=true" />
+
       </group>
     </group>
 
@@ -31,6 +36,8 @@
     <rosparam file="$(find gimbalrotor)/config/sensors/imu/spinal.yaml" command="load" />
     <rosparam file="$(find aerial_robot_base)/config/sensors/mocap.yaml" command="load" />
     <rosparam file="$(find aerial_robot_base)/config/sensors/lio/livox_mid360.yaml" command="load" />
+    <rosparam file="$(find aerial_robot_base)/config/sensors/gicp/PtPicp.yaml" command="load" />
+
   </group>
 
 </launch>
