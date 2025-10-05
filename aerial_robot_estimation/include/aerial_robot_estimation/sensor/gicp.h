@@ -108,7 +108,7 @@ namespace sensor_plugin
                          Eigen::Matrix4f& T_out,
                          double& fitness_out);
 
-    void publishOdomAndTF(const ros::Time& stamp, const Eigen::Matrix4f& Tmo);
+    void publishOdom(const ros::Time& stamp, const Eigen::Matrix4f& Tmo);
     void pushGroundTruthToEstimator(const Eigen::Matrix4f& Tmo,
                                     const nav_msgs::Odometry& cur_odom);
 
@@ -126,7 +126,6 @@ namespace sensor_plugin
 
     std::string target_frame_;
     bool oneshot_{false};
-    bool reverse_tf_{false};
     double localization_freq_{0.5};
 
     // data

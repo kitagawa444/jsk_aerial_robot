@@ -27,7 +27,7 @@
         </include>
 
         <!-- gicp -->
-        <node pkg="pcl_ros" type="pcd_to_pointcloud" name="map_publisher" output="screen" args="$(arg pcd_filepath) 0 _frame_id:=map cloud_pcd:=/$(arg robot_ns)/3d_map _latch:=true" />
+        <node pkg="pcl_ros" type="pcd_to_pointcloud" name="map_publisher" output="screen" args="$(arg pcd_filepath) 0 _frame_id:=world cloud_pcd:=/$(arg robot_ns)/threeD_map _latch:=true" />
 
       </group>
     </group>

@@ -50,18 +50,11 @@ namespace sensor_plugin
                              boost::shared_ptr<aerial_robot_estimation::StateEstimator> estimator,
                              std::string sensor_name, int index)
   {
-    // 親クラスの initialize
     SensorBase::initialize(nh, robot_model, estimator, sensor_name, index);
 
     // パラメータ（Base の getParam を利用）
     getParam<double>("localization_freq", localization_freq_, 0.5);
     getParam<bool>("oneshot", oneshot_, false);
-    getParam<bool>("reverse_tf", reverse_tf_, false);
-
-    // target_frame（tf_prefix は Base が保持していないので param から直接）
-    std::string tf_prefix;
-    nhp_.param<std::string>("tf_prefix", tf_prefix, std::string(""));
-    target_frame_ = tf_prefix.empty() ? std::string("camera_init") : tf_prefix + "/camera_init";
 
     // 初期推定値
     std::vector<double> pos{0,0,0}, rpy{0,0,0};
@@ -91,12 +84,15 @@ namespace sensor_plugin
 
     // Global map の取得
     ROS_WARN("[%s] waiting for global map...", indexed_nhp_.getNamespace().c_str());
-    if (auto msg = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("3d_map", nh_)) {
+    if (auto msg = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("threeD_map", nh_)) {
       initGlobalMap(*msg);
+      setStatus(Status::INIT);
       ROS_INFO("[%s] global map loaded", indexed_nhp_.getNamespace().c_str());
     } else {
+      setStatus(Status::INVALID);
       ROS_ERROR("[%s] failed to get global map", indexed_nhp_.getNamespace().c_str());
     }
+   
 
     // タイマ
     if (oneshot_) {
@@ -251,7 +247,7 @@ namespace sensor_plugin
     }
     T_map_to_odom_ = T_est;
 
-    publishOdomAndTF(od->header.stamp, T_map_to_odom_);
+    publishOdom(od->header.stamp, T_map_to_odom_);
     pushGroundTruthToEstimator(T_map_to_odom_, *od);
   }
 
@@ -281,7 +277,7 @@ namespace sensor_plugin
     sensor_msgs::PointCloud2 msg;
     pcl::toROSMsg(*out, msg);
     msg.header = od->header;
-    msg.header.frame_id = "map";
+    msg.header.frame_id = "world";
     pub_submap_.publish(msg);
     return out;
   }
@@ -334,7 +330,7 @@ namespace sensor_plugin
     fitness_out = 1.0 / (1.0 + e);
   }
 
-  void GlobalICP::publishOdomAndTF(const ros::Time& stamp, const Eigen::Matrix4f& Tmo)
+  void GlobalICP::publishOdom(const ros::Time& stamp, const Eigen::Matrix4f& Tmo)
   {
     nav_msgs::Odometry od;
     od.header.stamp = stamp;
@@ -351,30 +347,6 @@ namespace sensor_plugin
     od.pose.pose.orientation.z = q.z();
     od.pose.pose.orientation.w = q.w();
     pub_map_to_odom_.publish(od);
-
-    geometry_msgs::TransformStamped st;
-    st.header.stamp = stamp;
-    st.header.frame_id = reverse_tf_ ? target_frame_ : "map";
-    st.child_frame_id = reverse_tf_ ? "map" : target_frame_;
-
-    if (reverse_tf_) {
-      tf::Transform inv = tfmo.inverse();
-      st.transform.translation.x = inv.getOrigin().x();
-      st.transform.translation.y = inv.getOrigin().y();
-      st.transform.translation.z = inv.getOrigin().z();
-      tf::Quaternion qi;
-      inv.getBasis().getRotation(qi);
-      st.transform.rotation.x = qi.x();
-      st.transform.rotation.y = qi.y();
-      st.transform.rotation.z = qi.z();
-      st.transform.rotation.w = qi.w();
-    } else {
-      st.transform.translation.x = od.pose.pose.position.x;
-      st.transform.translation.y = od.pose.pose.position.y;
-      st.transform.translation.z = od.pose.pose.position.z;
-      st.transform.rotation      = od.pose.pose.orientation;
-    }
-    tfbr_.sendTransform(st);
   }
 
   void GlobalICP::pushGroundTruthToEstimator(const Eigen::Matrix4f& Tmo,
@@ -398,14 +370,11 @@ namespace sensor_plugin
 
     tf::Matrix3x3 R = tfmb.getBasis();
     estimator_->setOrientation(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH, R);
-
-    estimator_->setVel(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH, tf::Vector3(0,0,0));
-    estimator_->setAngularVel(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH, tf::Vector3(0,0,0));
-
     estimator_->setStateStatus(State::X_BASE, aerial_robot_estimation::GROUND_TRUTH, true);
     estimator_->setStateStatus(State::Y_BASE, aerial_robot_estimation::GROUND_TRUTH, true);
     estimator_->setStateStatus(State::Z_BASE, aerial_robot_estimation::GROUND_TRUTH, true);
     estimator_->setStateStatus(State::Base::Rot, aerial_robot_estimation::GROUND_TRUTH, true);
+    setStatus(Status::ACTIVE);
   }
 
 } // namespace sensor_plugin

@@ -479,7 +479,6 @@ namespace aerial_robot_estimation
     const boost::shared_ptr<sensor_plugin::SensorBase> getPlaneDetectionHandlers(int i) const { return plane_detection_handlers_.at(i);}
     const boost::shared_ptr<sensor_plugin::SensorBase> getGicpHandlers(int i) const { return gicp_handlers_.at(i);}
 
-
   protected:
 
     ros::NodeHandle nh_;

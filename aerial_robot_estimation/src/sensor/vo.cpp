@@ -1,3 +1,4 @@
+
 // -*- mode: c++ -*-
 /*********************************************************************
  * Software License Agreement (BSD License)
@@ -149,40 +150,34 @@ namespace sensor_plugin
 
     if(getStatus() == Status::INACTIVE)
       {
+	auto waitIfHandlersMissing = [&](const char* label,
+					 const std::vector<boost::shared_ptr<sensor_plugin::SensorBase>>& handlers,
+					 double throttle_sec = 1.0) -> bool
+				     {
+				       if (handlers.empty()) return false;  // 無いならスルー
+				       for (const auto& h : handlers) {
+					 if (h->getStatus() == Status::ACTIVE) return false;  // 1つでもACTIVEならOK
+				       }
+				       ROS_WARN_THROTTLE(throttle_sec, "%s: no %s is initialized, wait",
+							 indexed_nhp_.getNamespace().c_str(), label);
+				       return true; // あるのに全部非ACTIVE → 待つ
+				     };
         /* for z */
-        bool alt_initialized = false;
-        for(const auto& handler: estimator_->getAltHandlers())
-          {
-            if(handler->getStatus() == Status::ACTIVE)
-              {
-                alt_initialized = true;
-                break;
-              }
-          }
+	if (waitIfHandlersMissing("altimeter", estimator_->getAltHandlers(), 1.0)) {
+	  z_vel_mode_ = true;   // 高度計が未初期化なら z は速度モードにフォールバック
+	  return;
+	}
 
-        if(!alt_initialized && estimator_->getAltHandlers().size() > 0)
-          {
-            ROS_WARN_THROTTLE(1, "vo: no altimeter is initialized, wait");
-            z_vel_mode_ = true;
-            return;
-          }
+	// --- IMU ---
+	if (waitIfHandlersMissing("imu", estimator_->getImuHandlers(), 1.0)) {
+	  return;
+	}
 
-        bool imu_initialized = false;
-        for(const auto& handler: estimator_->getImuHandlers())
-          {
-            if(handler->getStatus() == Status::ACTIVE)
-              {
-                imu_initialized = true;
-                break;
-              }
-          }
-
-        if(!imu_initialized)
-          {
-            ROS_WARN_THROTTLE(1, "vo: no imu is initialized, wait");
-            return;
-          }
-
+	// --- GICP（ある場合のみ）---
+	if (waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 2.0)) {
+	  return;
+	}
+	
         auto sensor_view_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE) * sensor_tf_.getBasis();
         if(vio_mode_)
           {
@@ -237,7 +232,7 @@ namespace sensor_plugin
               }
           }
 
-        /** step1: ^{w}H_{b} **/
+	/** step1: ^{w}H_{b} **/
         tf::Transform w_b_f;
         tf::Matrix3x3 base_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE);
         w_b_f.setBasis(base_rot);
@@ -264,7 +259,7 @@ namespace sensor_plugin
         /** step3: ^{w}H_{vo} = ^{w}H_{b} * ^{b}H_{vo} **/
         world_offset_tf_ = w_b_f * vo_b_f.inverse();
 
-        /* publish the offset tf if necessary */
+	/* publish the offset tf if necessary */
         geometry_msgs::TransformStamped static_transformStamped;
         static_transformStamped.header.stamp = vo_msg->header.stamp;
         static_transformStamped.header.frame_id = "world";
