@@ -87,6 +87,7 @@ namespace sensor_plugin
     double vel_outlier_thresh_;
     double downwards_vo_min_height_;
     double downwards_vo_max_height_;
+    double downwards_rate_thresh_;
     int fusion_mode_;
     bool vio_mode_; // visual + inertial mode
     bool z_vel_mode_;

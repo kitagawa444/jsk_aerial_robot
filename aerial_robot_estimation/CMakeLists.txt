@@ -20,6 +20,8 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   tf_conversions
   jsk_recognition_msgs
+  pcl_ros 
+  pcl_conversions
 )
 
 find_package(OpenCV REQUIRED)
@@ -31,7 +33,7 @@ generate_dynamic_reconfigure_options(
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME} sensor_pluginlib
-  CATKIN_DEPENDS aerial_robot_model aerial_robot_msgs cv_bridge dynamic_reconfigure geodesy geographic_msgs geometry_msgs kalman_filter nav_msgs nodelet pluginlib sensor_msgs spinal tf tf_conversions jsk_recognition_msgs
+  CATKIN_DEPENDS aerial_robot_model aerial_robot_msgs cv_bridge dynamic_reconfigure geodesy geographic_msgs geometry_msgs kalman_filter nav_msgs nodelet pluginlib sensor_msgs spinal tf tf_conversions jsk_recognition_msgs pcl_ros pcl_conversions
 )
 
 include_directories(
@@ -51,9 +53,10 @@ add_library(sensor_pluginlib
   src/sensor/mocap.cpp
   src/sensor/gps.cpp
   src/sensor/imu.cpp
-  src/sensor/plane_detection.cpp)
+  src/sensor/plane_detection.cpp
+  src/sensor/gicp.cpp)
 
-target_link_libraries(sensor_pluginlib ${catkin_LIBRARIES})
+target_link_libraries(sensor_pluginlib aerial_robot_estimation ${catkin_LIBRARIES})
 add_dependencies(sensor_pluginlib aerial_robot_msgs_generate_messages_cpp spinal_generate_messages_cpp)
 
 ### kalman filter plugins

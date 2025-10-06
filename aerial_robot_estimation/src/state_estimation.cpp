@@ -46,7 +46,7 @@ StateEstimator::StateEstimator()
     un_descend_flag_(false),
     force_att_control_flag_(false),
     has_groundtruth_odom_(false),
-    imu_handlers_(0), alt_handlers_(0), vo_handlers_(0), gps_handlers_(0), plane_detection_handlers_(0)
+    imu_handlers_(0), alt_handlers_(0), vo_handlers_(0), gps_handlers_(0), plane_detection_handlers_(0), gicp_handlers_(0)
 {
   fuser_[0].resize(0);
   fuser_[1].resize(0);
@@ -140,8 +140,7 @@ void StateEstimator::statePublish(const ros::TimerEvent & e)
 
       switch(axis)
         {
-        case State::X_COG:
-          r_state.id = "x_cog";
+        case State::X_COG:          r_state.id = "x_cog";
           break;
         case State::Y_COG:
           r_state.id = "y_cog";
@@ -330,6 +329,11 @@ void StateEstimator::rosParamInit()
               sensor_index.back() = plane_detection_handlers_.size();
             }
 
+          if(name.find("gicp") != std::string::npos)
+            {
+              gicp_handlers_.push_back(sensors_.back());
+              sensor_index.back() = gicp_handlers_.size();
+            }
 
           sensors_.back()->initialize(nh_, robot_model_, shared_from_this(), name, sensor_index.back());
           break;

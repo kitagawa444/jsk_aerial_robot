@@ -1,3 +1,4 @@
+
 // -*- mode: c++ -*-
 /*********************************************************************
  * Software License Agreement (BSD License)
@@ -150,38 +151,20 @@ namespace sensor_plugin
     if(getStatus() == Status::INACTIVE)
       {
         /* for z */
-        bool alt_initialized = false;
-        for(const auto& handler: estimator_->getAltHandlers())
-          {
-            if(handler->getStatus() == Status::ACTIVE)
-              {
-                alt_initialized = true;
-                break;
-              }
-          }
+        if (waitIfHandlersMissing("altimeter", estimator_->getAltHandlers(), 1.0, indexed_nhp_.getNamespace())) {
+          z_vel_mode_ = true;
+          return;
+        }
 
-        if(!alt_initialized && estimator_->getAltHandlers().size() > 0)
-          {
-            ROS_WARN_THROTTLE(1, "vo: no altimeter is initialized, wait");
-            z_vel_mode_ = true;
-            return;
-          }
+        // --- IMU ---
+        if (waitIfHandlersMissing("imu", estimator_->getImuHandlers(), 1.0, indexed_nhp_.getNamespace())) {
+          return;
+        }
 
-        bool imu_initialized = false;
-        for(const auto& handler: estimator_->getImuHandlers())
-          {
-            if(handler->getStatus() == Status::ACTIVE)
-              {
-                imu_initialized = true;
-                break;
-              }
-          }
-
-        if(!imu_initialized)
-          {
-            ROS_WARN_THROTTLE(1, "vo: no imu is initialized, wait");
-            return;
-          }
+        // --- GICP---
+        if (waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 2.0, indexed_nhp_.getNamespace())) {
+          return;
+        }
 
         auto sensor_view_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE) * sensor_tf_.getBasis();
         if(vio_mode_)
@@ -193,8 +176,8 @@ namespace sensor_plugin
           }
 
         /* can not start fusion from this sensor if the sensor is downward and the height is too low */
-        double downward_rate = (sensor_view_rot * tf::Vector3(1,0,0)).z();
-        if(downward_rate < -0.8 &&
+        double downward_rate = (sensor_view_rot * tf::Vector3(0,0,1)).z();
+        if(downward_rate < downwards_rate_thresh_ &&
            estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0] < downwards_vo_min_height_)
           {
             return;
@@ -351,6 +334,36 @@ namespace sensor_plugin
       setStatus(Status::ACTIVE);
     }
 
+    if(waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 0.0, indexed_nhp_.getNamespace())){
+      //update world offset if use gicp
+      /** step1: ^{w}H_{b} **/
+      tf::Transform w_b_f;
+      tf::Matrix3x3 base_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE);
+      w_b_f.setBasis(base_rot);
+
+      tf::Vector3 baselink_pos = estimator_->getPos(Frame::BASELINK, EGOMOTION_ESTIMATE);
+      if(estimator_->getStateStatus(State::X_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setX(baselink_pos.x());
+      if(estimator_->getStateStatus(State::Y_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setY(baselink_pos.y());
+      if(estimator_->getStateStatus(State::Z_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setZ(baselink_pos.z());
+
+      /* set the offset if we know the ground truth */
+      if(estimator_->getStateStatus(State::Base::Rot, aerial_robot_estimation::GROUND_TRUTH))
+        {
+          w_b_f.setOrigin(estimator_->getPos(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH));
+          base_rot = estimator_->getOrientation(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH);
+          w_b_f.setBasis(base_rot);
+        }
+
+      /** step2: ^{vo}H_{b} **/
+      tf::Transform vo_b_f = raw_sensor_tf * sensor_tf_.inverse(); // ^{vo}H_{b}
+
+      /** step3: ^{w}H_{vo} = ^{w}H_{b} * ^{b}H_{vo} **/
+      world_offset_tf_ = w_b_f * vo_b_f.inverse();
+    }
+
     /* transformaton from baselink to vo sensor, if we use the servo motor */
 
     baselink_tf_ = world_offset_tf_ * raw_sensor_tf * sensor_tf_.inverse();
@@ -450,20 +463,15 @@ namespace sensor_plugin
     if(vio_mode_)
       sensor_view_rot = baselink_tf_.getBasis() * sensor_tf_.getBasis();
     else sensor_view_rot = baselink_r * sensor_tf_.getBasis();
+    double downward_rate = (sensor_view_rot * tf::Vector3(0,0,1)).z();
+    double height = estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0];
 
-    if((sensor_view_rot * tf::Vector3(1,0,0)).z() < -0.8)
+    if(downward_rate < downwards_rate_thresh_ && (height < downwards_vo_min_height_ || height > downwards_vo_max_height_))
       {
-        double height = estimator_->getState(State::Z_BASE, EGOMOTION_ESTIMATE)[0];
-
-        if(height < downwards_vo_min_height_ || height > downwards_vo_max_height_)
+        if (estimator_->hasRefinedYawEstimate(EGOMOTION_ESTIMATE))
           {
-            if (estimator_->hasRefinedYawEstimate(EGOMOTION_ESTIMATE))
-              {
-                ROS_WARN_STREAM(indexed_nhp_.getNamespace() <<": refined yaw estimate becomes false");
-                estimator_->SetRefinedYawEstimate(EGOMOTION_ESTIMATE, false);
-              }
-
-            return;
+            ROS_WARN_STREAM(indexed_nhp_.getNamespace() <<": refined yaw estimate becomes false");
+            estimator_->SetRefinedYawEstimate(EGOMOTION_ESTIMATE, false);
           }
       }
     else
@@ -638,6 +646,7 @@ namespace sensor_plugin
     getParam<double>("vel_outlier_thresh", vel_outlier_thresh_, 1.0);
     getParam<double>("downwards_vo_min_height", downwards_vo_min_height_, 0.8);
     getParam<double>("downwards_vo_max_height", downwards_vo_max_height_, 10.0);
+    getParam<double>("downwards_rate_thresh", downwards_rate_thresh_, -0.8);
 
     getParam<std::string>("joint", joint_name_, std::string("servo"));
     getParam<bool>("servo_auto_change_flag", servo_auto_change_flag_, false );
