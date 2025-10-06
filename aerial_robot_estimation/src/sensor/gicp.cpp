@@ -52,11 +52,11 @@ namespace sensor_plugin
   {
     SensorBase::initialize(nh, robot_model, estimator, sensor_name, index);
 
-    // パラメータ（Base の getParam を利用）
+    // param
     getParam<double>("localization_freq", localization_freq_, 0.5);
     getParam<bool>("oneshot", oneshot_, false);
 
-    // 初期推定値
+    // initial pose
     std::vector<double> pos{0,0,0}, rpy{0,0,0};
     nhp_.param("initial_guess/pos", pos, pos);
     nhp_.param("initial_guess/rpy", rpy, rpy);
@@ -68,7 +68,7 @@ namespace sensor_plugin
     init_tf.setBasis(R);
     tfToEigen(init_tf, T_map_to_odom_);
 
-    // registration フェーズ
+    // registration definition
     loadPhase("init",  0.4, 0.1, 1.0, 0.60, 15.0, 8.0);
     loadPhase("float", 0.3, 0.1, 0.6, 0.75, 12.0, 6.0);
     loadPhase("fix",   0.2, 0.1, 0.3, 0.85, 10.0, 5.0);
@@ -82,7 +82,7 @@ namespace sensor_plugin
     sub_scan_ = nh_.subscribe("cloud_registered", 1, &GlobalICP::cbScan, this);
     sub_odom_ = nh_.subscribe("Odometry", 1, &GlobalICP::cbOdom, this);
 
-    // Global map の取得
+    // Load Global map
     ROS_WARN("[%s] waiting for global map...", indexed_nhp_.getNamespace().c_str());
     if (auto msg = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("threeD_map", nh_)) {
       initGlobalMap(*msg);
@@ -92,9 +92,8 @@ namespace sensor_plugin
       setStatus(Status::INVALID);
       ROS_ERROR("[%s] failed to get global map", indexed_nhp_.getNamespace().c_str());
     }
-   
 
-    // タイマ
+    // timer
     if (oneshot_) {
       timer_ = nh_.createTimer(ros::Duration(0.01), &GlobalICP::timerOnce, this, true, true);
     } else {
@@ -187,7 +186,7 @@ namespace sensor_plugin
   {
     if (!ready()) return;
 
-    // BaseLink->Sensor TF を（必要なら）更新
+    // BaseLink->Sensor TF
     updateBaseLink2SensorTransform();
 
     nav_msgs::Odometry::ConstPtr od;
@@ -325,7 +324,7 @@ namespace sensor_plugin
     icp.align(aligned, init);
 
     T_out = icp.getFinalTransformation();
-    // PCL の FitnessScore は平均対応点距離に比例するので、簡易に 1/(1+e) 的な正規化でもOK
+    // PCL FitnessScore
     const double e = icp.getFitnessScore();
     fitness_out = 1.0 / (1.0 + e);
   }
@@ -354,7 +353,7 @@ namespace sensor_plugin
   {
     if (!estimator_) return;
 
-    // ^wT_b = ^wT_o * ^oT_b  （ここでは w=map, o=odom）
+    // ^mT_b = ^mT_o * ^oT_b(especially in aerial robot, map->world)
     tf::Transform tfmo = eigenToTf(Tmo);
     tf::Transform tfob(tf::Quaternion(cur_odom.pose.pose.orientation.x,
                                       cur_odom.pose.pose.orientation.y,

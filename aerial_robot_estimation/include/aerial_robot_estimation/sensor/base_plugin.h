@@ -308,6 +308,24 @@ namespace sensor_plugin
       if(param_verbose_)
         ROS_INFO_STREAM("[" << indexed_nhp_.getNamespace() << "] " << param_name << ": " << param);
     }
-  };
 
+    bool waitIfHandlersMissing(
+                               const char* label,
+                               const std::vector<boost::shared_ptr<sensor_plugin::SensorBase>>& handlers,
+                               double throttle_sec,
+                               const std::string& ns) const
+    {
+      // chech handler
+      if (handlers.empty()) return false;
+
+      for (const auto& h : handlers) {
+        if (!h) continue;
+        if (h->getStatus() == Status::ACTIVE) return false;
+      }
+
+      const std::string& who = ns.empty() ? nhp_.getNamespace() : ns;
+      ROS_WARN_THROTTLE(throttle_sec, "%s: no %s is initialized, wait", who.c_str(), label);
+      return true;
+    }
+  };
 };

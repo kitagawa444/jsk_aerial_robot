@@ -150,34 +150,22 @@ namespace sensor_plugin
 
     if(getStatus() == Status::INACTIVE)
       {
-	auto waitIfHandlersMissing = [&](const char* label,
-					 const std::vector<boost::shared_ptr<sensor_plugin::SensorBase>>& handlers,
-					 double throttle_sec = 1.0) -> bool
-				     {
-				       if (handlers.empty()) return false;  // 無いならスルー
-				       for (const auto& h : handlers) {
-					 if (h->getStatus() == Status::ACTIVE) return false;  // 1つでもACTIVEならOK
-				       }
-				       ROS_WARN_THROTTLE(throttle_sec, "%s: no %s is initialized, wait",
-							 indexed_nhp_.getNamespace().c_str(), label);
-				       return true; // あるのに全部非ACTIVE → 待つ
-				     };
         /* for z */
-	if (waitIfHandlersMissing("altimeter", estimator_->getAltHandlers(), 1.0)) {
-	  z_vel_mode_ = true;   // 高度計が未初期化なら z は速度モードにフォールバック
-	  return;
-	}
+        if (waitIfHandlersMissing("altimeter", estimator_->getAltHandlers(), 1.0, indexed_nhp_.getNamespace())) {
+          z_vel_mode_ = true;
+          return;
+        }
 
-	// --- IMU ---
-	if (waitIfHandlersMissing("imu", estimator_->getImuHandlers(), 1.0)) {
-	  return;
-	}
+        // --- IMU ---
+        if (waitIfHandlersMissing("imu", estimator_->getImuHandlers(), 1.0, indexed_nhp_.getNamespace())) {
+          return;
+        }
 
-	// --- GICP（ある場合のみ）---
-	if (waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 2.0)) {
-	  return;
-	}
-	
+        // --- GICP---
+        if (waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 2.0, indexed_nhp_.getNamespace())) {
+          return;
+        }
+
         auto sensor_view_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE) * sensor_tf_.getBasis();
         if(vio_mode_)
           {
@@ -232,7 +220,7 @@ namespace sensor_plugin
               }
           }
 
-	/** step1: ^{w}H_{b} **/
+        /** step1: ^{w}H_{b} **/
         tf::Transform w_b_f;
         tf::Matrix3x3 base_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE);
         w_b_f.setBasis(base_rot);
@@ -259,7 +247,7 @@ namespace sensor_plugin
         /** step3: ^{w}H_{vo} = ^{w}H_{b} * ^{b}H_{vo} **/
         world_offset_tf_ = w_b_f * vo_b_f.inverse();
 
-	/* publish the offset tf if necessary */
+        /* publish the offset tf if necessary */
         geometry_msgs::TransformStamped static_transformStamped;
         static_transformStamped.header.stamp = vo_msg->header.stamp;
         static_transformStamped.header.frame_id = "world";
@@ -344,6 +332,36 @@ namespace sensor_plugin
     {
       prev_sensor_tf = raw_sensor_tf;
       setStatus(Status::ACTIVE);
+    }
+
+    if(waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 0.0, indexed_nhp_.getNamespace())){
+      //update world offset if use gicp
+      /** step1: ^{w}H_{b} **/
+      tf::Transform w_b_f;
+      tf::Matrix3x3 base_rot = estimator_->getOrientation(Frame::BASELINK, EGOMOTION_ESTIMATE);
+      w_b_f.setBasis(base_rot);
+
+      tf::Vector3 baselink_pos = estimator_->getPos(Frame::BASELINK, EGOMOTION_ESTIMATE);
+      if(estimator_->getStateStatus(State::X_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setX(baselink_pos.x());
+      if(estimator_->getStateStatus(State::Y_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setY(baselink_pos.y());
+      if(estimator_->getStateStatus(State::Z_BASE, EGOMOTION_ESTIMATE))
+        w_b_f.getOrigin().setZ(baselink_pos.z());
+
+      /* set the offset if we know the ground truth */
+      if(estimator_->getStateStatus(State::Base::Rot, aerial_robot_estimation::GROUND_TRUTH))
+        {
+          w_b_f.setOrigin(estimator_->getPos(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH));
+          base_rot = estimator_->getOrientation(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH);
+          w_b_f.setBasis(base_rot);
+        }
+
+      /** step2: ^{vo}H_{b} **/
+      tf::Transform vo_b_f = raw_sensor_tf * sensor_tf_.inverse(); // ^{vo}H_{b}
+
+      /** step3: ^{w}H_{vo} = ^{w}H_{b} * ^{b}H_{vo} **/
+      world_offset_tf_ = w_b_f * vo_b_f.inverse();
     }
 
     /* transformaton from baselink to vo sensor, if we use the servo motor */
