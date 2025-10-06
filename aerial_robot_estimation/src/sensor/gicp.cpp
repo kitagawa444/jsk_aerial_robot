@@ -95,7 +95,7 @@ namespace sensor_plugin
 
     // timer
     if (oneshot_) {
-      timer_ = nh_.createTimer(ros::Duration(0.01), &GlobalICP::timerOnce, this, true, true);
+      timer_ = nh_.createTimer(ros::Duration(0.05), &GlobalICP::timerUntilReady, this, /*oneshot=*/false, /*autostart=*/true);
     } else {
       const double hz = std::max(0.01, localization_freq_);
       timer_ = nh_.createTimer(ros::Duration(1.0 / hz), &GlobalICP::timerCB, this);
@@ -173,7 +173,16 @@ namespace sensor_plugin
     updateHealthStamp(0);
   }
 
-  void GlobalICP::timerOnce(const ros::TimerEvent&) { doLocalization(); }
+  void GlobalICP::timerUntilReady(const ros::TimerEvent&)
+  {
+    if (oneshot_done_) { timer_.stop(); return; }
+    if (!ready()) return;
+
+    doLocalization();
+    oneshot_done_ = true;
+    timer_.stop();
+  }
+  
   void GlobalICP::timerCB(const ros::TimerEvent&)   { doLocalization(); }
 
   bool GlobalICP::ready()
@@ -353,16 +362,20 @@ namespace sensor_plugin
   {
     if (!estimator_) return;
 
-    // ^mT_b = ^mT_o * ^oT_b(especially in aerial robot, map->world)
+    // map to odom
     tf::Transform tfmo = eigenToTf(Tmo);
-    tf::Transform tfob(tf::Quaternion(cur_odom.pose.pose.orientation.x,
-                                      cur_odom.pose.pose.orientation.y,
-                                      cur_odom.pose.pose.orientation.z,
-                                      cur_odom.pose.pose.orientation.w),
-                       tf::Vector3(cur_odom.pose.pose.position.x,
-                                   cur_odom.pose.pose.position.y,
-                                   cur_odom.pose.pose.position.z));
-    tf::Transform tfmb = tfmo * tfob;
+    // odom to body(body is estimated tf by lio)
+    tf::Transform tfobo(tf::Quaternion(cur_odom.pose.pose.orientation.x,
+				       cur_odom.pose.pose.orientation.y,
+				       cur_odom.pose.pose.orientation.z,
+				       cur_odom.pose.pose.orientation.w),
+			tf::Vector3(cur_odom.pose.pose.position.x,
+				    cur_odom.pose.pose.position.y,
+				    cur_odom.pose.pose.position.z));
+    // body to baselink
+    tf::Transform tfbob = sensor_tf_.inverse();
+    // map to baselink
+    tf::Transform tfmb = tfmo * tfobo * tfbob;
 
     tf::Vector3 p = tfmb.getOrigin();
     estimator_->setPos(Frame::BASELINK, aerial_robot_estimation::GROUND_TRUTH, p);

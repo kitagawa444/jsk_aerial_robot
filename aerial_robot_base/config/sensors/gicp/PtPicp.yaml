@@ -4,12 +4,12 @@ sensor_plugin:
                 time_sync: false
                 registration:
                         init:
-                                map_voxel_size: 0.4
+                                map_voxel_size: 0.1
                                 scan_voxel_size: 0.1
-                                max_corres_dist: 1.0
-                                localization_thresh: 0.6
+                                max_corres_dist: 0.1
+                                localization_thresh: 0.85
                                 map_range: 15.0
-                                scan_range: 8.0
+                                scan_range: 15.0
                         float:
                                 map_voxel_size: 0.3
                                 scan_voxel_size: 0.1

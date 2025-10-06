@@ -56,8 +56,8 @@ sensor_plugin:
         gicp:
                 estimate_mode: 5
                 localization_freq: 2.0
-                oneshot: false
+                oneshot: true
                 reverse_tf: false
                 initial_guess:
-                        pos: [0.0, 0.0, 0.0]
+                        pos: [0.0, 0.0, 0.165]
                         rpy: [0.0, 0.0, 0.0]

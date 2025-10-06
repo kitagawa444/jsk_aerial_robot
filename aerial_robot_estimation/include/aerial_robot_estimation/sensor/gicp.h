@@ -126,6 +126,8 @@ namespace sensor_plugin
 
     std::string target_frame_;
     bool oneshot_{false};
+    bool oneshot_done_{false};
+    void timerUntilReady(const ros::TimerEvent&);
     double localization_freq_{0.5};
 
     // data

@@ -334,7 +334,7 @@ namespace sensor_plugin
       setStatus(Status::ACTIVE);
     }
 
-    if(waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 0.0, indexed_nhp_.getNamespace())){
+    if(!waitIfHandlersMissing("gicp", estimator_->getGicpHandlers(), 0.0, indexed_nhp_.getNamespace())){
       //update world offset if use gicp
       /** step1: ^{w}H_{b} **/
       tf::Transform w_b_f;
@@ -362,6 +362,15 @@ namespace sensor_plugin
 
       /** step3: ^{w}H_{vo} = ^{w}H_{b} * ^{b}H_{vo} **/
       world_offset_tf_ = w_b_f * vo_b_f.inverse();
+
+      /* publish the offset tf if necessary */
+      geometry_msgs::TransformStamped static_transformStamped;
+      static_transformStamped.header.stamp = vo_msg->header.stamp;
+      static_transformStamped.header.frame_id = "world";
+      static_transformStamped.child_frame_id = vo_msg->header.frame_id;
+      tf::transformTFToMsg(world_offset_tf_, static_transformStamped.transform);
+      static_broadcaster_.sendTransform(static_transformStamped);
+
     }
 
     /* transformaton from baselink to vo sensor, if we use the servo motor */
