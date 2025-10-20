@@ -2,24 +2,27 @@
  Created by li-jinjie on 24-10-5.
 """
 
-import yaml
-import os
-import rospkg
-
-# read parameters from yaml
-rospack = rospkg.RosPack()
-
-try:
-    physical_param_path = os.path.join(rospack.get_path("beetle_omni"), "config", "PhysParamBeetleOmni.yaml")
-except rospkg.common.ResourceNotFound:  # non-ROS environment
-    # Fallback: construct absolute path from current file
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(this_dir, "../../../../.."))
-    physical_param_path = os.path.join(project_root, "robots/beetle_omni/config/PhysParamBeetleOmni.yaml")
-
-with open(physical_param_path, "r") as f:
-    physical_param_dict = yaml.load(f, Loader=yaml.FullLoader)
-physical_params = physical_param_dict["physical"]
+physical_params = {
+    # with original ball and battery
+    "mass": 3.0386,  # kg
+    "gravity": 9.798,  #9.80665 # m/s^2    Tokyo 9.798; in sim: 9.80665
+    "inertia_diag": [0.0627958, 0.0620796, 0.0948795],  # kg m^2
+    "dr1": 1,  # direction of motor 1
+    "p1": [0.194824, 0.194652, -0.00368224],  # position of motor 1
+    "dr2": -1,  # direction of motor 2
+    "p2": [-0.194837, 0.194652, -0.00368224],  # position of motor 2
+    "dr3": 1,  # direction of motor 3
+    "p3": [-0.194837, -0.195008, -0.00368224],  # position of motor 3
+    "dr4": -1,  # direction of motor 4
+    "p4": [0.194824, -0.195008, -0.00368224],  # position of motor 4
+    "kq_d_kt": 0.0165,
+    "num_rotors": 4,
+    "t_rotor": 0.0942,
+    "num_servos": 4,
+    "t_servo": 0.0480,  # Dynamixel servo: XC330-T181 with self-tuned PID. As contrary, the previous kondo's value was 0.085883
+    "ball_effector_p": [0, 0, 0.264],  # m
+    "ball_effector_q": [1, 0, 0, 0],  # quaternion, qw, qx, qy, qz
+}
 
 mass = physical_params["mass"]
 gravity = physical_params["gravity"]

@@ -10,7 +10,24 @@ from ..tilt_qd import phys_param_beetle_omni as phys_omni
 class MHEWrenchEstMomentum(MHEBase):
     def __init__(self):
         # Read parameters from configuration file in the robot's package
-        self.read_params("controller", "mhe", "beetle_omni", "WrenchEstMHEMomentum.yaml")
+        self.params = {
+            "T_samp": 0.01,  # 100 Hz  TODO: should be adjusted by main_rate
+            "T_horizon": 0.2,  # seconds
+            "T_step": 0.01,  # seconds
+            # arrival cost
+            "P_v": 1,
+            "P_omega": 0.1,
+            "P_f_d": 0.1,
+            "P_tau_d": 0.1,
+            "R_v": 5,
+            "R_omega": 0.1,
+            "Q_w_f": 0.1,
+            "Q_w_tau": 0.1,
+        }
+
+        if "T_horizon" in self.params and "T_step" in self.params:
+             self.params["N_steps"] = int(self.params["T_horizon"] / self.params["T_step"])
+
         self.phys = phys_omni
 
         super(MHEWrenchEstMomentum, self).__init__()

@@ -2,7 +2,6 @@
 import os
 import yaml
 import rospy
-import rospkg
 import numpy as np
 from spinal.msg import Imu, ESCTelemetryArray
 from sensor_msgs.msg import JointState
@@ -12,19 +11,37 @@ from ..tilt_qd.qd_reference_generator import QDNMPCReferenceGenerator
 from ..tilt_qd import phys_param_beetle_omni as phys_omni
 
 
-# read parameters from yaml
-rospack = rospkg.RosPack()
+mhe_param_dict = {
+    "wrench_estimator_name": "aerial_robot_control::WrenchEstMHEAccMom",
+    "controller": {
+        "if_use_est_wrench_4_control": True,
+        "wrench_est": {
+            "calib_duration_t": 5.0,  # seconds
+            "lin_vel_threshold": [0.2, 0.2, 0.2],  # [x, y, z] m/s
+            "ang_vel_threshold": [0.3, 0.3, 0.3],  # [x, y, z] rad/s
+            "ext_force_limit": [10, 10, 10],  # N
+            "ext_torque_limit": [5, 5, 5],  # Nm
+            "thresh_force": 0.8,  # N
+            "thresh_torque": 0.5,  # Nm
+            "steepness_force": 10.0,
+            "steepness_torque": 10.0,
+        },
+        "mhe": {
+            "T_samp": 0.01,  # 100 Hz  TODO: should be adjusted by main_rate
+            "T_horizon": 0.2,  # seconds
+            "T_step": 0.01,  # seconds
+            # arrival cost
+            "P_omega": 0.1,
+            "P_f_d": 50,
+            "P_tau_d": 0.1,
+            "R_f_d": 0.1,
+            "R_omega": 0.1,
+            "Q_w_f": 1,
+            "Q_w_tau": 0.1,
+        },
+    },
+}
 
-try:
-    mhe_param_path = os.path.join(rospack.get_path("beetle_omni"), "config", "WrenchEstMHEAccMom.yaml")
-except rospkg.common.ResourceNotFound:  # non-ROS environment
-    # Fallback: construct absolute path from current file
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(this_dir, "../../../../.."))
-    mhe_param_path = os.path.join(project_root, "robots/beetle_omni/config/WrenchEstMHEAccMom.yaml")
-
-with open(mhe_param_path, "r") as f:
-    mhe_param_dict = yaml.load(f, Loader=yaml.FullLoader)
 mhe_params = mhe_param_dict["controller"]["mhe"]
 mhe_params["N_steps"] = int(mhe_params["T_horizon"] / mhe_params["T_step"])
 
