@@ -13,7 +13,26 @@ class MHEKinematics(RecedingHorizonBase):
 
     def __init__(self):
         # Read parameters from configuration file in the robot's package
-        self.read_params("estimation", "mhe", "beetle_omni", "StateEstimationMHE.yaml")
+        self.params = {
+            "T_samp": 0.005,  # 200 Hz  TODO: should be the same with IMU rate
+            "T_horizon": 0.1,  # seconds
+            "T_step": 0.005,  # seconds
+            # arrival cost
+            "P_p": 0.1,
+            "P_v": 0.1,
+            "P_a_sf": 0.1,
+            "P_q": 0.1,
+            "P_omega": 0.1,
+            # noise sigma
+            "R_p": 0.001,
+            "R_a_sf": 0.07,
+            "R_q": 0.01,
+            "R_omega": 0.008,
+            "Q_w_a_sf": 0.1,
+            "Q_w_omega": 0.1,
+        }
+
+        self.params["N_steps"] = int(self.params["T_horizon"] / self.params["T_step"])
         self.pyhs = pyhs_omni
 
         # Create acados model & solver and generate c code
