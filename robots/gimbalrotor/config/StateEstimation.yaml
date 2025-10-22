@@ -4,6 +4,7 @@ estimation:
         sensor_list:
         - sensor_plugin/imu
         - sensor_plugin/mocap
+        - sensor_plugin/vo
 
         # egomotion estimation
         egomotion_list:
@@ -45,3 +46,40 @@ sensor_plugin:
                 estimate_mode: 3 # 1<<0 + 1<<1
         mocap:
                 estimate_mode: 6 # 1<<1 + 1<<2
+        vo1:
+                estimate_mode: 1 # 1<<0
+                # fusion_mode: 2 # ONLY_POS_MODE = 0, ONLY_VEL_MODE = 1, POS_VEL_MODE = 2 (default)
+                # param_verbose: true
+                throttle_rate: 120 # Hz
+                downwards_vo_min_height: 0.1
+        gicp:
+                estimate_mode: 1
+                localization_freq: 2.0
+                oneshot: false
+                reverse_tf: false
+                initial_guess:
+                        pos: [0.0, 0.0, 0.0]
+                        rpy: [0.0, 0.0, 0.0]
+                registration:
+                        init:
+                                map_voxel_size: 0.4
+                                scan_voxel_size: 0.1
+                                max_corres_dist: 1.0
+                                localization_thresh: 0.6
+                                map_range: 15.0
+                                scan_range: 8.0
+                        float:
+                                map_voxel_size: 0.3
+                                scan_voxel_size: 0.1
+                                max_corres_dist: 0.6
+                                localization_thresh: 0.75
+                                map_range: 12.0
+                                scan_range: 6.0
+                        fix:
+                                map_voxel_size: 0.2
+                                scan_voxel_size: 0.1
+                                max_corres_dist: 0.3
+                                localization_thresh: 0.85
+                                map_range: 10.0
+                                scan_range: 5.0
+
