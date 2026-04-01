@@ -16,4 +16,8 @@
     <mu2>0.1</mu2>
   </gazebo>
 
+  <!-- Livox Mid360 LiDAR -->
+  <xacro:include filename="$(find mini_quadrotor)/urdf/livox_mid360.gazebo.xacro" />
+  <xacro:livox_mid360_gazebo frame="lidar_imu" tf_prefix="$(arg robot_name)"/>
+
 </robot>
