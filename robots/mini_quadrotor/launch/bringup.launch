@@ -102,5 +102,8 @@
   ########## Simple Demo #########
   <node pkg="aerial_robot_base" type="simple_demo.py" name="simple_demo" ns="$(arg robot_ns)" output="screen" if="$(arg demo)"/>
 
+  <include file="$(find mini_quadrotor)/launch/navigation.launch" >
+    <arg name="robot_ns" value="$(arg robot_ns)" />
+  </include>
 
 </launch>
