@@ -15,7 +15,7 @@ class CmdVelToFlightNav:
         nav = FlightNav()
         nav.header.stamp = rospy.Time.now()
 
-        nav.control_frame = FlightNav.WORLD_FRAME
+        nav.control_frame = FlightNav.LOCAL_FRAME
         nav.target = FlightNav.COG
 
         # XY velocity
