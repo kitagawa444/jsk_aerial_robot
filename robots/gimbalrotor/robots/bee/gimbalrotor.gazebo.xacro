@@ -9,4 +9,8 @@
   <xacro:include filename="$(find aerial_robot_simulation)/xacro/spinal.gazebo.xacro" />
   <xacro:gazebo_spinal robot_name="$(arg robot_name)" mag_frame="fc" />
 
+  <!-- Livox Mid360 LiDAR -->
+  <xacro:include filename="$(find aerial_robot_simulation)/xacro/livox_mid360.gazebo.xacro" />
+  <xacro:livox_mid360_gazebo frame="lidar_imu" tf_prefix="$(arg robot_name)"/>
+
 </robot>

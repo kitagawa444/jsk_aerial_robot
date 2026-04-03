@@ -3,11 +3,7 @@ Panels:
     Help Height: 78
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /Global Options1
-        - /Status1
-        - /RobotModel1
-        - /TF1
+      Expanded: ~
       Splitter Ratio: 0.5
     Tree Height: 579
   - Class: rviz/Selection
@@ -25,7 +21,6 @@ Panels:
     Name: Views
     Splitter Ratio: 0.5
   - Class: rviz/Time
-    Experimental: false
     Name: Time
     SyncMode: 0
     SyncSource: ""
@@ -88,7 +83,32 @@ Visualization Manager:
           Show Axes: false
           Show Trail: false
           Value: true
+        gimbal_link4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        lidar_imu:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
         root:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm4:
           Alpha: 1
           Show Axes: false
           Show Trail: false
@@ -104,6 +124,10 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
+        rotor_parent4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
         thrust1:
           Alpha: 1
           Show Axes: false
@@ -116,6 +140,10 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
+        thrust4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
       Name: RobotModel
       Robot Description: gimbalrotor/robot_description
       TF Prefix: gimbalrotor
@@ -124,6 +152,8 @@ Visualization Manager:
       Visual Enabled: true
     - Class: rviz/TF
       Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
       Frame Timeout: 15
       Frames:
         All Enabled: true
@@ -139,7 +169,19 @@ Visualization Manager:
           Value: true
         gimbalrotor/gimbal_link3:
           Value: true
+        gimbalrotor/gimbal_link4:
+          Value: true
+        gimbalrotor/lidar_imu:
+          Value: true
         gimbalrotor/root:
+          Value: true
+        gimbalrotor/rotor_arm1:
+          Value: true
+        gimbalrotor/rotor_arm2:
+          Value: true
+        gimbalrotor/rotor_arm3:
+          Value: true
+        gimbalrotor/rotor_arm4:
           Value: true
         gimbalrotor/rotor_parent1:
           Value: true
@@ -147,14 +189,19 @@ Visualization Manager:
           Value: true
         gimbalrotor/rotor_parent3:
           Value: true
+        gimbalrotor/rotor_parent4:
+          Value: true
         gimbalrotor/thrust1:
           Value: true
         gimbalrotor/thrust2:
           Value: true
         gimbalrotor/thrust3:
           Value: true
+        gimbalrotor/thrust4:
+          Value: true
         world:
           Value: true
+      Marker Alpha: 1
       Marker Scale: 0.5
       Name: TF
       Show Arrows: true
@@ -166,18 +213,28 @@ Visualization Manager:
             gimbalrotor/base_link:
               gimbalrotor/fc:
                 {}
-              gimbalrotor/gimbal_link1:
-                gimbalrotor/rotor_parent1:
-                  gimbalrotor/thrust1:
-                    {}
-              gimbalrotor/gimbal_link2:
-                gimbalrotor/rotor_parent2:
-                  gimbalrotor/thrust2:
-                    {}
-              gimbalrotor/gimbal_link3:
-                gimbalrotor/rotor_parent3:
-                  gimbalrotor/thrust3:
-                    {}
+              gimbalrotor/lidar_imu:
+                {}
+              gimbalrotor/rotor_arm1:
+                gimbalrotor/gimbal_link1:
+                  gimbalrotor/rotor_parent1:
+                    gimbalrotor/thrust1:
+                      {}
+              gimbalrotor/rotor_arm2:
+                gimbalrotor/gimbal_link2:
+                  gimbalrotor/rotor_parent2:
+                    gimbalrotor/thrust2:
+                      {}
+              gimbalrotor/rotor_arm3:
+                gimbalrotor/gimbal_link3:
+                  gimbalrotor/rotor_parent3:
+                    gimbalrotor/thrust3:
+                      {}
+              gimbalrotor/rotor_arm4:
+                gimbalrotor/gimbal_link4:
+                  gimbalrotor/rotor_parent4:
+                    gimbalrotor/thrust4:
+                      {}
             gimbalrotor/cog:
               {}
       Update Interval: 0
@@ -210,12 +267,13 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 0.934616208076477
+      Distance: 4.197744369506836
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
+      Field of View: 0.7853981852531433
       Focal Point:
         X: -0.17488805949687958
         Y: -0.28426408767700195
@@ -227,7 +285,6 @@ Visualization Manager:
       Near Clip Distance: 0.009999999776482582
       Pitch: 1.0403972864151
       Target Frame: <Fixed Frame>
-      Value: Orbit (rviz)
       Yaw: 4.7635817527771
     Saved: ~
 Window Geometry:
@@ -236,7 +293,7 @@ Window Geometry:
   Height: 882
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd000000040000000000000156000002cefc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003d000002ce000000c900fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000010f000002cefc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073010000003d000002ce000000a400fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e10000019700000003000004f300000044fc0100000002fb0000000800540069006d00650100000000000004f3000002eb00fffffffb0000000800540069006d0065010000000000000450000000000000000000000282000002ce00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd000000040000000000000156000002cefc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003d000002ce000000c900fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000010f000002cefc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073010000003d000002ce000000a400fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e10000019700000003000004f300000044fc0100000002fb0000000800540069006d00650100000000000004f3000003cc00fffffffb0000000800540069006d0065010000000000000450000000000000000000000282000002ce00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:
@@ -246,5 +303,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1267
-  X: 67
-  Y: 360
+  X: 70
+  Y: 281

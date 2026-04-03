@@ -100,4 +100,9 @@
     <arg name="spawn_yaw" value="$(arg spawn_yaw)" />
   </include>
 
+  <include file="$(find gimbalrotor)/launch/navigation.launch" >
+    <arg name="robot_ns" value="$(arg robot_ns)" />
+  </include>
+
+
 </launch>
