@@ -1,0 +1,7 @@
+package:
+  ["gimbalrotor"]
+
+gimbalrotor:
+  input: ["robots/bee/gimbalrotor.urdf.xacro"]
+  filename: ["bee"]
+  meshdir: urdf/bee/mesh

@@ -18,11 +18,11 @@ simulation:
 
   # drift model: e^(-dt * drift_frequency) * curr_drift + dt * gaussian_kernel(sqrt( 2 * drift_frequency) * drfit))
   # drift diviation:
-  ground_truth_vel_drift: 0
-  ground_truth_rot_drift: 0
-  ground_truth_angular_drift: 0
+  ground_truth_vel_drift: 0.1
+  ground_truth_rot_drift: 0.1
+  ground_truth_angular_drift: 0.01
 
   # drift frequency:
-  ground_truth_vel_drift_frequency: 0
-  ground_truth_rot_drift_frequency: 0
-  ground_truth_angular_drift_frequency: 0
+  ground_truth_vel_drift_frequency: 1
+  ground_truth_rot_drift_frequency: 1
+  ground_truth_angular_drift_frequency: 0.01
