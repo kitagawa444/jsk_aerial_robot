@@ -48,7 +48,7 @@
       <remap from ="cmd_vel" to="cmd_vel"/>
     </node>
 
-    <node pkg="mini_quadrotor" type="cmd_vel_to_flight_nav.py" name="cmd_vel_to_flight_nav" output="screen"/>
+    <node pkg="aerial_robot_control" type="cmd_vel_to_flight_nav.py" name="cmd_vel_to_flight_nav" output="screen"/>
 
   </group>
 </launch>
