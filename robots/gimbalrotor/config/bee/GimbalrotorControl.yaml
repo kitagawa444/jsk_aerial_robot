@@ -11,9 +11,9 @@ controller:
     i_gain: 0.4
     d_gain: 4.5
     limit_sum: 4.0
-    limit_p: 12.0
-    limit_i: 12.0
-    limit_d: 12.0
+    limit_p: 112.0
+    limit_i: 112.0
+    limit_d: 112.0
 
   z:
     p_gain: 5.0
@@ -21,19 +21,19 @@ controller:
     d_gain: 5.0
     limit_err_p: 1.0
     limit_sum: 25.0 # N for clamping thrust force
-    limit_p: 25.0
-    limit_i: 25.0
-    limit_d: 25.0
+    limit_p: 125.0
+    limit_i: 125.0
+    limit_d: 125.0
     force_landing_descending_rate: -0.5
 
   roll_pitch:
     p_gain: 43.0
     i_gain: 8.5
     d_gain: 15.5
-    limit_sum: 30.0
-    limit_p: 30.0
-    limit_i: 30.0
-    limit_d: 30.0
+    limit_sum: 130.0
+    limit_p: 130.0
+    limit_i: 130.0
+    limit_d: 130.0
 
     start_rp_integration_height: 0.01
 
@@ -43,8 +43,8 @@ controller:
     d_gain: 4.0
     limit_err_p: 0.5
     limit_sum: 20.0
-    limit_p: 20.0
-    limit_i: 20.0
-    limit_d: 20.0
+    limit_p: 120.0
+    limit_i: 120.0
+    limit_d: 210.0
 
     need_d_control: true

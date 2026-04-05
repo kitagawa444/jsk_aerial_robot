@@ -111,7 +111,7 @@
     <arg name="mujoco_model" value="$(find gimbalrotor)/mujoco/$(arg airframe)/robot.xml"/>
   </include>
 
-  <include file="$(find gimbalrotor)/launch/navigation.launch" >
+  <include file="$(find gimbalrotor)/launch/navigation.launch" unless="$(eval arg('mujoco'))">
     <arg name="robot_ns" value="$(arg robot_ns)" />
   </include>
 
