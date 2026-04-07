@@ -17,8 +17,10 @@ public:
   template <class T> std::vector<T> getLinksRotationFromCog();
   template <class T> std::vector<T> getThrustCoordRot();
 
-private:
+protected:
   void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
+
+private:
 
   KDL::JntArray gimbal_processed_joint_;
   std::vector<KDL::Rotation> links_rotation_from_cog_;

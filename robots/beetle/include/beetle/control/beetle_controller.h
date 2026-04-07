@@ -82,8 +82,16 @@ namespace aerial_robot_control
     void controlCore() override;
     
     virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
-    void rosParamInit() override;
-    void externalWrenchEstimate() override;
+    void rosParamInit();
+    void externalWrenchEstimate();
     void reset() override;
+
+    /* wrench estimation members */
+    ros::Publisher estimate_external_wrench_pub_;
+    Eigen::VectorXd est_external_wrench_;
+    Eigen::VectorXd integrate_term_;
+    Eigen::VectorXd init_sum_momentum_;
+    Eigen::MatrixXd momentum_observer_matrix_;
+    double prev_est_wrench_timestamp_;
   };
 };

@@ -22,21 +22,24 @@ namespace aerial_robot_navigation
 
     void update() override;
 
+  protected:
+    void rosParamInit() override;
+    void naviCallback(const aerial_robot_msgs::FlightNavConstPtr & msg) override;
+
+    /* target baselink rotation */
+    tf::Quaternion curr_target_baselink_rot_, final_target_baselink_rot_;
+
   private:
     ros::Publisher target_baselink_rpy_pub_;
     ros::Subscriber final_target_baselink_rot_sub_, final_target_baselink_rpy_sub_;
 
     void baselinkRotationProcess();
-    void rosParamInit() override;
     void targetBaselinkRotCallback(const geometry_msgs::QuaternionStampedConstPtr & msg);
     void targetBaselinkRPYCallback(const geometry_msgs::Vector3StampedConstPtr & msg);
-    void naviCallback(const aerial_robot_msgs::FlightNavConstPtr & msg) override;
 
     void reset() override;
 
-    /* target baselink rotation */
     double prev_rotation_stamp_;
-    tf::Quaternion curr_target_baselink_rot_, final_target_baselink_rot_;
     bool eq_cog_world_;
 
     /* rosparam */

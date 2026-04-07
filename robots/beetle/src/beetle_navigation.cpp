@@ -309,19 +309,20 @@ void BeetleNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr & 
           }
         break;
       }
-    case aerial_robot_msgs::FlightNav::STAY_HERE_MODE:
-      {
-        xy_control_mode_ = POS_CONTROL_MODE;
-        setTargetVelX(0);
-        setTargetVelY(0);
-        setTargetXyFromCurrentState();
-        break;
-      }      
     case aerial_robot_msgs::FlightNav::GPS_WAYPOINT_MODE:
       {
         target_wp_ = geodesy::toMsg(msg->target_pos_x, msg->target_pos_y);
         gps_waypoint_ = true;
 
+        break;
+      }
+    default:
+      {
+        /* stay here: default behavior for unknown modes */
+        xy_control_mode_ = POS_CONTROL_MODE;
+        setTargetVelX(0);
+        setTargetVelY(0);
+        setTargetXyFromCurrentState();
         break;
       }
     }
@@ -530,19 +531,20 @@ void BeetleNavigator::assemblyNavCallback(const aerial_robot_msgs::FlightNavCons
           }
         break;
       }
-    case aerial_robot_msgs::FlightNav::STAY_HERE_MODE:
-      {
-        xy_control_mode_ = POS_CONTROL_MODE;
-        setTargetVelX(0);
-        setTargetVelY(0);
-        setTargetXyFromCurrentState();
-        break;
-      }      
     case aerial_robot_msgs::FlightNav::GPS_WAYPOINT_MODE:
       {
         target_wp_ = geodesy::toMsg(msg->target_pos_x, msg->target_pos_y);
         gps_waypoint_ = true;
 
+        break;
+      }
+    default:
+      {
+        /* stay here: default behavior for unknown modes */
+        xy_control_mode_ = POS_CONTROL_MODE;
+        setTargetVelX(0);
+        setTargetVelY(0);
+        setTargetXyFromCurrentState();
         break;
       }
     }
@@ -592,7 +594,10 @@ void BeetleNavigator::assemblyNavCallback(const aerial_robot_msgs::FlightNavCons
 
 void BeetleNavigator::setAssemblyFinalTargetBaselinkRotCallback(const spinal::DesireCoordConstPtr & msg)
 {
-  if(getModuleState() != SEPARATED) GimbalrotorNavigator::setFinalTargetBaselinkRotCallback(msg);
+  if(getModuleState() != SEPARATED) {
+    final_target_baselink_rot_.setRPY(msg->roll, msg->pitch, msg->yaw);
+    target_omega_.setValue(0,0,0);
+  }
 }
 
 

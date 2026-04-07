@@ -25,6 +25,11 @@ namespace aerial_robot_control
                     double ctrl_loop_rate
                     ) override;
 
+  protected:
+    void rosParamInit();
+    virtual void reset() override;
+    void controlCore() override;
+
   private:
     ros::Publisher flight_cmd_pub_;
     ros::Publisher gimbal_control_pub_;
@@ -56,10 +61,7 @@ namespace aerial_robot_control
     bool underactuate_;
     double target_roll_ = 0.0, target_pitch_ = 0.0;
 
-    void rosParamInit();
     bool update() override;
-    virtual void reset() override;
-    void controlCore() override;
     void sendCmd() override;
     void sendFourAxisCommand();
     void sendGimbalCommand();

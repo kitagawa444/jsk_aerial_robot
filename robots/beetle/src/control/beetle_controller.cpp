@@ -57,6 +57,24 @@ namespace aerial_robot_control
     internal_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("internal_wrench", 1);
     wrench_comp_pid_pub_ = nh_.advertise<aerial_robot_msgs::PoseControlPid>("debug/wrench_comp/pid", 1);
     des_inter_wrench_pub_ = nh_.advertise<beetle::TaggedWrenches>("des_inter_wnrech", 1);
+    estimate_external_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("estimated_external_wrench", 1);
+
+    /* initialize wrench estimation members */
+    est_external_wrench_ = Eigen::VectorXd::Zero(6);
+    integrate_term_ = Eigen::VectorXd::Zero(6);
+    init_sum_momentum_ = Eigen::VectorXd::Zero(6);
+    prev_est_wrench_timestamp_ = 0;
+
+    {
+      ros::NodeHandle control_nh(nh_, "controller");
+      double momentum_observer_force_weight, momentum_observer_torque_weight;
+      control_nh.param("momentum_observer_force_weight", momentum_observer_force_weight, 5.0);
+      control_nh.param("momentum_observer_torque_weight", momentum_observer_torque_weight, 5.0);
+      momentum_observer_matrix_ = Eigen::MatrixXd::Zero(6,6);
+      momentum_observer_matrix_.topLeftCorner(3,3) = momentum_observer_force_weight * Eigen::Matrix3d::Identity();
+      momentum_observer_matrix_.bottomRightCorner(3,3) = momentum_observer_torque_weight * Eigen::Matrix3d::Identity();
+    }
+
     int max_modules_num = beetle_navigator_->getMaxModuleNum();
     for(int i = 0; i < max_modules_num; i++){
       std::string module_name  = string("/") + beetle_navigator_->getMyName() + std::to_string(i+1);
@@ -153,12 +171,12 @@ namespace aerial_robot_control
         prev_comp_update_time_ = ros::Time::now().toSec();
       }
 
-      pid_controllers_.at(FX).updateWoVel(I_reconfig_acc_cog_term(0) / IGain_Fx, du);
-      pid_controllers_.at(FY).updateWoVel(I_reconfig_acc_cog_term(1) / IGain_Fy, du);
-      pid_controllers_.at(FZ).updateWoVel(I_reconfig_acc_cog_term(2) / IGain_Fz, du);
-      pid_controllers_.at(TX).updateWoVel(I_reconfig_acc_cog_term(3) / IGain_Tx, du);
-      pid_controllers_.at(TY).updateWoVel(I_reconfig_acc_cog_term(4) / IGain_Ty, du);
-      pid_controllers_.at(TZ).updateWoVel(I_reconfig_acc_cog_term(5) / IGain_Tz, du);
+      pid_controllers_.at(FX).update(I_reconfig_acc_cog_term(0) / IGain_Fx, du, 0);
+      pid_controllers_.at(FY).update(I_reconfig_acc_cog_term(1) / IGain_Fy, du, 0);
+      pid_controllers_.at(FZ).update(I_reconfig_acc_cog_term(2) / IGain_Fz, du, 0);
+      pid_controllers_.at(TX).update(I_reconfig_acc_cog_term(3) / IGain_Tx, du, 0);
+      pid_controllers_.at(TY).update(I_reconfig_acc_cog_term(4) / IGain_Ty, du, 0);
+      pid_controllers_.at(TZ).update(I_reconfig_acc_cog_term(5) / IGain_Tz, du, 0);
 
       I_comp_Fx_ = pid_controllers_.at(FX).result();
       I_comp_Fy_ = pid_controllers_.at(FY).result();
@@ -167,12 +185,12 @@ namespace aerial_robot_control
       I_comp_Ty_ = pid_controllers_.at(TY).result();
       I_comp_Tz_ = pid_controllers_.at(TZ).result();
 
-      pid_controllers_.at(X).setICompTerm(I_comp_Fx_);
-      pid_controllers_.at(Y).setICompTerm(I_comp_Fy_);
-      pid_controllers_.at(Z).setICompTerm(I_comp_Fz_);
-      pid_controllers_.at(ROLL).setICompTerm(I_comp_Tx_);
-      pid_controllers_.at(PITCH).setICompTerm(I_comp_Ty_);
-      pid_controllers_.at(YAW).setICompTerm(I_comp_Tz_);
+      pid_controllers_.at(X).setErrI(I_comp_Fx_);
+      pid_controllers_.at(Y).setErrI(I_comp_Fy_);
+      pid_controllers_.at(Z).setErrI(I_comp_Fz_);
+      pid_controllers_.at(ROLL).setErrI(I_comp_Tx_);
+      pid_controllers_.at(PITCH).setErrI(I_comp_Ty_);
+      pid_controllers_.at(YAW).setErrI(I_comp_Tz_);
       
       geometry_msgs::WrenchStamped wrench_msg;
       wrench_msg.header.stamp.fromSec(estimator_->getImuLatestTimeStamp());
@@ -252,12 +270,12 @@ namespace aerial_robot_control
       pid_controllers_.at(TX).reset();
       pid_controllers_.at(TY).reset();
       pid_controllers_.at(TZ).reset();
-      pid_controllers_.at(X).setICompTerm(0.0);
-      pid_controllers_.at(Y).setICompTerm(0.0);
-      pid_controllers_.at(Z).setICompTerm(0.0);
-      pid_controllers_.at(ROLL).setICompTerm(0.0);
-      pid_controllers_.at(PITCH).setICompTerm(0.0);
-      pid_controllers_.at(YAW).setICompTerm(0.0);
+      pid_controllers_.at(X).setErrI(0.0);
+      pid_controllers_.at(Y).setErrI(0.0);
+      pid_controllers_.at(Z).setErrI(0.0);
+      pid_controllers_.at(ROLL).setErrI(0.0);
+      pid_controllers_.at(PITCH).setErrI(0.0);
+      pid_controllers_.at(YAW).setErrI(0.0);
     }
       
     GimbalrotorController::controlCore();
@@ -274,12 +292,12 @@ namespace aerial_robot_control
     pid_controllers_.at(TX).reset();
     pid_controllers_.at(TY).reset();
     pid_controllers_.at(TZ).reset();
-    pid_controllers_.at(X).setICompTerm(0.0);
-    pid_controllers_.at(Y).setICompTerm(0.0);
-    pid_controllers_.at(Z).setICompTerm(0.0);
-    pid_controllers_.at(ROLL).setICompTerm(0.0);
-    pid_controllers_.at(PITCH).setICompTerm(0.0);
-    pid_controllers_.at(YAW).setICompTerm(0.0);
+    pid_controllers_.at(X).setErrI(0.0);
+    pid_controllers_.at(Y).setErrI(0.0);
+    pid_controllers_.at(Z).setErrI(0.0);
+    pid_controllers_.at(ROLL).setErrI(0.0);
+    pid_controllers_.at(PITCH).setErrI(0.0);
+    pid_controllers_.at(YAW).setErrI(0.0);
   }
 
   void BeetleController::calcInteractionWrench()
@@ -386,7 +404,17 @@ namespace aerial_robot_control
 
   void BeetleController::externalWrenchEstimate()
   {
-    const Eigen::VectorXd target_wrench_acc_cog = getTargetWrenchAccCog();
+    /* Compute target wrench acc from PID outputs */
+    Eigen::VectorXd target_wrench_acc_cog = Eigen::VectorXd::Zero(6);
+    if(pid_controllers_.size() > YAW)
+      {
+        target_wrench_acc_cog(0) = pid_controllers_.at(X).result();
+        target_wrench_acc_cog(1) = pid_controllers_.at(Y).result();
+        target_wrench_acc_cog(2) = pid_controllers_.at(Z).result();
+        target_wrench_acc_cog(3) = pid_controllers_.at(ROLL).result();
+        target_wrench_acc_cog(4) = pid_controllers_.at(PITCH).result();
+        target_wrench_acc_cog(5) = pid_controllers_.at(YAW).result();
+      }
 
     if(navigator_->getNaviState() != aerial_robot_navigation::HOVER_STATE &&
        navigator_->getNaviState() != aerial_robot_navigation::TAKEOFF_STATE &&
@@ -395,17 +423,18 @@ namespace aerial_robot_control
         prev_est_wrench_timestamp_ = 0;
         integrate_term_ = Eigen::VectorXd::Zero(6);
         return;
-      }else if(target_wrench_acc_cog.size() == 0){
-        ROS_WARN("Target wrench value for wrench estimation is not setted.");
+      }else if(target_wrench_acc_cog.norm() == 0){
         prev_est_wrench_timestamp_ = 0;
         integrate_term_ = Eigen::VectorXd::Zero(6);
         return;
       }
 
-    Eigen::Vector3d vel_w, omega_cog; // workaround: use the filtered value
-    auto imu_handler = boost::dynamic_pointer_cast<sensor_plugin::Imu>(estimator_->getImuHandler(0));
-    tf::vectorTFToEigen(imu_handler->getFilteredVelCog(), vel_w);
-    tf::vectorTFToEigen(imu_handler->getFilteredOmegaCog(), omega_cog);
+    /* Get velocity and omega from estimator state */
+    Eigen::Vector3d vel_w, omega_cog;
+    tf::Vector3 vel_tf = estimator_->getVel(Frame::COG, estimate_mode_);
+    tf::Vector3 omega_tf = estimator_->getAngularVel(Frame::COG, estimate_mode_);
+    tf::vectorTFToEigen(vel_tf, vel_w);
+    tf::vectorTFToEigen(omega_tf, omega_cog);
     Eigen::Matrix3d cog_rot;
     tf::matrixTFToEigen(estimator_->getOrientation(Frame::COG, estimate_mode_), cog_rot);
 
