@@ -39,5 +39,6 @@ namespace mujoco_ros_control
     double joint_state_pub_rate_ = 0.02;
 
     ros::Time last_mocap_time_;
+    ros::Time last_ground_truth_time_;
   };
 }

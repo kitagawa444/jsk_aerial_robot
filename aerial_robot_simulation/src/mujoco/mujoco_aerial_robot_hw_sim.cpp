@@ -149,15 +149,32 @@ namespace mujoco_ros_control
     spinal_interface_.stateEstimate();
 
     /* publish ground truth value */
+    /* compute linear and angular velocity of the fc site using MuJoCo */
+    mjtNum vel_site[6]; // [angular(3), linear(3)] in world frame
+    mj_objectVelocity(mujoco_model_, mujoco_data_, mjtObj_::mjOBJ_SITE, fc_id, vel_site, 0); // flg_local=0 -> world frame
+
     nav_msgs::Odometry odom_msg;
     odom_msg.header.stamp = time;
-    odom_msg.pose.pose.position.x =site_xpos[3 * fc_id + 0];
-    odom_msg.pose.pose.position.y =site_xpos[3 * fc_id + 1];
-    odom_msg.pose.pose.position.z =site_xpos[3 * fc_id + 2];
+    odom_msg.pose.pose.position.x = site_xpos[3 * fc_id + 0];
+    odom_msg.pose.pose.position.y = site_xpos[3 * fc_id + 1];
+    odom_msg.pose.pose.position.z = site_xpos[3 * fc_id + 2];
     odom_msg.pose.pose.orientation.x = fc_quat.x();
     odom_msg.pose.pose.orientation.y = fc_quat.y();
     odom_msg.pose.pose.orientation.z = fc_quat.z();
     odom_msg.pose.pose.orientation.w = fc_quat.w();
+    odom_msg.twist.twist.linear.x = vel_site[3];
+    odom_msg.twist.twist.linear.y = vel_site[4];
+    odom_msg.twist.twist.linear.z = vel_site[5];
+    /* angular velocity in body frame from gyro sensor */
+    odom_msg.twist.twist.angular.x = gyro.x();
+    odom_msg.twist.twist.angular.y = gyro.y();
+    odom_msg.twist.twist.angular.z = gyro.z();
+
+    if((time - last_ground_truth_time_).toSec() >= ground_truth_pub_rate_)
+      {
+        ground_truth_pub_.publish(odom_msg);
+        last_ground_truth_time_ = time;
+      }
 
     /* set ground truth for controller: use the value with noise */
     spinal_interface_.setGroundTruthStates(fc_quat.x(), fc_quat.y(), fc_quat.z(), fc_quat.w(),

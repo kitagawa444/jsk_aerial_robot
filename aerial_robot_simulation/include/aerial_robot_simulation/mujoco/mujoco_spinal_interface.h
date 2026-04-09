@@ -24,6 +24,7 @@ namespace hardware_interface
 
     void stateEstimate();
     inline void onGround(bool flag) { on_ground_ = flag; }
+    void useGroundTruth(bool flag) { spinal_state_estimator_.getAttEstimator()->useGroundTruth(flag); }
     StateEstimate* getEstimatorPtr() {return &spinal_state_estimator_;}
     std::string getName() const{return "";}
     int getMotorNum() {return motor_num_;}

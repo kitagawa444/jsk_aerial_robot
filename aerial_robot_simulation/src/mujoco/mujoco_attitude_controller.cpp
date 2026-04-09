@@ -17,6 +17,21 @@ namespace flight_controllers
     ros::NodeHandle n_robot = ros::NodeHandle(robot_ns);
     controller_core_->init(&n_robot, robot->getEstimatorPtr());
 
+    /* set ground truth mode for spinal attitude estimator (same as Gazebo version) */
+    std::string full_param;
+    if (n.searchParam("estimation/mode", full_param))
+      {
+        int estimate_mode;
+        n.getParam(full_param, estimate_mode);
+        if(estimate_mode == aerial_robot_estimation::GROUND_TRUTH)
+          spinal_interface_->useGroundTruth(true);
+      }
+    else
+      {
+        ROS_WARN_STREAM_NAMED("mujoco_attitude_controller", "can not find rosparam estimation/mode in ns " << n.getNamespace() << ", set ground truth mode");
+        spinal_interface_->useGroundTruth(true);
+      }
+
     return true;
 
   }
