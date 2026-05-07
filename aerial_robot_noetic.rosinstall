@@ -1,8 +1,8 @@
 # aerial robot third party
 - git:
     local-name: aerial_robot_3rdparty
-    uri: https://github.com/JSKAerialRobot/aerial_robot_3rdparty.git
-    version: 4085d3a
+    uri: https://github.com/kitagawa444/aerial_robot_3rdparty.git
+    version: develop/hwinterface
 
 # kalman filter
 - git:
@@ -56,3 +56,9 @@
     local-name: mocap_optitrack
     uri: https://github.com/sugikazu75/mocap_optitrack.git
     version: 50fb60d
+
+# livox laser simulation
+- git:
+    local-name: livox_laser_simulation
+    uri: https://github.com/kitagawa444/livox_laser_simulation.git
+    version: develop/ubuntu22
