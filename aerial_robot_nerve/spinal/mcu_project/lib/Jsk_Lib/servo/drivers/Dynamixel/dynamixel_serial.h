@@ -125,7 +125,9 @@
 #define LED_BYTE_LEN					1
 #define STATUS_RETURN_LEVEL_BYTE_LEN	1
 #define GOAL_POSITION_BYTE_LEN			4
+#define PRESENT_VEL_POS_BYTE_LEN	8
 #define PRESENT_POSITION_BYTE_LEN		4
+#define PRESENT_VELOCITY_BYTE_LEN		4
 #define PRESENT_CURRENT_BYTE_LEN		2
 #define PRESENT_TEMPERATURE_BYTE_LEN	1
 #define MOVING_BYTE_LEN 				1
@@ -328,7 +330,7 @@ private:
   inline void cmdReadMoving(uint8_t servo_index);
   inline void cmdReadPositionGains(uint8_t servo_index);
   inline void cmdReadPresentCurrent(uint8_t servo_index);
-  inline void cmdReadPresentPosition(uint8_t servo_index);
+  inline void cmdReadPresentVelPos(uint8_t servo_index);
   inline void cmdReadPresentTemperature(uint8_t servo_index);
   inline void cmdReadProfileVelocity(uint8_t servo_index);
   inline void cmdWriteCurrentLimit(uint8_t servo_index);
@@ -343,7 +345,7 @@ private:
   inline void cmdSyncReadMoving(bool send_all = true);
   inline void cmdSyncReadPositionGains(bool send_all = true);
   inline void cmdSyncReadPresentCurrent(bool send_all = true);
-  inline void cmdSyncReadPresentPosition(bool send_all = true);
+  inline void cmdSyncReadPresentVelPos(bool send_all = true);
   inline void cmdSyncReadPresentTemperature(bool send_all = true);
   inline void cmdSyncReadProfileVelocity(bool send_all = true);
   inline void cmdSyncWriteGoalPosition();

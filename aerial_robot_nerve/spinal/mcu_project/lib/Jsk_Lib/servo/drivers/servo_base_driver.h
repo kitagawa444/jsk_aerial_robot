@@ -21,6 +21,7 @@ public:
 
 	uint8_t id_;
   	int32_t present_position_;
+        int32_t present_velocity_;
 	int32_t goal_position_;
         int32_t calib_value_;
 	int32_t homing_offset_;
