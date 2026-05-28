@@ -226,10 +226,11 @@ void DynamixelSerial::setRoundOffset(uint8_t servo_index, int32_t ref_value)
   ServoData& s = servo_[servo_index];
   if (s.torque_enable_) return; // cannot process if torque is enable
 
-  // workaround to update the internal offset for pulley type in the case that has round gap
-  int32_t diff = ref_value - s.present_position_;
-  if (diff > 2047) s.internal_offset_ += 4096;
-  if (diff < -2047) s.internal_offset_ -= 4096;
+  constexpr int32_t ticks_per_round = 4096;
+  int32_t raw_position = s.present_position_ - s.internal_offset_;
+  int32_t round_offset = static_cast<int32_t>(std::lround(static_cast<double>(ref_value - raw_position) / ticks_per_round)) * ticks_per_round;
+  s.internal_offset_ = round_offset;
+  s.setPresentPosition(raw_position);
 }
 
 void DynamixelSerial::setHomingOffset(uint8_t servo_index)
@@ -629,14 +630,14 @@ int8_t DynamixelSerial::readStatusPacket(uint8_t status_packet_instruction)
 	uint8_t rx_data;
 	int header_match_count = 0;
 	uint16_t parameter_len = 0;
-	uint8_t parameters[STATUS_PACKET_SIZE];
+  uint8_t parameters[STATUS_PACKET_SIZE] = {0};
 	int parameter_index = 0;
 	int parameter_loop_count = 0;
 	uint16_t checksum = 0;
-	uint8_t receive_data[STATUS_PACKET_SIZE];
+  uint8_t receive_data[STATUS_PACKET_SIZE] = {0};
 	bool read_end_flag = false;
 	int loop_count = 0;
-	uint8_t servo_id;
+  uint8_t servo_id = 0;
 
         if(direct_ttl_mode_) {
           while (__HAL_UART_GET_FLAG(huart_, UART_FLAG_TC) == RESET) {}
@@ -772,6 +773,7 @@ int8_t DynamixelSerial::readStatusPacket(uint8_t status_packet_instruction)
     int32_t present_velocity = ((parameters[3] << 24) & 0xFF000000) | ((parameters[2] << 16) & 0xFF0000) | ((parameters[1] << 8) & 0xFF00) | (parameters[0] & 0xFF);
     int32_t present_position = ((parameters[7] << 24) & 0xFF000000) | ((parameters[6] << 16) & 0xFF0000) | ((parameters[5] << 8) & 0xFF00) | (parameters[4] & 0xFF);
 		if (s != servo_.end()) {
+        constexpr int32_t present_position_glitch_threshold = 2048;
         s->present_velocity_ = present_velocity;
                   s->hardware_error_status_ &= ((1 << ENCODER_CONNECT_ERROR) - 1); // &= 0b01111111
                   if(s->external_encoder_flag_) {
@@ -795,11 +797,20 @@ int8_t DynamixelSerial::readStatusPacket(uint8_t status_packet_instruction)
 #endif
                   }
                   else {
+                    bool position_valid = true;
                     if (s->first_get_pos_flag_) {
                       // s->internal_offset_ = std::floor(present_position / 4096.0) * -4096; // to convert [0, 4096]
                       s->first_get_pos_flag_ = false;
                     }
-                    s->setPresentPosition(present_position);
+                    else {
+                      int32_t candidate_position = present_position + s->internal_offset_;
+                      int32_t position_diff = candidate_position - s->present_position_;
+                      position_valid = ((candidate_position & 0xFFFF) != 0xFDFD && position_diff <= present_position_glitch_threshold && position_diff >= -present_position_glitch_threshold);
+                    }
+
+                    if (position_valid) {
+                      s->setPresentPosition(present_position);
+                    }
                   }
 		}
                 return 0;
