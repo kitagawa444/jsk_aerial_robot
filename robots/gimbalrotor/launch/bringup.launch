@@ -22,7 +22,9 @@
   <arg name="robot_ns" value="gimbalrotor$(arg robot_id)" />
   <arg name="airframe" default="quad" />
   <arg name="mujoco" default="False" />
-
+  <arg name="movebase" default="False" />
+  <arg name="lidar_sim" default="False" />
+  <arg name="livox_model_option" default="$(eval 'enable_livox:=true' if arg('lidar_sim') else 'enable_livox:=false')" />
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
@@ -76,6 +78,7 @@
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="rviz_config" value="$(arg config_dir)/rviz_config" />
     <arg name="rviz_init_pose" value="$(arg config_dir)/RvizInit.yaml" />
+    <arg name="model_options" value="$(arg livox_model_option)" />
     <arg name="need_joint_state" value="false" if ="$(eval arg('simulation') or arg('real_machine'))"/>
   </include >
 
@@ -111,7 +114,7 @@
     <arg name="mujoco_model" value="$(find gimbalrotor)/mujoco/$(arg airframe)/robot.xml"/>
   </include>
 
-  <include file="$(find gimbalrotor)/launch/navigation.launch" unless="$(eval arg('mujoco'))">
+  <include file="$(find gimbalrotor)/launch/navigation.launch" if="$(eval arg('movebase') and not arg('mujoco'))">
     <arg name="robot_ns" value="$(arg robot_ns)" />
   </include>
 

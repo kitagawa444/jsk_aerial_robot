@@ -2,6 +2,7 @@
 <robot
     xmlns:xacro="http://www.ros.org/wiki/xacro" name="gimbalrotor" >
   <xacro:arg name="robot_name" default="gimbalrotor" />
+  <xacro:arg name="enable_livox" default="false" />
 
   <xacro:include filename="$(find gimbalrotor)/robots/bee/gimbalrotor.urdf.xacro" />
 
@@ -10,7 +11,9 @@
   <xacro:gazebo_spinal robot_name="$(arg robot_name)" mag_frame="fc" />
 
   <!-- Livox Mid360 LiDAR -->
-  <xacro:include filename="$(find aerial_robot_simulation)/xacro/livox_mid360.gazebo.xacro" />
-  <xacro:livox_mid360_gazebo frame="lidar_imu" tf_prefix="$(arg robot_name)"/>
+  <xacro:if value="$(arg enable_livox)">
+    <xacro:include filename="$(find aerial_robot_simulation)/xacro/livox_mid360.gazebo.xacro" />
+    <xacro:livox_mid360_gazebo frame="lidar_imu" tf_prefix="$(arg robot_name)"/>
+  </xacro:if>
 
 </robot>
