@@ -87,6 +87,7 @@
     <arg name="real_machine" value="$(arg real_machine)" />
     <arg name="simulation" value="$(arg simulation)" />
     <arg name="robot_ns" value="$(arg robot_ns)" />
+    <arg name="lidar_sim" value="$(arg lidar_sim)" />
   </include >
 
   ###########  Servo Bridge  ###########

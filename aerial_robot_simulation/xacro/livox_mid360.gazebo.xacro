@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:macro name="livox_mid360_gazebo" params="frame:=lidar_imu tf_prefix:=quadrotor visualize:=True update_rate:=10 resolution:=0.002 noise_mean:=0.0 noise_stddev:=0.01 samples:=24000 downsample:=1 ros_topic:=livox/lidar_orig laser_min_range:=0.1 laser_max_range:=200.0">
+  <xacro:macro name="livox_mid360_gazebo" params="frame:=lidar_imu tf_prefix:=quadrotor visualize:=True update_rate:=10 resolution:=0.002 noise_mean:=0.0 noise_stddev:=0.01 samples:=24000 downsample:=1 ros_topic:=livox/lidar_orig laser_min_range:=0.1 laser_max_range:=200.0 custom_ros_topic:=livox/lidar imu_topic:=livox/imu imu_update_rate:=200">
     <gazebo reference="${frame}">
       <sensor type="ray" name="${tf_prefix}/${frame}">
         <pose>0 0 0 0 0 0</pose>
@@ -40,6 +40,24 @@
           <downsample>${downsample}</downsample>
           <csv_file_name>package://livox_laser_simulation/scan_mode/mid360.csv</csv_file_name>
           <ros_topic>${tf_prefix}/${ros_topic}</ros_topic>
+          <custom_ros_topic>${tf_prefix}/${custom_ros_topic}</custom_ros_topic>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <!-- IMU sensor (matches livox_ros_driver2 /livox/imu) -->
+    <gazebo reference="${frame}">
+      <sensor type="imu" name="imu_sensor_${tf_prefix}_${frame}">
+        <update_rate>${imu_update_rate}</update_rate>
+        <plugin filename="libgazebo_ros_imu_sensor.so" name="imu_plugin_${tf_prefix}_${frame}">
+          <topicName>${tf_prefix}/${imu_topic}</topicName>
+          <bodyName>${frame}</bodyName>
+          <frameName>${tf_prefix}/${frame}</frameName>
+          <updateRateHZ>${imu_update_rate}</updateRateHZ>
+          <gaussianNoise>0.0</gaussianNoise>
+          <xyzOffset>0 0 0</xyzOffset>
+          <rpyOffset>0 0 0</rpyOffset>
+          <initialOrientationAsReference>false</initialOrientationAsReference>
         </plugin>
       </sensor>
     </gazebo>

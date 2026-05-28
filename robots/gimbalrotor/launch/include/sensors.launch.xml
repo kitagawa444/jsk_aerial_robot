@@ -3,6 +3,7 @@
   <arg name="real_machine" default="false" />
   <arg name="simulation" default="false" />
   <arg name="robot_ns" default="gimbalrotor" />
+  <arg name="lidar_sim" default="false" />
 
   <group ns="$(arg robot_ns)">
 
@@ -27,6 +28,13 @@
         </include>
 
       </group>
+    </group>
+
+    <!-- livox mid360 & fast lio (simulation) -->
+    <group if="$(eval arg('simulation') and not arg('real_machine') and arg('lidar_sim'))">
+      <include file="$(find fast_lio)/launch/mapping_mid360.launch" >
+        <arg name="rviz" value="false" />
+      </include>
     </group>
 
     <!-- basic configuration for sensors (e.g. noise sigma) -->
