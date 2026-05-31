@@ -17,16 +17,15 @@ public:
   template <class T> std::vector<T> getLinksRotationFromCog();
   template <class T> std::vector<T> getThrustCoordRot();
 
-protected:
-  void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
-
 private:
-
   KDL::JntArray gimbal_processed_joint_;
   std::vector<KDL::Rotation> links_rotation_from_cog_;
   std::vector<KDL::Rotation> thrust_coords_rot_;
   std::mutex links_rotation_mutex_;
   std::mutex thrust_rotation_mutex_;
+
+protected:
+  void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
 
 };
 
