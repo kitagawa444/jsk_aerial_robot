@@ -1,0 +1,97 @@
+// -*- mode: c++ -*-
+
+#pragma once
+#include <bee/model/bee_robot_model.h>
+#include <bee/bee_navigation.h>
+#include <bee/TaggedWrench.h>
+#include <bee/TaggedWrenches.h>
+#include <gimbalrotor/control/gimbalrotor_controller.h>
+#include <bee/sensor/imu.h>
+
+namespace aerial_robot_control
+{
+  enum
+    {
+     FX = YAW +1,
+     FY,
+     FZ,
+     TX,
+     TY,
+     TZ,
+    };
+
+  class BeeController: public GimbalrotorController
+  {
+  public:
+    BeeController();
+    ~BeeController() = default;
+
+    void initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
+                    boost::shared_ptr<aerial_robot_model::RobotModel> robot_model,
+                    boost::shared_ptr<aerial_robot_estimation::StateEstimator> estimator,
+                    boost::shared_ptr<aerial_robot_navigation::BaseNavigator> navigator,
+                    double ctrl_loop_rate
+                    ) override;
+    void setFfInterWrench(int id, Eigen::VectorXd des_int_wrench){ff_inter_wrench_list_[id] = des_int_wrench;}
+  private:
+    boost::shared_ptr<BeeRobotModel> bee_robot_model_;
+    boost::shared_ptr<aerial_robot_navigation::BeeNavigator> bee_navigator_;
+    
+    map<string, ros::Subscriber> ff_inter_wrench_subs_;
+
+    aerial_robot_msgs::PoseControlPid wrench_pid_msg_;
+
+    map<string, ros::Subscriber> est_wrench_subs_;
+    
+    void estExternalWrenchCallback(const bee::TaggedWrench & msg);
+
+  protected:
+    std::map<int, Eigen::VectorXd> est_wrench_list_;
+    std::map<int, Eigen::VectorXd> inter_wrench_list_;
+    std::map<int, Eigen::VectorXd> wrench_comp_list_;
+    std::map<int, Eigen::VectorXd> ff_inter_wrench_list_;
+
+    /* external wrench compensation */
+    bool pd_wrench_comp_mode_;
+    Eigen::VectorXd external_wrench_upper_limit_;
+    Eigen::VectorXd external_wrench_lower_limit_;
+
+    int pre_module_state_;
+
+    bool des_wrench_pub_flag_;
+
+    double comp_term_update_freq_;
+    double prev_comp_update_time_;
+    double wrench_comp_p_gain_;
+    double wrench_comp_i_gain_;
+    double wrench_comp_d_gain_;
+    double I_comp_Fx_;
+    double I_comp_Fy_;
+    double I_comp_Fz_;
+    double I_comp_Tx_;
+    double I_comp_Ty_;
+    double I_comp_Tz_;    
+
+    virtual void calcInteractionWrench();
+    ros::Publisher tagged_external_wrench_pub_;
+    ros::Publisher external_wrench_compensation_pub_;
+    ros::Publisher whole_external_wrench_pub_;
+    ros::Publisher internal_wrench_pub_;
+    ros::Publisher wrench_comp_pid_pub_;
+    ros::Publisher des_inter_wrench_pub_;
+    void controlCore() override;
+    
+    virtual void ffInterWrenchCallback(const bee::TaggedWrench & msg);
+    void rosParamInit();
+    void externalWrenchEstimate();
+    void reset() override;
+
+    /* wrench estimation members */
+    ros::Publisher estimate_external_wrench_pub_;
+    Eigen::VectorXd est_external_wrench_;
+    Eigen::VectorXd integrate_term_;
+    Eigen::VectorXd init_sum_momentum_;
+    Eigen::MatrixXd momentum_observer_matrix_;
+    double prev_est_wrench_timestamp_;
+  };
+};
