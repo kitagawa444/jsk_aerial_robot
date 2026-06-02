@@ -82,8 +82,8 @@ namespace aerial_robot_control
     void controlCore() override;
     
     virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
-    void rosParamInit();
-    void externalWrenchEstimate();
+    void rosParamInit() override;
+    void externalWrenchEstimate() override;
     void reset() override;
 
     /* wrench estimation members */
