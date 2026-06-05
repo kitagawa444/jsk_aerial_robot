@@ -40,14 +40,14 @@ target_link_libraries(bee_sensor_pluginlib ${catkin_LIBRARIES})
 add_dependencies(bee_sensor_pluginlib aerial_robot_msgs_generate_messages_cpp spinal_generate_messages_cpp)
 
 add_library(bee_controller src/control/bee_controller.cpp)
-target_link_libraries(bee_controller bee_sensor_pluginlib ${catkin_LIBRARIES})
+target_link_libraries(bee_controller bee_sensor_pluginlib bee_robot_model ${catkin_LIBRARIES})
 add_dependencies(bee_controller ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 add_library(bee_robot_model src/model/bee_robot_model.cpp)
 target_link_libraries(bee_robot_model ${catkin_LIBRARIES})
 
 add_library(bee_navigation src/bee_navigation.cpp)
-target_link_libraries(bee_navigation ${catkin_LIBRARIES})
+target_link_libraries(bee_navigation bee_robot_model ${catkin_LIBRARIES})
 
 install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigation
   DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

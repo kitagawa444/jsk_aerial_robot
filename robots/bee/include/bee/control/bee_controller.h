@@ -3,8 +3,8 @@
 #pragma once
 #include <bee/model/bee_robot_model.h>
 #include <bee/bee_navigation.h>
-#include <bee/TaggedWrench.h>
-#include <bee/TaggedWrenches.h>
+#include <beetle/TaggedWrench.h>
+#include <beetle/TaggedWrenches.h>
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 #include <bee/sensor/imu.h>
 
@@ -43,7 +43,7 @@ namespace aerial_robot_control
 
     map<string, ros::Subscriber> est_wrench_subs_;
     
-    void estExternalWrenchCallback(const bee::TaggedWrench & msg);
+    void estExternalWrenchCallback(const beetle::TaggedWrench & msg);
 
   protected:
     std::map<int, Eigen::VectorXd> est_wrench_list_;
@@ -81,7 +81,7 @@ namespace aerial_robot_control
     ros::Publisher des_inter_wrench_pub_;
     void controlCore() override;
     
-    virtual void ffInterWrenchCallback(const bee::TaggedWrench & msg);
+    virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
     void rosParamInit();
     void externalWrenchEstimate();
     void reset() override;

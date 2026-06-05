@@ -52,11 +52,11 @@ namespace aerial_robot_control
     rosParamInit();
     if(pd_wrench_comp_mode_) ROS_ERROR("PD & Wrench comp mode");
     external_wrench_compensation_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("external_wrench_compensation", 1);
-    tagged_external_wrench_pub_ = nh_.advertise<bee::TaggedWrench>("tagged_wrench", 1);
+    tagged_external_wrench_pub_ = nh_.advertise<beetle::TaggedWrench>("tagged_wrench", 1);
     whole_external_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("whole_wrench", 1);
     internal_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("internal_wrench", 1);
     wrench_comp_pid_pub_ = nh_.advertise<aerial_robot_msgs::PoseControlPid>("debug/wrench_comp/pid", 1);
-    des_inter_wrench_pub_ = nh_.advertise<bee::TaggedWrenches>("des_inter_wnrech", 1);
+    des_inter_wrench_pub_ = nh_.advertise<beetle::TaggedWrenches>("des_inter_wnrech", 1);
     estimate_external_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("estimated_external_wrench", 1);
 
     /* initialize wrench estimation members */
@@ -239,13 +239,13 @@ namespace aerial_robot_control
       /*publish desire internal wrench*/
       if(des_wrench_pub_flag_)
         {
-          bee::TaggedWrenches all_tagged_des_wrenche_msg;
+          beetle::TaggedWrenches all_tagged_des_wrenche_msg;
           std::vector<int> assembled_ids = bee_navigator_->getAssemblyIds();
           all_tagged_des_wrenche_msg.tagged_wrenches.resize(assembled_ids.size());
           int cnt =0;
           for(const auto id: assembled_ids)
             {
-              bee::TaggedWrench tagged_des_wrench_msg;
+              beetle::TaggedWrench tagged_des_wrench_msg;
               geometry_msgs::WrenchStamped des_wrench_msg;
               Eigen::VectorXd des_wrench = ff_inter_wrench_list_[id];
               des_wrench_msg.header.stamp.fromSec(estimator_->getImuLatestTimeStamp());
@@ -480,7 +480,7 @@ namespace aerial_robot_control
     wrench_msg.wrench.torque.z = est_external_wrench_cog(5);
     estimate_external_wrench_pub_.publish(wrench_msg);
 
-    bee::TaggedWrench tagged_wrench;
+    beetle::TaggedWrench tagged_wrench;
     tagged_wrench.index = bee_navigator_->getMyID();
     tagged_wrench.wrench = wrench_msg;
     tagged_external_wrench_pub_.publish(tagged_wrench);
@@ -488,7 +488,7 @@ namespace aerial_robot_control
     prev_est_wrench_timestamp_ = ros::Time::now().toSec();
   }
 
-  void BeeController::estExternalWrenchCallback(const bee::TaggedWrench & msg)
+  void BeeController::estExternalWrenchCallback(const beetle::TaggedWrench & msg)
   {
     int id = msg.index;
     geometry_msgs::Wrench wrench_msg = msg.wrench.wrench;
@@ -503,7 +503,7 @@ namespace aerial_robot_control
     est_wrench_list_[id] = wrench;
   }
 
-  void BeeController::ffInterWrenchCallback(const bee::TaggedWrench & msg)
+  void BeeController::ffInterWrenchCallback(const beetle::TaggedWrench & msg)
   {
     int id = msg.index;
     geometry_msgs::Wrench wrench_msg = msg.wrench.wrench;
