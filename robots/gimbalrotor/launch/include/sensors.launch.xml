@@ -21,7 +21,7 @@
 
         <!-- livox mid360 & fast lio -->
         <include file="$(find livox_ros_driver2)/launch_ROS1/msg_MID360.launch">
-          <arg name="msg_frame_id" value="quadrotor/lidar_imu"/>
+          <arg name="msg_frame_id" value="$(arg robot_ns)/lidar_imu"/>
         </include>
         <include file="$(find fast_lio)/launch/mapping_mid360.launch" >
           <arg name="rviz" value="false" />
