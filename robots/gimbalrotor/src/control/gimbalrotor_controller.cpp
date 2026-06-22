@@ -80,6 +80,12 @@ namespace aerial_robot_control
       }
 
     PoseLinearController::controlCore();
+    if(!underactuate_ && gimbal_calc_in_fc_)
+      {
+        target_roll_ = target_rpy_.x();
+        target_pitch_ = target_rpy_.y();
+      }
+
     tf::Matrix3x3 uav_rot = estimator_->getOrientation(Frame::COG, estimate_mode_);
     tf::Vector3 target_acc_w(pid_controllers_.at(X).result(),
                              pid_controllers_.at(Y).result(),
@@ -228,8 +234,11 @@ namespace aerial_robot_control
           trans_gimbal_angles_.at(i) = atan2(-f_i[0], f_i[1]);
           // substitute cos and sin in gimbal_angle_map
           double norm_f_i = sqrt(f_i[0] * f_i[0] + f_i[1] * f_i[1]);
-          gimbal_angle_map(rotor_coef_ * i, i) = f_i[0] / norm_f_i; // cos
-          gimbal_angle_map(rotor_coef_ * i + 1, i) = f_i[1] / norm_f_i; // sin
+          if(norm_f_i > 1.0e-6)
+            {
+              gimbal_angle_map(rotor_coef_ * i, i) = f_i[0] / norm_f_i; // cos
+              gimbal_angle_map(rotor_coef_ * i + 1, i) = f_i[1] / norm_f_i; // sin
+            }
         }else if(gimbal_dof_ == 2){
           target_base_thrust_.at(rotor_coef_ * i) = f_i[0];
           target_base_thrust_.at(rotor_coef_ * i+1) = f_i[1];
@@ -242,9 +251,29 @@ namespace aerial_robot_control
     candidate_yaw_term_ = pid_controllers_.at(YAW).result() * max_yaw_scale;
     // generate allocation matrix including gimbal angles
     if(!gimbal_angle_calc_in_fc_){
-      Eigen::MatrixXd integrated_map_include_angle_inv = gimbal_angle_map*aerial_robot_model::pseudoinverse(integrated_map * gimbal_angle_map);
-      integrated_map_inv_rot_ = integrated_map_include_angle_inv.rightCols(3);
-      target_vectoring_f_rot_ = integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3); //debug
+      if(integrated_map.cols() != gimbal_angle_map.rows())
+        {
+          ROS_WARN_THROTTLE(1.0, "[GimbalrotorController] matrix dimension mismatch: integrated_map(%d x %d) * gimbal_angle_map(%d x %d), skip angle-aware allocation",
+                            (int)integrated_map.rows(), (int)integrated_map.cols(),
+                            (int)gimbal_angle_map.rows(), (int)gimbal_angle_map.cols());
+        }
+      else
+        {
+          Eigen::MatrixXd integrated_map_with_angle = integrated_map * gimbal_angle_map;
+          if(gimbal_angle_map.cols() != integrated_map_with_angle.rows())
+            {
+              ROS_WARN_THROTTLE(1.0, "[GimbalrotorController] matrix dimension mismatch: gimbal_angle_map(%d x %d) * pinv(%d x %d), skip angle-aware allocation",
+                                (int)gimbal_angle_map.rows(), (int)gimbal_angle_map.cols(),
+                                (int)integrated_map_with_angle.cols(), (int)integrated_map_with_angle.rows());
+            }
+          else
+            {
+              Eigen::MatrixXd integrated_map_include_angle_inv =
+                gimbal_angle_map * aerial_robot_model::pseudoinverse(integrated_map_with_angle);
+              integrated_map_inv_rot_ = integrated_map_include_angle_inv.rightCols(3);
+              target_vectoring_f_rot_ = integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3); //debug
+            }
+        }
     }
 
     /* calculate target full thrusts and gimbal angles (considering full components)*/
