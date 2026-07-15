@@ -19,6 +19,11 @@
   <arg name="robot_id" default="1" />
   <arg name="robot_ns" value="bee$(arg robot_id)" />
   <arg name="mujoco" default="False" />
+  <arg name="lidar_sim" default="False" />
+  <arg name="livox_model_option" default="$(eval 'enable_livox:=true' if arg('lidar_sim') else 'enable_livox:=false')" />
+  <arg name="launch_mujoco_backend" default="True" />
+  <arg name="launch_mujoco_controller" default="True" />
+  <arg name="launch_rviz" default="True" />
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
@@ -71,6 +76,7 @@
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="rviz_config" value="$(arg config_dir)/rviz_config" />
     <arg name="rviz_init_pose" value="$(arg config_dir)/RvizInit.yaml" />
+    <arg name="model_options" value="$(arg livox_model_option)" />
     <arg name="need_joint_state" value="false" if ="$(eval arg('simulation') or arg('real_machine'))"/>
   </include >
 
@@ -105,6 +111,8 @@
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="headless" value="$(arg headless)"/>
     <arg name="mujoco_model" value="$(find bee)/mujoco/bee/robot.xml"/>
+    <arg name="launch_backend" value="$(arg launch_mujoco_backend)"/>
+    <arg name="launch_controller" value="$(arg launch_mujoco_controller)"/>
   </include>
 
 
