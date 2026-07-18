@@ -1,0 +1,13 @@
+scene_name: bee_scene_4
+source_model: ../mujoco/bee/robot.xml
+output_model: ../mujoco/bee_scene_4.xml
+
+robots:
+  - name: bee1
+    pos: [0.0, 0.0, 0.0]
+  - name: bee2
+    pos: [1.2, 0.0, 0.0]
+  - name: bee3
+    pos: [0.0, 1.2, 0.0]
+  - name: bee4
+    pos: [1.2, 1.2, 0.0]

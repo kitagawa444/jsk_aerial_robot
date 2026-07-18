@@ -4,4 +4,4 @@ package:
 bee:
   input: ["robots/bee.urdf.xacro"]
   filename: ["bee"]
-  meshdir: urdf/bee/mesh
+  meshdir: urdf/mesh

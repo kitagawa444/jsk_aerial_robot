@@ -28,6 +28,10 @@ namespace mujoco_ros_control
     hardware_interface::MujocoSpinalInterface spinal_interface_;
 
     std::vector<std::string> rotor_list_;
+    std::string fc_site_name_;
+    std::string acc_sensor_name_;
+    std::string gyro_sensor_name_;
+    std::string mag_sensor_name_;
     ros::Publisher ground_truth_pub_;
     ros::Publisher mocap_pub_;
     double ground_truth_pub_rate_;

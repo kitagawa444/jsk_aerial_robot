@@ -34,6 +34,7 @@ namespace hardware_interface
   private:
     /* attitude estimator */
     bool on_ground_;
+    ros::NodeHandle nh_;
 
     int motor_num_;
     std::vector<double> force_;
