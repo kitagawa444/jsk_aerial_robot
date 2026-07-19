@@ -66,6 +66,12 @@ bool GimbalrotorController::update()
 
 void GimbalrotorController::controlCore()
 {
+  if (!robot_model_->initialized())
+  {
+    ROS_WARN_THROTTLE(1.0, "[GimbalrotorController] robot model is not initialized yet, skip controlCore");
+    return;
+  }
+
   PoseLinearController::controlCore();
   tf::Matrix3x3 uav_rot = estimator_->getOrientation(Frame::COG, estimate_mode_);
   tf::Vector3 target_acc_w(pid_controllers_.at(X).result(), pid_controllers_.at(Y).result(),
@@ -198,6 +204,15 @@ void GimbalrotorController::controlCore()
   {
     integrated_rot.block(3 * i, rotor_coef_ * i, 3, rotor_coef_) = masked_rot[i];
   }
+  if (full_q_mat.cols() != integrated_rot.rows())
+  {
+    ROS_WARN_THROTTLE(1.0,
+                      "[GimbalrotorController] matrix dimension mismatch: full_q_mat(%d x %d) * "
+                      "integrated_rot(%d x %d), skip",
+                      static_cast<int>(full_q_mat.rows()), static_cast<int>(full_q_mat.cols()),
+                      static_cast<int>(integrated_rot.rows()), static_cast<int>(integrated_rot.cols()));
+    return;
+  }
   integrated_map = full_q_mat * integrated_rot;
 
   /* extract controlled axis  */
@@ -237,6 +252,11 @@ void GimbalrotorController::controlCore()
       navigator_->setTargetRoll(target_roll_);
       navigator_->setTargetPitch(target_pitch_);
     }
+  }
+  else if (gimbal_calc_in_fc_)
+  {
+    target_roll_ = target_rpy_.x();
+    target_pitch_ = target_rpy_.y();
   }
   else
   {

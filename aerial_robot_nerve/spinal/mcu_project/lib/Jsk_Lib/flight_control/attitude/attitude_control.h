@@ -52,6 +52,7 @@
 #include <spinal/UavInfo.h>
 #include <spinal/PMatrixPseudoInverseWithInertia.h>
 #include <spinal/TorqueAllocationMatrixInv.h>
+#include <spinal/ServoControlCmd.h>
 
 #define IDLE_DUTY 0.5f
 #define FORCE_LANDING_INTEGRAL 0.0025f // 500Hz * 0.0025 = 1.25 N / sec
@@ -154,7 +155,11 @@ private:
   ros::ServiceServer<std_srvs::SetBool::Request, std_srvs::SetBool::Response, AttitudeController> att_control_srv_;
 
   ros::Publisher esc_telem_pub_;
+  ros::Publisher gimbal_control_pub_;
   spinal::ESCTelemetryArray esc_telem_msg_;
+  spinal::ServoControlCmd gimbal_control_msg_;
+  uint8_t gimbal_control_indices_[MAX_MOTOR_NUMBER];
+  int16_t gimbal_control_angles_[MAX_MOTOR_NUMBER];
 
   void setAttitudeControlCallback(const std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res)
   {
