@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 import roslaunch
 import rospkg
@@ -124,7 +125,9 @@ class MujocoMultiBringup(object):
             ]
             self.start_launch(bringup_launch, bringup_args)
 
-        rospy.sleep(rospy.get_param("~param_load_delay", 1.0))
+        # The top-level launch enables /use_sim_time before this node starts,
+        # but the MuJoCo backend is not publishing /clock yet.
+        time.sleep(rospy.get_param("~param_load_delay", 1.0))
 
         mujoco_launch = roslaunch.rlutil.resolve_launch_arguments(["mujoco_ros_control", "mujoco_multi.launch"])[0]
         mujoco_args = [
@@ -134,7 +137,7 @@ class MujocoMultiBringup(object):
         ]
         self.start_launch(mujoco_launch, mujoco_args)
 
-        rospy.sleep(rospy.get_param("~backend_start_delay", 1.0))
+        time.sleep(rospy.get_param("~backend_start_delay", 1.0))
 
         controller_launch = roslaunch.rlutil.resolve_launch_arguments(["aerial_robot_simulation", "mujoco.launch"])[0]
         for robot in robots:

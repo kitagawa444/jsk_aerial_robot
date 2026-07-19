@@ -14,7 +14,10 @@
   </include>
 
   <!-- basic parameter -->
-  <rosparam file="$(find aerial_robot_simulation)/config/Mujoco.yaml" command="load" ns="$(arg robot_ns)" if="$(arg launch_controller)" />
+  <!-- Load this before the shared multi-robot backend starts.  In that setup this
+       launch file is first included with both launch flags disabled only to
+       prepare each robot namespace. -->
+  <rosparam file="$(find aerial_robot_simulation)/config/Mujoco.yaml" command="load" ns="$(arg robot_ns)" />
 
   <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
         output="screen" ns="$(arg robot_ns)" args="--timeout 120 attitude_controller" if="$(arg launch_controller)" />

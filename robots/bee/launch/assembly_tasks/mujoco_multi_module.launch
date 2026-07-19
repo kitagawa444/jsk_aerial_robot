@@ -16,6 +16,10 @@
   <arg name="param_load_delay" default="1.0"/>
   <arg name="regenerate_single_model" default="false"/>
 
+  <!-- Robot bringup nodes must use simulation time from their initialization.
+       The shared MuJoCo backend, which also sets this parameter, starts later. -->
+  <rosparam param="/use_sim_time">true</rosparam>
+
   <node pkg="bee" type="mujoco_multi_bringup.py" name="bee_mujoco_multi_bringup" output="screen" required="true">
     <param name="robot_count" value="$(arg robot_count)"/>
     <param name="headless" value="$(arg headless)"/>
