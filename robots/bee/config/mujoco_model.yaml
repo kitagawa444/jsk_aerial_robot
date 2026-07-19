@@ -1,0 +1,7 @@
+package:
+  ["bee"]
+
+bee:
+  input: ["robots/bee.urdf.xacro"]
+  filename: ["bee"]
+  meshdir: urdf/mesh

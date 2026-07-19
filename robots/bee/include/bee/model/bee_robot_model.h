@@ -1,0 +1,54 @@
+// -*- mode: c++ -*-
+
+#pragma once
+
+#include <gimbalrotor/model/gimbalrotor_robot_model.h>
+
+using namespace aerial_robot_model;
+
+enum module_state
+  {
+   SEPARATED,
+   FOLLOWER,
+   LEADER
+  };
+
+class BeeRobotModel : public GimbalrotorRobotModel{
+public:
+  BeeRobotModel(bool init_with_rosparam = true,
+                    bool verbose = false,
+                    double fc_t_min_thre = 0,
+                    double epsilon = 10);
+  virtual ~BeeRobotModel() = default;
+
+  template<class T> T getContactFrame();
+  template<class T> T getCog2Cp();
+
+  void setContactFrame(const KDL::Frame contact_frame){contact_frame_ = contact_frame;}
+  void setCog2Cp(const KDL::Frame Cog2Cp){Cog2Cp_ = Cog2Cp;}
+
+protected:
+  KDL::Frame contact_frame_;
+  std::mutex mutex_contact_frame_;
+  KDL::Frame Cog2Cp_;
+  std::mutex mutex_cog2cp_;
+
+  void updateRobotModelImpl(const KDL::JntArray& joint_positions) override;
+};
+
+template<> inline KDL::Frame BeeRobotModel::getContactFrame()
+{
+  std::lock_guard<std::mutex> lock(mutex_contact_frame_);
+  return contact_frame_;
+}
+
+template<> inline geometry_msgs::TransformStamped BeeRobotModel::getContactFrame()
+{
+  return aerial_robot_model::kdlToMsg(BeeRobotModel::getContactFrame<KDL::Frame>());
+}
+
+template<> inline KDL::Frame BeeRobotModel::getCog2Cp()
+{
+  std::lock_guard<std::mutex> lock(mutex_cog2cp_);
+  return Cog2Cp_;
+}

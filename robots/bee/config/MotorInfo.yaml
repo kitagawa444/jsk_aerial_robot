@@ -1,0 +1,37 @@
+motor_info:
+        min_pwm: 0.6 # = 1000 [ms]
+        max_pwm: 0.95 #0.92 # = 1840 [ms]             
+        min_thrust: 2.0 #[N]
+        force_landing_thrust: 6.0 #[N]
+        m_f_rate: -0.0123 # should be zero, because of the dual rotor
+        pwm_conversion_mode: 0 # Polynominal Mode
+        vel_ref_num: 4
+        
+        ref1:        
+                voltage: 25.2
+                max_thrust: 13.67 #20.26
+                polynominal2: 0.003361157 # x10^2
+                polynominal1: 3.306085703 # x10
+                polynominal0: -20.1886442961 # x1
+        ref2:
+                voltage: 24.2
+                max_thrust: 13.15 #18.07
+                polynominal2: 0.006234146 # x10^2
+                polynominal1: 2.699337437 # x10
+                polynominal0: -17.6385817868 # x1
+        ref3:
+                voltage: 23.2
+                max_thrust: 13.13 #17.35
+                polynominal2: 0.019904485 # x10^2
+                polynominal1: 0.568821422 # x10
+                polynominal0: -9.6893887450 # x1 
+        ref4:        
+                voltage: 22.2
+                max_thrust: 11.975 #15.91
+                polynominal2: 0.016388607 # x10^2
+                polynominal1: 0.786307029 # x10
+                polynominal0: -9.8927491830 # x1
+
+        # for simualtion
+        rotor_damping_rate: 0.1 # = 0.001 / (0.01 + 0.001); 0.01: time constant; 0.001: dt
+        rotor_force_noise: 0.01 # [N] but good performance in gazebo

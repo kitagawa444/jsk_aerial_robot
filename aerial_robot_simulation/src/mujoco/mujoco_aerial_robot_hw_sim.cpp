@@ -9,7 +9,15 @@ namespace mujoco_ros_control
                               mjData* mujoco_data
                               )
   {
-    DefaultRobotHWSim::init(robot_namespace, model_nh, mujoco_model, mujoco_data);
+    if(!DefaultRobotHWSim::init(robot_namespace, model_nh, mujoco_model, mujoco_data))
+      {
+        return false;
+      }
+
+    fc_site_name_ = name_prefix_.empty() ? std::string("fc") : name_prefix_ + "fc";
+    acc_sensor_name_ = name_prefix_.empty() ? std::string("acc") : name_prefix_ + "acc";
+    gyro_sensor_name_ = name_prefix_.empty() ? std::string("gyro") : name_prefix_ + "gyro";
+    mag_sensor_name_ = name_prefix_.empty() ? std::string("mag") : name_prefix_ + "mag";
 
     rotor_list_.resize(0);
 
@@ -26,10 +34,13 @@ namespace mujoco_ros_control
     int motor_num = 0;
     for(int i = 0; i < mujoco_model_->nu; i++)
       {
-        std::string actuator_name = mj_id2name(mujoco_model_, mjtObj_::mjOBJ_ACTUATOR, i);
-        if(actuator_name.find("rotor") != std::string::npos)
+        const char* actuator_name_cstr = mj_id2name(mujoco_model_, mjtObj_::mjOBJ_ACTUATOR, i);
+        if(!actuator_name_cstr) continue;
+        std::string actuator_name(actuator_name_cstr);
+        if(matchesRobotNamespace(actuator_name) && actuator_name.find("rotor") != std::string::npos)
           {
             rotor_list_.push_back(actuator_name);
+            registerManagedActuator(i);
             motor_num++;
           }
       }
@@ -75,7 +86,14 @@ namespace mujoco_ros_control
                     // use param of servo
                     init_value = static_cast<double>(servo_params.second["simulation"][init_value_param_name]);
                   }
-                control_input_.at((mj_name2id(mujoco_model_, mjtObj_::mjOBJ_ACTUATOR, servo_name.c_str()))) = init_value;
+                const std::string actuator_name = name_prefix_.empty() ? servo_name : name_prefix_ + servo_name;
+                const int actuator_id = mj_name2id(mujoco_model_, mjtObj_::mjOBJ_ACTUATOR, actuator_name.c_str());
+                if(actuator_id < 0)
+                  {
+                    ROS_ERROR("can not find actuator '%s' for servo %s", actuator_name.c_str(), servo_name.c_str());
+                    return false;
+                  }
+                control_input_.at(actuator_id) = init_value;
               }
           }
       }
@@ -108,7 +126,13 @@ namespace mujoco_ros_control
 
   void AerialRobotHWSim::read(const ros::Time& time, const ros::Duration& period)
   {
-    int fc_id = mj_name2id(mujoco_model_, mjtObj_::mjOBJ_SITE, "fc");
+    int fc_id = mj_name2id(mujoco_model_, mjtObj_::mjOBJ_SITE, fc_site_name_.c_str());
+    if(fc_id < 0)
+      {
+        ROS_ERROR_THROTTLE(1.0, "mujoco: site %s does not exist", fc_site_name_.c_str());
+        DefaultRobotHWSim::read(time, period);
+        return;
+      }
     mjtNum* site_xpos = mujoco_data_->site_xpos;
     mjtNum* site_xmat = mujoco_data_->site_xmat;
     tf::Matrix3x3 fc_rot_mat = tf::Matrix3x3(site_xmat[9 * fc_id + 0], site_xmat[9 * fc_id + 1], site_xmat[9 * fc_id + 2],
@@ -120,21 +144,24 @@ namespace mujoco_ros_control
     tf::Vector3 acc, gyro, mag;
     for(int i = 0; i < mujoco_model_->nsensor; i++)
       {
-        if(std::string(mj_id2name(mujoco_model_, mjtObj_::mjOBJ_SENSOR, i)) == "acc")
+        const char* sensor_name_cstr = mj_id2name(mujoco_model_, mjtObj_::mjOBJ_SENSOR, i);
+        if(!sensor_name_cstr) continue;
+        std::string sensor_name(sensor_name_cstr);
+        if(sensor_name == acc_sensor_name_)
           {
             for(int j = 0; j < mujoco_model_->sensor_dim[i]; j++)
               {
                 acc[j] = mujoco_data_->sensordata[mujoco_model_->sensor_adr[i] + j];
               }
           }
-        if(std::string(mj_id2name(mujoco_model_, mjtObj_::mjOBJ_SENSOR, i)) == "gyro")
+        if(sensor_name == gyro_sensor_name_)
           {
             for(int j = 0; j < mujoco_model_->sensor_dim[i]; j++)
               {
                 gyro[j] = mujoco_data_->sensordata[mujoco_model_->sensor_adr[i] + j];
               }
           }
-        if(std::string(mj_id2name(mujoco_model_, mjtObj_::mjOBJ_SENSOR, i)) == "mag")
+        if(sensor_name == mag_sensor_name_)
           {
             for(int j = 0; j < mujoco_model_->sensor_dim[i]; j++)
               {

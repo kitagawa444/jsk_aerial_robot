@@ -1,0 +1,11 @@
+<library path="lib/libbee_robot_model">
+
+  <class name="bee_robot_model" type="BeeRobotModel" base_class_type="aerial_robot_model::RobotModel">
+    <description>plugin for bee robot model </description>
+  </class>
+
+  <class name="bee_omni_robot_model" type="BeeOmniRobotModel" base_class_type="aerial_robot_model::RobotModel">
+    <description>plugin for bee omni robot model </description>
+  </class>
+
+</library>

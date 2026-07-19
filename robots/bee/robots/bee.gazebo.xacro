@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<robot
+    xmlns:xacro="http://www.ros.org/wiki/xacro" name="bee" >
+  <xacro:arg name="robot_name" default="bee" />
+  <xacro:arg name="enable_livox" default="false" />
+
+  <xacro:include filename="$(find bee)/robots/bee.urdf.xacro" />
+
+  <!-- gazebo plugin for default controller and sensors -->
+  <xacro:include filename="$(find aerial_robot_simulation)/xacro/spinal.gazebo.xacro" />
+  <xacro:gazebo_spinal robot_name="$(arg robot_name)" mag_frame="fc" gps_frame="fc" />
+
+  <!-- Livox Mid360 LiDAR -->
+  <xacro:if value="$(arg enable_livox)">
+    <xacro:include filename="$(find aerial_robot_simulation)/xacro/livox_mid360.gazebo.xacro" />
+    <xacro:livox_mid360_gazebo frame="lidar_imu" tf_prefix="$(arg robot_name)"/>
+  </xacro:if>
+
+</robot>

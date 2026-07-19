@@ -53,6 +53,7 @@ namespace aerial_robot_control
 
     /* external wrench compensation */
     bool pd_wrench_comp_mode_;
+    bool prev_wrench_comp_active_;
     Eigen::VectorXd external_wrench_upper_limit_;
     Eigen::VectorXd external_wrench_lower_limit_;
 
@@ -82,8 +83,8 @@ namespace aerial_robot_control
     void controlCore() override;
     
     virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
-    void rosParamInit();
-    void externalWrenchEstimate();
+    void rosParamInit() override;
+    void externalWrenchEstimate() override;
     void reset() override;
 
     /* wrench estimation members */
