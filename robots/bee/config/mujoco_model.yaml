@@ -5,3 +5,27 @@ bee:
   input: ["robots/bee.urdf.xacro"]
   filename: ["bee"]
   meshdir: urdf/mesh
+  # MuJoCo-only spring-loaded rubber pads at the four physical feet. Positive
+  # slide displacement is compression toward base_link (+Z).
+  compliant_feet:
+    parent_body: base_link
+    axis: [0.0, 0.0, 1.0]
+    joint_range: [-0.001, 0.015]
+    stiffness: 600.0
+    damping: 3.0
+    spring_reference: 0.0
+    free_length: 0.024
+    shaft_radius: 0.003
+    shaft_mass: 0.001
+    ball_radius: 0.012
+    ball_mass: 0.006
+    friction: [1.2, 0.02, 0.001]
+    solref: [0.01, 1.0]
+    solimp: [0.9, 0.95, 0.003]
+    ball_rgba: [0.04, 0.04, 0.04, 1.0]
+    shaft_rgba: [0.65, 0.65, 0.65, 1.0]
+    feet:
+      - {name: front, pos: [0.069, 0.0, -0.083]}
+      - {name: rear, pos: [-0.069, 0.0, -0.083]}
+      - {name: left, pos: [0.0, 0.069, -0.083]}
+      - {name: right, pos: [0.0, -0.069, -0.083]}

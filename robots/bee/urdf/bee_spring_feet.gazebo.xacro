@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="bee_spring_feet">
+
+  <!-- Gazebo-only compliant foot. The physical spring is the prismatic joint;
+       only the rubber ball participates in collision detection. -->
+  <xacro:macro name="bee_spring_foot" params="name x y stiffness damping">
+    <link name="spring_foot_${name}">
+      <inertial>
+        <origin xyz="0 0 -0.0223" rpy="0 0 0"/>
+        <mass value="0.007"/>
+        <inertia ixx="0.00000052" ixy="0" ixz="0"
+                 iyy="0.00000052" iyz="0" izz="0.00000035"/>
+      </inertial>
+
+      <visual name="spring_foot_${name}_spring_visual">
+        <origin xyz="0 0 -0.012" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.003" length="0.024"/>
+        </geometry>
+        <material name="bee_spring_shaft_gray"/>
+      </visual>
+
+      <visual name="spring_foot_${name}_ball_visual">
+        <origin xyz="0 0 -0.024" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="0.012"/>
+        </geometry>
+        <material name="bee_rubber_black"/>
+      </visual>
+
+      <collision name="spring_foot_${name}_ball_collision">
+        <origin xyz="0 0 -0.024" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="0.012"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Positive displacement is compression toward base_link (+Z). -->
+    <joint name="spring_foot_${name}_joint" type="prismatic">
+      <parent link="base_link"/>
+      <child link="spring_foot_${name}"/>
+      <origin xyz="${x} ${y} -0.083" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="-0.001" upper="0.015" effort="100" velocity="1.0"/>
+      <dynamics damping="${damping}" friction="0.0"/>
+    </joint>
+
+    <gazebo reference="spring_foot_${name}">
+      <mu1>1.2</mu1>
+      <mu2>1.2</mu2>
+      <kp>50000</kp>
+      <kd>20</kd>
+      <maxVel>0.05</maxVel>
+      <minDepth>0.001</minDepth>
+      <selfCollide>false</selfCollide>
+    </gazebo>
+
+    <gazebo reference="spring_foot_${name}_joint">
+      <implicitSpringDamper>true</implicitSpringDamper>
+      <springStiffness>${stiffness}</springStiffness>
+      <springReference>0.0</springReference>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="bee_spring_feet" params="stiffness:=600.0 damping:=20.0">
+    <material name="bee_spring_shaft_gray">
+      <color rgba="0.65 0.65 0.65 1.0"/>
+    </material>
+    <material name="bee_rubber_black">
+      <color rgba="0.04 0.04 0.04 1.0"/>
+    </material>
+
+    <xacro:bee_spring_foot name="front" x="0.069" y="0.0"
+                           stiffness="${stiffness}" damping="${damping}"/>
+    <xacro:bee_spring_foot name="rear" x="-0.069" y="0.0"
+                           stiffness="${stiffness}" damping="${damping}"/>
+    <xacro:bee_spring_foot name="left" x="0.0" y="0.069"
+                           stiffness="${stiffness}" damping="${damping}"/>
+    <xacro:bee_spring_foot name="right" x="0.0" y="-0.069"
+                           stiffness="${stiffness}" damping="${damping}"/>
+  </xacro:macro>
+
+</robot>

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import math
 import signal
 import subprocess
 import sys
@@ -56,7 +57,52 @@ class MujocoMultiBringup(object):
         subprocess.check_call([sys.executable, generator_path, config_path])
         return model_path
 
-    def compose_scene(self, robot_count, robots):
+    def build_grasp_objects(self):
+        if not rospy.get_param("~spawn_object", True):
+            return []
+
+        height = rospy.get_param("~object_height", 0.30)
+        triangle_side = rospy.get_param("~object_triangle_side", 0.36)
+        ground_clearance = rospy.get_param("~object_ground_clearance", 0.002)
+        yaw = rospy.get_param("~object_yaw", 0.0)
+        object_x = rospy.get_param("~object_x", 0.0)
+        object_y = rospy.get_param("~object_y", 1.0)
+        pedestal_enabled = rospy.get_param("~spawn_object_pedestal", True)
+        pedestal_height = rospy.get_param("~object_pedestal_height", 0.65) if pedestal_enabled else 0.0
+        pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.09)
+
+        objects = []
+        if pedestal_enabled:
+            objects.append({
+                "name": "grasp_pedestal",
+                "type": "cylinder",
+                "pos": [object_x, object_y, pedestal_height / 2.0],
+                "size": [pedestal_radius, pedestal_height],
+                "friction": [1.2, 0.02, 0.001],
+                "rgba": [0.35, 0.38, 0.42, 1.0],
+            })
+
+        objects.append({
+            "name": "grasp_prism",
+            "type": "triangular_prism",
+            "pos": [
+                object_x,
+                object_y,
+                pedestal_height + ground_clearance + height / 2.0,
+            ],
+            "euler": [0.0, 0.0, yaw],
+            "size": [triangle_side, height],
+            "mass": rospy.get_param("~object_mass", 0.50),
+            "friction": [
+                rospy.get_param("~object_sliding_friction", 1.2),
+                0.02,
+                0.001,
+            ],
+            "rgba": [0.92, 0.45, 0.08, 1.0],
+        })
+        return objects
+
+    def compose_scene(self, robot_count, robots, objects):
         generated_dir = os.path.join(self.bee_path, "mujoco", "generated")
         if not os.path.isdir(generated_dir):
             os.makedirs(generated_dir)
@@ -69,7 +115,10 @@ class MujocoMultiBringup(object):
             "source_model": os.path.join(self.bee_path, "mujoco", "bee", "robot.xml"),
             "output_model": scene_model_path,
             "robots": [],
+            "objects": objects,
         }
+        if objects:
+            scene_config["jacobian"] = "dense"
 
         for robot in robots:
             entry = {
@@ -105,8 +154,9 @@ class MujocoMultiBringup(object):
 
         robot_namespaces = self.get_robot_namespaces(robot_count)
         robots = self.build_robot_layout(robot_count)
+        objects = self.build_grasp_objects()
         self.ensure_single_robot_model()
-        scene_model_path = self.compose_scene(robot_count, robots)
+        scene_model_path = self.compose_scene(robot_count, robots, objects)
 
         bringup_launch = roslaunch.rlutil.resolve_launch_arguments(["bee", "bringup.launch"])[0]
         for index, robot in enumerate(robots):

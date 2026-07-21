@@ -6,6 +6,13 @@
 
   <xacro:include filename="$(find bee)/robots/bee.urdf.xacro" />
 
+  <!-- Gazebo-only spring-loaded rubber feet. The regular URDF used for the
+       real robot remains unchanged. -->
+  <xacro:include filename="$(find bee)/urdf/bee_spring_feet.gazebo.xacro" />
+  <!-- ODE needs more joint damping than MuJoCo for the same vehicle-level
+       settling because the contact solvers regularize impacts differently. -->
+  <xacro:bee_spring_feet stiffness="600.0" damping="20.0"/>
+
   <!-- gazebo plugin for default controller and sensors -->
   <xacro:include filename="$(find aerial_robot_simulation)/xacro/spinal.gazebo.xacro" />
   <xacro:gazebo_spinal robot_name="$(arg robot_name)" mag_frame="fc" gps_frame="fc" />

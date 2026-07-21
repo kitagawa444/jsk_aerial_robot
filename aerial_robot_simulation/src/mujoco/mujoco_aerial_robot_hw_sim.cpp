@@ -1,5 +1,7 @@
 #include <aerial_robot_simulation/mujoco/mujoco_aerial_robot_hw_sim.h>
 
+#include <sstream>
+
 namespace mujoco_ros_control
 {
 
@@ -118,8 +120,52 @@ namespace mujoco_ros_control
     simulation_nh.param("mocap_pub_rate", mocap_pub_rate_, 0.01); // [sec]
     simulation_nh.param("mocap_pos_noise", mocap_pos_noise_, 0.001); // m
     simulation_nh.param("mocap_rot_noise", mocap_rot_noise_, 0.001); // rad
+    simulation_nh.param("force_sensor_pub_rate", force_sensor_pub_rate_, 0.01); // [sec]
     ground_truth_pub_ = model_nh.advertise<nav_msgs::Odometry>("ground_truth", 1);
     mocap_pub_ = model_nh.advertise<geometry_msgs::PoseStamped>("mocap/pose", 1);
+
+    force_site_sensors_.clear();
+    for(int sensor_id = 0; sensor_id < mujoco_model_->nsensor; ++sensor_id)
+      {
+        if(mujoco_model_->sensor_type[sensor_id] != mjSENS_FORCE ||
+           mujoco_model_->sensor_dim[sensor_id] != 3 ||
+           mujoco_model_->sensor_objtype[sensor_id] != mjOBJ_SITE)
+          {
+            continue;
+          }
+
+        const char* sensor_name_cstr = mj_id2name(mujoco_model_, mjOBJ_SENSOR, sensor_id);
+        if(!sensor_name_cstr || !matchesRobotNamespace(sensor_name_cstr)) continue;
+
+        const std::string sensor_name = stripNamePrefix(sensor_name_cstr);
+        const std::string foot_prefix = "spring_foot_";
+        const std::string force_suffix = "_force";
+        if(sensor_name.find(foot_prefix) != 0 ||
+           sensor_name.size() <= foot_prefix.size() + force_suffix.size() ||
+           sensor_name.compare(sensor_name.size() - force_suffix.size(),
+                               force_suffix.size(), force_suffix) != 0)
+          {
+            continue;
+          }
+
+        ForceSiteSensor force_sensor;
+        force_sensor.name = sensor_name;
+        force_sensor.data_address = mujoco_model_->sensor_adr[sensor_id];
+        force_sensor.site_id = mujoco_model_->sensor_objid[sensor_id];
+        force_site_sensors_.push_back(force_sensor);
+      }
+
+    if(!force_site_sensors_.empty())
+      {
+        foot_force_pub_ = model_nh.advertise<aerial_robot_msgs::ForceList>("mujoco/foot_forces", 1);
+        std::ostringstream sensor_names;
+        for(size_t i = 0; i < force_site_sensors_.size(); ++i)
+          {
+            if(i > 0) sensor_names << ", ";
+            sensor_names << force_site_sensors_[i].name;
+          }
+        ROS_INFO_STREAM("[mujoco] foot force order: [" << sensor_names.str() << "]");
+      }
 
     return true;
   }
@@ -206,6 +252,35 @@ namespace mujoco_ros_control
     /* set ground truth for controller: use the value with noise */
     spinal_interface_.setGroundTruthStates(fc_quat.x(), fc_quat.y(), fc_quat.z(), fc_quat.w(),
                                            gyro.x(), gyro.y(), gyro.z());
+
+    if(!force_site_sensors_.empty() && force_sensor_pub_rate_ > 0.0 &&
+       (time - last_force_sensor_time_).toSec() >= force_sensor_pub_rate_)
+      {
+        aerial_robot_msgs::ForceList force_list_msg;
+        force_list_msg.header.stamp = time;
+        force_list_msg.header.frame_id = name_prefix_.empty() ? std::string("fc") : robot_namespace_ + "/fc";
+        force_list_msg.forces.reserve(force_site_sensors_.size());
+
+        for(const ForceSiteSensor& sensor : force_site_sensors_)
+          {
+            // Preserve MuJoCo's child-to-parent sign convention, then express
+            // every foot reading in the common fc frame.
+            const mjtNum* local_force = mujoco_data_->sensordata + sensor.data_address;
+            mjtNum world_force[3];
+            mjtNum fc_force[3];
+            mju_rotVecMat(world_force, local_force, mujoco_data_->site_xmat + 9 * sensor.site_id);
+            mju_rotVecMatT(fc_force, world_force, mujoco_data_->site_xmat + 9 * fc_id);
+
+            geometry_msgs::Vector3 force;
+            force.x = fc_force[0];
+            force.y = fc_force[1];
+            force.z = fc_force[2];
+            force_list_msg.forces.push_back(force);
+          }
+
+        foot_force_pub_.publish(force_list_msg);
+        last_force_sensor_time_ = time;
+      }
 
     if((time - last_mocap_time_).toSec() >= mocap_pub_rate_)
       {

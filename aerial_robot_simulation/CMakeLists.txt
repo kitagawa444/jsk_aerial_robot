@@ -58,6 +58,7 @@ add_library(aerial_robot_hw_sim src/aerial_robot_hw_sim.cpp)
 target_link_libraries(aerial_robot_hw_sim spinal_interface ${catkin_LIBRARIES} ${GAZEBO_LIBRARIES} ${orocos_kdl_LIBRARIES})
 
 add_library(mujoco_aerial_robot_hw_sim src/mujoco/mujoco_aerial_robot_hw_sim.cpp )
+add_dependencies(mujoco_aerial_robot_hw_sim ${catkin_EXPORTED_TARGETS})
 target_link_libraries(mujoco_aerial_robot_hw_sim ${catkin_LIBRARIES} mujoco_spinal_interface)
 
 

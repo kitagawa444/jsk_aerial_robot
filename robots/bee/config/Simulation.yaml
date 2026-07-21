@@ -10,6 +10,12 @@ sensor_plugin:
 # ground truth parameter
 # global namespace
 simulation:
+  # Spring feet are passive MuJoCo-only joints. Their compression is exposed by
+  # MuJoCo sensors instead of the URDF joint_states topic.
+  ignored_mujoco_joint_prefixes: [spring_foot_]
+  # Publish [front, rear, left, right] in one ForceList (period in seconds).
+  force_sensor_pub_rate: 0.01
+
   # gaussian noise
   ground_truth_pos_noise: 0.001
   ground_truth_vel_noise: 0.005

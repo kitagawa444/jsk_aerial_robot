@@ -15,6 +15,18 @@
   <arg name="backend_start_delay" default="1.0"/>
   <arg name="param_load_delay" default="1.0"/>
   <arg name="regenerate_single_model" default="false"/>
+  <arg name="spawn_object" default="true"/>
+  <arg name="object_x" default="0.0"/>
+  <arg name="object_y" default="1.0"/>
+  <arg name="object_ground_clearance" default="0.002"/>
+  <arg name="object_yaw" default="0.0"/>
+  <arg name="object_height" default="0.30"/>
+  <arg name="object_triangle_side" default="0.36"/>
+  <arg name="object_mass" default="0.50"/>
+  <arg name="object_sliding_friction" default="1.2"/>
+  <arg name="spawn_object_pedestal" default="true"/>
+  <arg name="object_pedestal_height" default="0.65"/>
+  <arg name="object_pedestal_radius" default="0.09"/>
 
   <!-- Robot bringup nodes must use simulation time from their initialization.
        The shared MuJoCo backend, which also sets this parameter, starts later. -->
@@ -36,5 +48,17 @@
     <param name="backend_start_delay" value="$(arg backend_start_delay)"/>
     <param name="param_load_delay" value="$(arg param_load_delay)"/>
     <param name="regenerate_single_model" value="$(arg regenerate_single_model)"/>
+    <param name="spawn_object" value="$(arg spawn_object)"/>
+    <param name="object_x" value="$(arg object_x)"/>
+    <param name="object_y" value="$(arg object_y)"/>
+    <param name="object_ground_clearance" value="$(arg object_ground_clearance)"/>
+    <param name="object_yaw" value="$(arg object_yaw)"/>
+    <param name="object_height" value="$(arg object_height)"/>
+    <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
+    <param name="object_mass" value="$(arg object_mass)"/>
+    <param name="object_sliding_friction" value="$(arg object_sliding_friction)"/>
+    <param name="spawn_object_pedestal" value="$(arg spawn_object_pedestal)"/>
+    <param name="object_pedestal_height" value="$(arg object_pedestal_height)"/>
+    <param name="object_pedestal_radius" value="$(arg object_pedestal_radius)"/>
   </node>
 </launch>
