@@ -453,10 +453,10 @@ void GimbalrotorController::ExtWrenchControl(){
     // target_roll_ += target_acc[1];
     navigator_->setTargetAccX(feedforward_acc[0]);
     navigator_->setTargetAccY(feedforward_acc[1]);
-    navigator_->setTargetAngAccZ(feedforward_ang_acc[2]);
+    // navigator_->setTargetAngAccZ(feedforward_ang_acc[2]);
     target_wrench_acc_cog[0] += feedforward_acc[0];
     target_wrench_acc_cog[1] += feedforward_acc[1];
-    target_wrench_acc_cog[5] += feedforward_ang_acc[2];
+    // target_wrench_acc_cog[5] += feedforward_ang_acc[2];
 
     feedforward_sum_.head(3) += target_acc * wrench_diff_gain_;
     feedforward_sum_.tail(3) += target_ang_acc * wrench_diff_gain_;
@@ -467,7 +467,7 @@ void GimbalrotorController::ExtWrenchControl(){
     {
     navigator_->setTargetAccX(0);
     navigator_->setTargetAccY(0);
-    navigator_->setTargetAngAccZ(0);
+    // navigator_->setTargetAngAccZ(0);
     feedforward_sum_ = Eigen::VectorXd::Zero(6);
   }
   if(pid_controllers_.at(X).result()<0.0)
@@ -483,7 +483,7 @@ void GimbalrotorController::ExtWrenchControl(){
           err_i_x_ = pid_controllers_.at(X).getErrI();
           err_i_y_ = pid_controllers_.at(Y).getErrI();
           err_i_z_ = pid_controllers_.at(Z).getErrI();
-          err_i_yaw_ = pid_controllers_.at(YAW).getErrI();
+          // err_i_yaw_ = pid_controllers_.at(YAW).getErrI();
           x_p_gain_ = pid_controllers_.at(X).getPGain();
           y_p_gain_ = pid_controllers_.at(Y).getPGain();
           //err_p_y_ = pid_controllers_.at(Y).getErrP();
@@ -492,7 +492,7 @@ void GimbalrotorController::ExtWrenchControl(){
       pid_controllers_.at(X).setErrI(err_i_x_);
       pid_controllers_.at(Y).setErrI(err_i_y_);
       pid_controllers_.at(Z).setErrI(err_i_z_);
-      pid_controllers_.at(YAW).setErrI(err_i_yaw_);
+      // pid_controllers_.at(YAW).setErrI(err_i_yaw_);
       //pid_controllers_.at(Y).setErrP(0);
       // pid_controllers_.at(X).setPGain(0.0);
       pid_controllers_.at(Y).setPGain(0.0);
