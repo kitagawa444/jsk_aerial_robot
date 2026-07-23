@@ -70,6 +70,8 @@ private:
   void sendTorqueAllocationMatrixInv();
 
 protected:
+  static double calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot);
+
   bool gimbal_calc_in_fc_;
   bool i_term_rp_calc_in_pc_;
   ros::Publisher rpy_gain_pub_;             // for spinal

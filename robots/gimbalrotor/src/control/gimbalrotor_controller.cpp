@@ -1,9 +1,26 @@
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 
+#include <cmath>
+
 using namespace std;
 
 namespace aerial_robot_control
 {
+double GimbalrotorController::calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot)
+{
+  if (integrated_map_inv_rot.cols() <= Z)
+    return 0.0;
+
+  double max_yaw_scale = 0.0;
+  for (Eigen::Index i = 0; i < integrated_map_inv_rot.rows(); ++i)
+  {
+    const double yaw_scale = integrated_map_inv_rot(i, Z);
+    if (std::isfinite(yaw_scale) && yaw_scale > max_yaw_scale)
+      max_yaw_scale = yaw_scale;
+  }
+  return max_yaw_scale;
+}
+
 GimbalrotorController::GimbalrotorController() : PoseLinearController()
 {
 }
@@ -265,7 +282,6 @@ void GimbalrotorController::controlCore()
   }
 
   /*  calculate target base thrust (considering only translational components)*/
-  double max_yaw_scale = 0;  // for reconstruct yaw control term in spinal
   for (int i = 0; i < motor_num_; i++)
   {
     Eigen::VectorXd f_i;
@@ -284,11 +300,15 @@ void GimbalrotorController::controlCore()
       target_base_thrust_.at(rotor_coef_ * i + 1) = f_i[1];
       target_base_thrust_.at(rotor_coef_ * i + 2) = f_i[2];
     }
-    if (integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW)) > max_yaw_scale)
-      max_yaw_scale = integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW));  // underactuated: yaw col is shifted
-
     last_col += rotor_coef_;
   }
+
+  /*
+   * FC reconstructs the yaw PI term using the largest positive yaw gain
+   * across all virtual rotors.  Use the same range here; motor_num_ only
+   * covers the physical rotors and misses virtual rows when a gimbal is used.
+   */
+  const double max_yaw_scale = calculateMaxYawScale(integrated_map_inv_rot_);
   candidate_yaw_term_ = pid_controllers_.at(YAW).result() * max_yaw_scale;
 
   /* calculate target full thrusts and gimbal angles (considering full components)*/
