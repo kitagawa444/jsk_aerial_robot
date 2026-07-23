@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <arg name="robot_count" default="4"/>
+  <arg name="headless" default="false"/>
+  <arg name="launch_rviz" default="true"/>
+  <arg name="first_robot_rviz_only" default="true"/>
+  <arg name="estimate_mode" default="1"/>
+  <arg name="spawn_x_start" default="-2.0"/>
+  <arg name="spawn_y_start" default="0.0"/>
+  <arg name="spawn_z" default="0.0"/>
+  <arg name="spacing_x" default="1.0"/>
+  <arg name="spacing_y" default="1.0"/>
+  <arg name="grid_cols" default="0"/>
+  <arg name="spawn_yaw" default="0.0"/>
+  <arg name="backend_start_delay" default="1.0"/>
+  <arg name="param_load_delay" default="1.0"/>
+  <arg name="regenerate_single_model" default="false"/>
+
+  <!-- Robot bringup nodes must use simulation time from their initialization.
+       The shared MuJoCo backend, which also sets this parameter, starts later. -->
+  <rosparam param="/use_sim_time">true</rosparam>
+
+  <node pkg="bee" type="mujoco_multi_bringup.py" name="bee_mujoco_multi_bringup" output="screen" required="true">
+    <param name="robot_count" value="$(arg robot_count)"/>
+    <param name="headless" value="$(arg headless)"/>
+    <param name="launch_rviz" value="$(arg launch_rviz)"/>
+    <param name="first_robot_rviz_only" value="$(arg first_robot_rviz_only)"/>
+    <param name="estimate_mode" value="$(arg estimate_mode)"/>
+    <param name="spawn_x_start" value="$(arg spawn_x_start)"/>
+    <param name="spawn_y_start" value="$(arg spawn_y_start)"/>
+    <param name="spawn_z" value="$(arg spawn_z)"/>
+    <param name="spacing_x" value="$(arg spacing_x)"/>
+    <param name="spacing_y" value="$(arg spacing_y)"/>
+    <param name="grid_cols" value="$(arg grid_cols)"/>
+    <param name="spawn_yaw" value="$(arg spawn_yaw)"/>
+    <param name="backend_start_delay" value="$(arg backend_start_delay)"/>
+    <param name="param_load_delay" value="$(arg param_load_delay)"/>
+    <param name="regenerate_single_model" value="$(arg regenerate_single_model)"/>
+  </node>
+</launch>

@@ -1,0 +1,7 @@
+<library path="lib/libbee_sensor_pluginlib">
+
+  <class name="sensor_plugin/bee_imu" type="sensor_plugin::BeeImu" base_class_type="sensor_plugin::SensorBase">
+    <description>Bee IMU sensor plugin.</description>
+  </class>
+
+</library>

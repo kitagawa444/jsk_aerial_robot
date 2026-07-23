@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<robot
+    xmlns:xacro="http://www.ros.org/wiki/xacro" name="ninja" >
+
+  <xacro:include filename="$(find ninja)/urdf/ninja.urdf.xacro" />
+  <xacro:include filename="$(find ninja)/urdf/common.xacro" />
+
+  <xacro:ninja_center_link child1="1" child2="2" child3="3"/>
+  <xacro:ninja_gimbal_link self="1" rotor_direction="1"/>
+  <xacro:ninja_gimbal_link self="2" rotor_direction="-1"/>
+  <xacro:ninja_gimbal_link self="3" rotor_direction="1"/>
+  <xacro:ninja_docking_mech_yaw/>
+  <xacro:ninja_docking_mech_pitch/>
+  <!-- <xacro:battery_3000mAh/> -->
+  <xacro:battery_1300mAh/>
+  <xacro:livox/>
+
+  ## dummy link for the contact point coordinate
+  <link name="contact_point">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0001"/>
+      <inertia
+          ixx="0.000001" ixy="0.0" ixz="0.0"
+          iyy="0.0001" iyz="0.0"
+          izz="0.0001"/>
+    </inertial>
+  </link>
+  <joint name="cp_base_joint" type="fixed">
+    <parent link="main_body"/>
+    <child link="contact_point"/>
+    <origin rpy="0 0 0" xyz="0.26 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  
+    
+</robot>

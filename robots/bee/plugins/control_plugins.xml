@@ -1,0 +1,5 @@
+<library path="lib/libbee_controller">
+  <class name="aerial_robot_control/bee_controller" type="aerial_robot_control::BeeController" base_class_type="aerial_robot_control::ControlBase">
+    <description>plugin for bee control </description>
+  </class>
+</library>

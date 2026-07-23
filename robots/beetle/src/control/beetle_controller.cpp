@@ -7,6 +7,7 @@ namespace aerial_robot_control
   BeetleController::BeetleController():
     GimbalrotorController(),
     pd_wrench_comp_mode_(false),
+    prev_wrench_comp_active_(false),
     pre_module_state_(SEPARATED),
     des_wrench_pub_flag_(false)
   {
@@ -125,10 +126,12 @@ namespace aerial_robot_control
     Eigen::Matrix3d inertia_inv = (beetle_robot_model_->getInertia<Eigen::Matrix3d>()).inverse();
     int my_id = beetle_navigator_->getMyID();
 
-    if(module_state == FOLLOWER &&
-       pd_wrench_comp_mode_ &&
-       beetle_navigator_->getControlFlag()&&
-       !beetle_navigator_->pseudo_assembly_mode_){
+    bool wrench_comp_active = module_state == FOLLOWER &&
+                              pd_wrench_comp_mode_ &&
+                              beetle_navigator_->getControlFlag() &&
+                              !beetle_navigator_->pseudo_assembly_mode_;
+
+    if(wrench_comp_active){
 
       /* set proper gains for wrench comp */
       int module_num = 0;
@@ -270,15 +273,18 @@ namespace aerial_robot_control
       pid_controllers_.at(TX).reset();
       pid_controllers_.at(TY).reset();
       pid_controllers_.at(TZ).reset();
-      pid_controllers_.at(X).setErrI(0.0);
-      pid_controllers_.at(Y).setErrI(0.0);
-      pid_controllers_.at(Z).setErrI(0.0);
-      pid_controllers_.at(ROLL).setErrI(0.0);
-      pid_controllers_.at(PITCH).setErrI(0.0);
-      pid_controllers_.at(YAW).setErrI(0.0);
+      if(prev_wrench_comp_active_){
+        pid_controllers_.at(X).setErrI(0.0);
+        pid_controllers_.at(Y).setErrI(0.0);
+        pid_controllers_.at(Z).setErrI(0.0);
+        pid_controllers_.at(ROLL).setErrI(0.0);
+        pid_controllers_.at(PITCH).setErrI(0.0);
+        pid_controllers_.at(YAW).setErrI(0.0);
+      }
     }
       
     GimbalrotorController::controlCore();
+    prev_wrench_comp_active_ = wrench_comp_active;
     pre_module_state_ = module_state;
     
   }

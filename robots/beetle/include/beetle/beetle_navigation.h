@@ -109,23 +109,9 @@ namespace aerial_robot_navigation
     bool joy_roll_negative_flag_;
     bool joy_pitch_positive_flag_;
     bool joy_pitch_negative_flag_;
-    bool joy_duplicated_flag_ = false;
 
     bool roll_pitch_control_flag_;
-    bool pre_assembled_ ;
-
-    void setFinalTargetBaselinkRPY(const tf::Vector3& rpy)
-    {
-      final_target_baselink_rot_.setRPY(rpy.x(), rpy.y(), rpy.z());
-      target_omega_.setValue(0,0,0);
-    }
-
-    tf::Vector3 getFinalTargetBaselinkRPY()
-    {
-      double r, p, y;
-      tf::Matrix3x3(final_target_baselink_rot_).getRPY(r, p, y);
-      return tf::Vector3(r, p, y);
-    } 
+    bool pre_assembled_ ; 
 
 
     void rosParamInit() override;

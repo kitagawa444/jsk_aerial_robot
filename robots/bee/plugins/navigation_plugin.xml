@@ -1,0 +1,7 @@
+<library path="lib/libbee_navigation">
+
+  <class name="aerial_robot_navigation/bee_navigation" type="aerial_robot_navigation::BeeNavigator" base_class_type="aerial_robot_navigation::BaseNavigator">
+    <description>plugin for bee navigation </description>
+  </class>
+
+</library>
