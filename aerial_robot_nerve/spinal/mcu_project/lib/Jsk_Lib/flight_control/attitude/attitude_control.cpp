@@ -550,7 +550,9 @@ void AttitudeController::fourAxisCommandCallback( const spinal::FourAxisCommand 
   target_angle_[X] = cmd_msg.angles[0];
   target_angle_[Y] = cmd_msg.angles[1];
   int max_yaw_term_index = max_yaw_term_index_;
-  float max_yaw_thrust_d_gain = thrust_d_gain_[max_yaw_term_index][Z];
+  float max_yaw_thrust_d_gain = 0;
+  if(max_yaw_term_index != -1)
+    max_yaw_thrust_d_gain = thrust_d_gain_[max_yaw_term_index][Z];
   for(int i = 0; i < motor_number_; i++)
     {
       // base thrust is about the z control
@@ -559,6 +561,8 @@ void AttitudeController::fourAxisCommandCallback( const spinal::FourAxisCommand 
       // reconstruct the pi term for yaw (temporary measure for pwm saturation avoidance)
       if(max_yaw_term_index != -1)
         extra_yaw_pi_term_[i] = cmd_msg.angles[Z] * thrust_d_gain_[i][Z] / max_yaw_thrust_d_gain;
+      else
+        extra_yaw_pi_term_[i] = 0;
     }
 
 #ifndef SIMULATION
@@ -721,15 +725,15 @@ void AttitudeController::thrustGainMapping()
 
 void AttitudeController::maxYawGainIndex()
 {
-  float max_yaw_gain = 0;
+  float max_abs_yaw_gain = 0;
   max_yaw_term_index_ = -1;
   for(int i = 0; i < motor_number_; i++)
     {
-      /* only find the maximum (positive) value */
-      /* to avoid identical absolute value */
-      if(thrust_d_gain_[i][Z] > max_yaw_gain)
+      const float abs_yaw_gain = fabs(thrust_d_gain_[i][Z]);
+      /* Keep the original sign; only the magnitude determines the reference. */
+      if(abs_yaw_gain > max_abs_yaw_gain)
         {
-          max_yaw_gain = thrust_d_gain_[i][Z];
+          max_abs_yaw_gain = abs_yaw_gain;
           max_yaw_term_index_ = i;
         }
     }
