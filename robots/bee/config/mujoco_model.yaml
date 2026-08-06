@@ -11,17 +11,17 @@ bee:
     parent_body: base_link
     axis: [0.0, 0.0, 1.0]
     joint_range: [-0.001, 0.015]
-    stiffness: 600.0
-    damping: 3.0
+    stiffness: 1500.0
+    damping: 10.0
     spring_reference: 0.0
     free_length: 0.024
     shaft_radius: 0.003
     shaft_mass: 0.001
     ball_radius: 0.012
     ball_mass: 0.006
-    friction: [1.2, 0.02, 0.001]
-    solref: [0.01, 1.0]
-    solimp: [0.9, 0.95, 0.003]
+    friction: [0.5, 0.02, 0.001]
+    solref: [0.02, 1.0]
+    solimp: [0.9, 0.95, 0.01]
     ball_rgba: [0.04, 0.04, 0.04, 1.0]
     shaft_rgba: [0.65, 0.65, 0.65, 1.0]
     feet:

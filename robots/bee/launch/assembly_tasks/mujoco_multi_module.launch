@@ -14,7 +14,9 @@
   <arg name="estimate_mode" default="1"/>
   <arg name="spawn_x_start" default="-2.0"/>
   <arg name="spawn_y_start" default="0.0"/>
-  <arg name="spawn_z" default="0.0"/>
+  <!-- robot.xml starts base_link at z=0.20 m.  Offset it so the rubber-ball
+       bottoms start about 1 mm above the floor instead of dropping 81 mm. -->
+  <arg name="spawn_z" default="-0.08"/>
   <arg name="spacing_x" default="1.0"/>
   <arg name="spacing_y" default="1.0"/>
   <arg name="grid_cols" default="0"/>
@@ -27,13 +29,15 @@
   <arg name="spawn_object" default="true"/>
   <arg name="object_x" default="0.0"/>
   <arg name="object_y" default="1.0"/>
-  <arg name="object_ground_clearance" default="0.002"/>
+  <arg name="object_ground_clearance" default="0.0"/>
   <arg name="object_yaw" default="0.0"/>
   <arg name="object_height" default="0.30"/>
   <arg name="object_triangle_side" default="0.80"/>
-  <arg name="object_mass" default="1.00"/>
-  <arg name="object_sliding_friction" default="1.2"/>
-  <arg name="object_torsional_friction" default="2.0"/>
+  <arg name="object_mass" default="0.20"/>
+  <arg name="object_freejoint_damping" default="0.5"/>
+  <arg name="object_sliding_friction" default="0.5"/>
+  <arg name="object_torsional_friction" default="0.5"/>
+  <arg name="pedestal_torsional_friction" default="2.0"/>
   <arg name="spawn_object_pedestal" default="true"/>
   <arg name="object_pedestal_height" default="0.65"/>
   <arg name="object_pedestal_radius" default="0.20"/>
@@ -74,8 +78,10 @@
     <param name="object_height" value="$(arg object_height)"/>
     <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
     <param name="object_mass" value="$(arg object_mass)"/>
+    <param name="object_freejoint_damping" value="$(arg object_freejoint_damping)"/>
     <param name="object_sliding_friction" value="$(arg object_sliding_friction)"/>
     <param name="object_torsional_friction" value="$(arg object_torsional_friction)"/>
+    <param name="pedestal_torsional_friction" value="$(arg pedestal_torsional_friction)"/>
     <param name="spawn_object_pedestal" value="$(arg spawn_object_pedestal)"/>
     <param name="object_pedestal_height" value="$(arg object_pedestal_height)"/>
     <param name="object_pedestal_radius" value="$(arg object_pedestal_radius)"/>

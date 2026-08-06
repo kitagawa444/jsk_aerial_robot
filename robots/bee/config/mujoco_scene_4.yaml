@@ -25,13 +25,16 @@ objects:
     # size: [radius, height]
     size: [0.09, 0.65]
     pos: [0.6, 0.6, 0.325]
-    friction: [1.2, 2.0, 0.001]
+    friction: [0.5, 2.0, 0.001]
     rgba: [0.35, 0.38, 0.42, 1.0]
   - name: grasp_prism
     type: triangular_prism
     # size: [equilateral triangle side, height along Z]
     size: [0.80, 0.30]
-    mass: 1.00
-    pos: [0.6, 0.6, 0.802]
-    friction: [1.2, 2.0, 0.001]
+    mass: 0.20
+    freejoint_damping: 0.5
+    pos: [0.6, 0.6, 0.800]
+    friction: [0.5, 0.5, 0.001]
+    solref: [0.02, 1.0]
+    solimp: [0.9, 0.95, 0.01]
     rgba: [0.92, 0.45, 0.08, 1.0]

@@ -28,7 +28,7 @@ class MujocoMultiBringup(object):
         start_y = rospy.get_param("~spawn_y_start", 0.0)
         spacing_x = rospy.get_param("~spacing_x", 1.0)
         spacing_y = rospy.get_param("~spacing_y", 1.0)
-        spawn_z = rospy.get_param("~spawn_z", 0.0)
+        spawn_z = rospy.get_param("~spawn_z", -0.08)
         spawn_yaw = rospy.get_param("~spawn_yaw", 0.0)
         grid_cols = rospy.get_param("~grid_cols", 0)
 
@@ -109,16 +109,19 @@ class MujocoMultiBringup(object):
 
         height = rospy.get_param("~object_height", 0.30)
         triangle_side = rospy.get_param("~object_triangle_side", 0.80)
-        ground_clearance = rospy.get_param("~object_ground_clearance", 0.002)
+        ground_clearance = rospy.get_param("~object_ground_clearance", 0.0)
         yaw = rospy.get_param("~object_yaw", 0.0)
         object_x = rospy.get_param("~object_x", 0.0)
         object_y = rospy.get_param("~object_y", 1.0)
         pedestal_enabled = rospy.get_param("~spawn_object_pedestal", True)
         pedestal_height = rospy.get_param("~object_pedestal_height", 0.65) if pedestal_enabled else 0.0
         pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.20)
-        sliding_friction = rospy.get_param("~object_sliding_friction", 1.2)
-        torsional_friction = rospy.get_param("~object_torsional_friction", 2.0)
-        if sliding_friction < 0.0 or torsional_friction < 0.0:
+        sliding_friction = rospy.get_param("~object_sliding_friction", 0.5)
+        torsional_friction = rospy.get_param("~object_torsional_friction", 0.5)
+        pedestal_torsional_friction = rospy.get_param(
+            "~pedestal_torsional_friction", 2.0)
+        if (sliding_friction < 0.0 or torsional_friction < 0.0 or
+                pedestal_torsional_friction < 0.0):
             raise RuntimeError("object friction coefficients must be non-negative")
 
         objects = []
@@ -128,7 +131,7 @@ class MujocoMultiBringup(object):
                 "type": "cylinder",
                 "pos": [object_x, object_y, pedestal_height / 2.0],
                 "size": [pedestal_radius, pedestal_height],
-                "friction": [sliding_friction, torsional_friction, 0.001],
+                "friction": [sliding_friction, pedestal_torsional_friction, 0.001],
                 "rgba": [0.35, 0.38, 0.42, 1.0],
             })
 
@@ -142,12 +145,15 @@ class MujocoMultiBringup(object):
             ],
             "euler": [0.0, 0.0, yaw],
             "size": [triangle_side, height],
-            "mass": rospy.get_param("~object_mass", 1.00),
+            "mass": rospy.get_param("~object_mass", 0.20),
+            "freejoint_damping": rospy.get_param("~object_freejoint_damping", 0.5),
             "friction": [
                 sliding_friction,
                 torsional_friction,
                 0.001,
             ],
+            "solref": [0.02, 1.0],
+            "solimp": [0.9, 0.95, 0.01],
             "rgba": [0.92, 0.45, 0.08, 1.0],
         })
         return objects
