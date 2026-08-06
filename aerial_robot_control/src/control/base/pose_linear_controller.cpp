@@ -255,6 +255,12 @@ namespace aerial_robot_control
         pid_controllers_.at(Y).update(0, du, target_vel_.y() - vel_.y(), target_acc_.y());
         break;
       case aerial_robot_navigation::ACC_CONTROL_MODE:
+        // Acceleration mode is a direct feed-forward interface.  Position or
+        // velocity control can leave a large XY integral term behind (for
+        // example during takeoff).  Carrying that term into ACC mode can
+        // completely override a low-speed external acceleration command.
+        pid_controllers_.at(X).reset();
+        pid_controllers_.at(Y).reset();
         pid_controllers_.at(X).update(0, du, 0, target_acc_.x());
         pid_controllers_.at(Y).update(0, du, 0, target_acc_.y());
         break;
