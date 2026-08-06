@@ -1,5 +1,7 @@
 #include <aerial_robot_simulation/mujoco/mujoco_aerial_robot_hw_sim.h>
 
+#include <algorithm>
+#include <map>
 #include <sstream>
 
 namespace mujoco_ros_control
@@ -121,39 +123,152 @@ namespace mujoco_ros_control
     simulation_nh.param("mocap_pos_noise", mocap_pos_noise_, 0.001); // m
     simulation_nh.param("mocap_rot_noise", mocap_rot_noise_, 0.001); // rad
     simulation_nh.param("force_sensor_pub_rate", force_sensor_pub_rate_, 0.01); // [sec]
+    simulation_nh.param("external_wrench_timeout", external_wrench_timeout_, 0.1);
+    simulation_nh.param("external_force_limit", external_force_limit_, 10.0);
+    simulation_nh.param("external_torque_limit", external_torque_limit_, 2.0);
     ground_truth_pub_ = model_nh.advertise<nav_msgs::Odometry>("ground_truth", 1);
     mocap_pub_ = model_nh.advertise<geometry_msgs::PoseStamped>("mocap/pose", 1);
+    external_wrench_sub_ = model_nh.subscribe(
+      "mujoco/external_wrench", 1, &AerialRobotHWSim::externalWrenchCallback, this);
+    if(root_joint_id_ >= 0)
+      root_body_id_ = mujoco_model_->jnt_bodyid[root_joint_id_];
 
     force_site_sensors_.clear();
+    grasp_force_site_sensors_.clear();
+    grasp_contact_sensors_.clear();
+    std::map<std::string, GraspContactSensor> grasp_contact_sensor_map;
     for(int sensor_id = 0; sensor_id < mujoco_model_->nsensor; ++sensor_id)
       {
-        if(mujoco_model_->sensor_type[sensor_id] != mjSENS_FORCE ||
-           mujoco_model_->sensor_dim[sensor_id] != 3 ||
-           mujoco_model_->sensor_objtype[sensor_id] != mjOBJ_SITE)
-          {
-            continue;
-          }
-
         const char* sensor_name_cstr = mj_id2name(mujoco_model_, mjOBJ_SENSOR, sensor_id);
         if(!sensor_name_cstr || !matchesRobotNamespace(sensor_name_cstr)) continue;
 
         const std::string sensor_name = stripNamePrefix(sensor_name_cstr);
         const std::string foot_prefix = "spring_foot_";
         const std::string force_suffix = "_force";
-        if(sensor_name.find(foot_prefix) != 0 ||
-           sensor_name.size() <= foot_prefix.size() + force_suffix.size() ||
-           sensor_name.compare(sensor_name.size() - force_suffix.size(),
-                               force_suffix.size(), force_suffix) != 0)
+        const std::string touch_suffix = "_touch";
+        const std::string compression_suffix = "_compression";
+        const std::string compression_velocity_suffix = "_compression_velocity";
+        const bool is_foot_sensor = sensor_name.find(foot_prefix) == 0;
+        if(!is_foot_sensor)
           {
             continue;
           }
 
-        ForceSiteSensor force_sensor;
-        force_sensor.name = sensor_name;
-        force_sensor.data_address = mujoco_model_->sensor_adr[sensor_id];
-        force_sensor.site_id = mujoco_model_->sensor_objid[sensor_id];
-        force_site_sensors_.push_back(force_sensor);
+        if(sensor_name.size() > force_suffix.size() &&
+           sensor_name.compare(sensor_name.size() - force_suffix.size(),
+                               force_suffix.size(), force_suffix) == 0 &&
+           mujoco_model_->sensor_type[sensor_id] == mjSENS_FORCE &&
+           mujoco_model_->sensor_dim[sensor_id] == 3 &&
+           mujoco_model_->sensor_objtype[sensor_id] == mjOBJ_SITE)
+          {
+            ForceSiteSensor force_sensor;
+            force_sensor.name = sensor_name;
+            force_sensor.data_address = mujoco_model_->sensor_adr[sensor_id];
+            force_sensor.site_id = mujoco_model_->sensor_objid[sensor_id];
+            force_site_sensors_.push_back(force_sensor);
+            continue;
+          }
+
+        if(mujoco_model_->sensor_dim[sensor_id] != 1)
+          continue;
+
+        std::string contact_name;
+        enum ContactSensorField { NONE, TOUCH, COMPRESSION, COMPRESSION_VELOCITY } field = NONE;
+        if(sensor_name.size() > compression_velocity_suffix.size() &&
+           sensor_name.compare(sensor_name.size() - compression_velocity_suffix.size(),
+                               compression_velocity_suffix.size(), compression_velocity_suffix) == 0 &&
+           mujoco_model_->sensor_type[sensor_id] == mjSENS_JOINTVEL)
+          {
+            contact_name = sensor_name.substr(0, sensor_name.size() - compression_velocity_suffix.size());
+            field = COMPRESSION_VELOCITY;
+          }
+        else if(sensor_name.size() > compression_suffix.size() &&
+                sensor_name.compare(sensor_name.size() - compression_suffix.size(),
+                                    compression_suffix.size(), compression_suffix) == 0 &&
+                mujoco_model_->sensor_type[sensor_id] == mjSENS_JOINTPOS)
+          {
+            contact_name = sensor_name.substr(0, sensor_name.size() - compression_suffix.size());
+            field = COMPRESSION;
+          }
+        else if(sensor_name.size() > touch_suffix.size() &&
+                sensor_name.compare(sensor_name.size() - touch_suffix.size(),
+                                    touch_suffix.size(), touch_suffix) == 0 &&
+                mujoco_model_->sensor_type[sensor_id] == mjSENS_TOUCH)
+          {
+            contact_name = sensor_name.substr(0, sensor_name.size() - touch_suffix.size());
+            field = TOUCH;
+          }
+
+        if(field == NONE) continue;
+        GraspContactSensor& contact_sensor = grasp_contact_sensor_map[contact_name];
+        contact_sensor.name = contact_name;
+        if(field == TOUCH)
+          contact_sensor.touch_data_address = mujoco_model_->sensor_adr[sensor_id];
+        else if(field == COMPRESSION)
+          contact_sensor.compression_data_address = mujoco_model_->sensor_adr[sensor_id];
+        else
+          contact_sensor.compression_velocity_data_address = mujoco_model_->sensor_adr[sensor_id];
       }
+
+    const std::vector<std::string> grasp_order = {
+      "spring_foot_front", "spring_foot_rear",
+      "spring_foot_left", "spring_foot_right"
+    };
+    const auto grasp_order_index = [&](const std::string& sensor_name)
+      {
+        for(size_t index = 0; index < grasp_order.size(); ++index)
+          if(sensor_name.find(grasp_order[index]) == 0) return index;
+        return grasp_order.size();
+      };
+    std::sort(force_site_sensors_.begin(), force_site_sensors_.end(),
+              [&](const ForceSiteSensor& lhs, const ForceSiteSensor& rhs)
+              { return grasp_order_index(lhs.name) < grasp_order_index(rhs.name); });
+    // The grasp interface is deliberately an alias of the four physical feet.
+    // No additional grasp-only contact bodies are present in the model.
+    grasp_force_site_sensors_ = force_site_sensors_;
+    for(const std::string& contact_name : grasp_order)
+      {
+        const auto found = grasp_contact_sensor_map.find(contact_name);
+        if(found == grasp_contact_sensor_map.end() ||
+           found->second.touch_data_address < 0 ||
+           found->second.compression_data_address < 0 ||
+           found->second.compression_velocity_data_address < 0)
+          {
+            ROS_WARN_STREAM("[mujoco] incomplete grasp contact sensor set for " << contact_name);
+            continue;
+          }
+        grasp_contact_sensors_.push_back(found->second);
+      }
+
+    if(!grasp_force_site_sensors_.empty())
+      {
+        grasp_force_pub_ = model_nh.advertise<aerial_robot_msgs::ForceList>("mujoco/grasp_forces", 1);
+        grasp_force_world_pub_ = model_nh.advertise<aerial_robot_msgs::ForceList>("mujoco/grasp_forces_world", 1);
+        std::ostringstream sensor_names;
+        for(size_t i = 0; i < grasp_force_site_sensors_.size(); ++i)
+          {
+            if(i > 0) sensor_names << ", ";
+            sensor_names << grasp_force_site_sensors_[i].name;
+          }
+        ROS_INFO_STREAM("[mujoco] grasp force order: [" << sensor_names.str() << "]");
+      }
+
+    if(!grasp_contact_sensors_.empty())
+      {
+        grasp_contact_state_pub_ = model_nh.advertise<sensor_msgs::JointState>("mujoco/grasp_contact_states", 1);
+        std::ostringstream sensor_names;
+        for(size_t i = 0; i < grasp_contact_sensors_.size(); ++i)
+          {
+            if(i > 0) sensor_names << ", ";
+            sensor_names << grasp_contact_sensors_[i].name;
+          }
+        ROS_INFO_STREAM("[mujoco] grasp contact order: [" << sensor_names.str() << "]"
+                        << " (position=compression, velocity=compression velocity, effort=touch)");
+      }
+
+    grasp_object_body_id_ = mj_name2id(mujoco_model_, mjOBJ_BODY, "grasp_prism");
+    if(grasp_object_body_id_ >= 0)
+      grasp_object_pose_pub_ = model_nh.advertise<geometry_msgs::PoseStamped>("mujoco/grasp_object_pose", 1);
 
     if(!force_site_sensors_.empty())
       {
@@ -253,32 +368,82 @@ namespace mujoco_ros_control
     spinal_interface_.setGroundTruthStates(fc_quat.x(), fc_quat.y(), fc_quat.z(), fc_quat.w(),
                                            gyro.x(), gyro.y(), gyro.z());
 
-    if(!force_site_sensors_.empty() && force_sensor_pub_rate_ > 0.0 &&
+    if((!force_site_sensors_.empty() || !grasp_force_site_sensors_.empty() ||
+        !grasp_contact_sensors_.empty()) &&
+       force_sensor_pub_rate_ > 0.0 &&
        (time - last_force_sensor_time_).toSec() >= force_sensor_pub_rate_)
       {
-        aerial_robot_msgs::ForceList force_list_msg;
-        force_list_msg.header.stamp = time;
-        force_list_msg.header.frame_id = name_prefix_.empty() ? std::string("fc") : robot_namespace_ + "/fc";
-        force_list_msg.forces.reserve(force_site_sensors_.size());
-
-        for(const ForceSiteSensor& sensor : force_site_sensors_)
+        const std::string frame_id = name_prefix_.empty() ? std::string("fc") : robot_namespace_ + "/fc";
+        const auto publish_force_list = [&](const std::vector<ForceSiteSensor>& sensors,
+                                            const ros::Publisher& publisher,
+                                            const bool world_frame)
           {
-            // Preserve MuJoCo's child-to-parent sign convention, then express
-            // every foot reading in the common fc frame.
-            const mjtNum* local_force = mujoco_data_->sensordata + sensor.data_address;
-            mjtNum world_force[3];
-            mjtNum fc_force[3];
-            mju_rotVecMat(world_force, local_force, mujoco_data_->site_xmat + 9 * sensor.site_id);
-            mju_rotVecMatT(fc_force, world_force, mujoco_data_->site_xmat + 9 * fc_id);
+            if(sensors.empty()) return;
 
-            geometry_msgs::Vector3 force;
-            force.x = fc_force[0];
-            force.y = fc_force[1];
-            force.z = fc_force[2];
-            force_list_msg.forces.push_back(force);
+            aerial_robot_msgs::ForceList force_list_msg;
+            force_list_msg.header.stamp = time;
+            force_list_msg.header.frame_id = world_frame ? "world" : frame_id;
+            force_list_msg.forces.reserve(sensors.size());
+
+            for(const ForceSiteSensor& sensor : sensors)
+              {
+                // Preserve MuJoCo's child-to-parent sign convention, then
+                // express every contact reading in the common fc frame.
+                const mjtNum* local_force = mujoco_data_->sensordata + sensor.data_address;
+                mjtNum world_force[3];
+                mjtNum fc_force[3];
+                mju_rotVecMat(world_force, local_force, mujoco_data_->site_xmat + 9 * sensor.site_id);
+                mju_rotVecMatT(fc_force, world_force, mujoco_data_->site_xmat + 9 * fc_id);
+
+                const mjtNum* output_force = world_frame ? world_force : fc_force;
+                geometry_msgs::Vector3 force;
+                force.x = output_force[0];
+                force.y = output_force[1];
+                force.z = output_force[2];
+                force_list_msg.forces.push_back(force);
+              }
+
+            publisher.publish(force_list_msg);
+          };
+
+        publish_force_list(force_site_sensors_, foot_force_pub_, false);
+        publish_force_list(grasp_force_site_sensors_, grasp_force_pub_, false);
+        publish_force_list(grasp_force_site_sensors_, grasp_force_world_pub_, true);
+
+        if(!grasp_contact_sensors_.empty())
+          {
+            sensor_msgs::JointState contact_state;
+            contact_state.header.stamp = time;
+            contact_state.header.frame_id = frame_id;
+            contact_state.name.reserve(grasp_contact_sensors_.size());
+            contact_state.position.reserve(grasp_contact_sensors_.size());
+            contact_state.velocity.reserve(grasp_contact_sensors_.size());
+            contact_state.effort.reserve(grasp_contact_sensors_.size());
+            for(const GraspContactSensor& sensor : grasp_contact_sensors_)
+              {
+                contact_state.name.push_back(sensor.name);
+                contact_state.position.push_back(mujoco_data_->sensordata[sensor.compression_data_address]);
+                contact_state.velocity.push_back(mujoco_data_->sensordata[sensor.compression_velocity_data_address]);
+                contact_state.effort.push_back(mujoco_data_->sensordata[sensor.touch_data_address]);
+              }
+            grasp_contact_state_pub_.publish(contact_state);
           }
 
-        foot_force_pub_.publish(force_list_msg);
+        if(grasp_object_body_id_ >= 0)
+          {
+            geometry_msgs::PoseStamped object_pose;
+            object_pose.header.stamp = time;
+            object_pose.header.frame_id = "world";
+            object_pose.pose.position.x = mujoco_data_->xpos[3 * grasp_object_body_id_ + 0];
+            object_pose.pose.position.y = mujoco_data_->xpos[3 * grasp_object_body_id_ + 1];
+            object_pose.pose.position.z = mujoco_data_->xpos[3 * grasp_object_body_id_ + 2];
+            object_pose.pose.orientation.w = mujoco_data_->xquat[4 * grasp_object_body_id_ + 0];
+            object_pose.pose.orientation.x = mujoco_data_->xquat[4 * grasp_object_body_id_ + 1];
+            object_pose.pose.orientation.y = mujoco_data_->xquat[4 * grasp_object_body_id_ + 2];
+            object_pose.pose.orientation.z = mujoco_data_->xquat[4 * grasp_object_body_id_ + 3];
+            grasp_object_pose_pub_.publish(object_pose);
+          }
+
         last_force_sensor_time_ = time;
       }
 
@@ -310,6 +475,22 @@ namespace mujoco_ros_control
 
   void AerialRobotHWSim::write(const ros::Time& time, const ros::Duration& period)
   {
+    if(root_body_id_ >= 0)
+      {
+        mjtNum* applied = mujoco_data_->xfrc_applied + 6 * root_body_id_;
+        for(int axis = 0; axis < 6; ++axis) applied[axis] = 0.0;
+        if(!last_external_wrench_time_.isZero() &&
+           (time - last_external_wrench_time_).toSec() <= external_wrench_timeout_)
+          {
+            applied[0] = external_wrench_.force.x;
+            applied[1] = external_wrench_.force.y;
+            applied[2] = external_wrench_.force.z;
+            applied[3] = external_wrench_.torque.x;
+            applied[4] = external_wrench_.torque.y;
+            applied[5] = external_wrench_.torque.z;
+          }
+      }
+
     for(int i = 0; i < spinal_interface_.getMotorNum(); i++)
       {
         int rotor_id = mj_name2id(mujoco_model_, mjOBJ_ACTUATOR, rotor_list_.at(i).c_str());
@@ -318,6 +499,19 @@ namespace mujoco_ros_control
       }
 
       DefaultRobotHWSim::write(time, period);
+  }
+
+  void AerialRobotHWSim::externalWrenchCallback(const geometry_msgs::WrenchStamped& msg)
+  {
+    const auto clamp = [](const double value, const double limit)
+      { return std::max(-limit, std::min(limit, value)); };
+    external_wrench_.force.x = clamp(msg.wrench.force.x, external_force_limit_);
+    external_wrench_.force.y = clamp(msg.wrench.force.y, external_force_limit_);
+    external_wrench_.force.z = clamp(msg.wrench.force.z, external_force_limit_);
+    external_wrench_.torque.x = clamp(msg.wrench.torque.x, external_torque_limit_);
+    external_wrench_.torque.y = clamp(msg.wrench.torque.y, external_torque_limit_);
+    external_wrench_.torque.z = clamp(msg.wrench.torque.z, external_torque_limit_);
+    last_external_wrench_time_ = ros::Time::now();
   }
 
 }

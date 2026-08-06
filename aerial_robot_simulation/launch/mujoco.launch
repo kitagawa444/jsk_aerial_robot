@@ -5,12 +5,24 @@
   <arg name="mujoco_model" default="" />
   <arg name="launch_backend" default="true" />
   <arg name="launch_controller" default="true" />
+  <arg name="render_fps" default="30.0" />
+  <arg name="vsync" default="false" />
+  <arg name="render_shadows" default="false" />
+  <arg name="render_reflections" default="false" />
+  <arg name="window_width" default="960" />
+  <arg name="window_height" default="720" />
 
   <!-- mujoco ros control -->
   <include file="$(find mujoco_ros_control)/launch/mujoco.launch" if="$(arg launch_backend)" >
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="headless" value="$(arg headless)"/>
     <arg name="mujoco_model" value="$(arg mujoco_model)"/>
+    <arg name="render_fps" value="$(arg render_fps)"/>
+    <arg name="vsync" value="$(arg vsync)"/>
+    <arg name="render_shadows" value="$(arg render_shadows)"/>
+    <arg name="render_reflections" value="$(arg render_reflections)"/>
+    <arg name="window_width" value="$(arg window_width)"/>
+    <arg name="window_height" value="$(arg window_height)"/>
   </include>
 
   <!-- basic parameter -->
