@@ -7,13 +7,17 @@ jacobian: dense
 
 robots:
   - name: bee1
-    pos: [0.0, 0.0, 0.0]
+    pos: [1.11547, 1.49278, 0.0]
+    quat: [0.5, 0.0, 0.0, -0.8660254]
   - name: bee2
-    pos: [1.2, 0.0, 0.0]
+    pos: [-0.43094, 0.6, 0.0]
+    quat: [1.0, 0.0, 0.0, 0.0]
   - name: bee3
-    pos: [0.0, 1.2, 0.0]
+    pos: [1.11547, -0.29278, 0.0]
+    quat: [0.5, 0.0, 0.0, 0.8660254]
   - name: bee4
-    pos: [1.2, 1.2, 0.0]
+    pos: [1.6, -0.4, 0.0]
+    quat: [0.7071068, 0.0, 0.0, 0.7071068]
 
 objects:
   - name: grasp_pedestal
@@ -21,13 +25,13 @@ objects:
     # size: [radius, height]
     size: [0.09, 0.65]
     pos: [0.6, 0.6, 0.325]
-    friction: [1.2, 0.02, 0.001]
+    friction: [1.2, 2.0, 0.001]
     rgba: [0.35, 0.38, 0.42, 1.0]
   - name: grasp_prism
     type: triangular_prism
     # size: [equilateral triangle side, height along Z]
-    size: [0.36, 0.30]
-    mass: 0.50
+    size: [0.80, 0.30]
+    mass: 1.00
     pos: [0.6, 0.6, 0.802]
-    friction: [1.2, 0.02, 0.001]
+    friction: [1.2, 2.0, 0.001]
     rgba: [0.92, 0.45, 0.08, 1.0]

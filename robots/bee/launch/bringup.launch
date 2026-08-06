@@ -26,6 +26,12 @@
   <arg name="launch_mujoco_backend" default="True" />
   <arg name="launch_mujoco_controller" default="True" />
   <arg name="launch_rviz" default="True" />
+  <arg name="mujoco_render_fps" default="30.0" />
+  <arg name="mujoco_vsync" default="false" />
+  <arg name="mujoco_render_shadows" default="false" />
+  <arg name="mujoco_render_reflections" default="false" />
+  <arg name="mujoco_window_width" default="960" />
+  <arg name="mujoco_window_height" default="720" />
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
@@ -115,6 +121,12 @@
     <arg name="mujoco_model" value="$(find bee)/mujoco/bee/robot.xml"/>
     <arg name="launch_backend" value="$(arg launch_mujoco_backend)"/>
     <arg name="launch_controller" value="$(arg launch_mujoco_controller)"/>
+    <arg name="render_fps" value="$(arg mujoco_render_fps)"/>
+    <arg name="vsync" value="$(arg mujoco_vsync)"/>
+    <arg name="render_shadows" value="$(arg mujoco_render_shadows)"/>
+    <arg name="render_reflections" value="$(arg mujoco_render_reflections)"/>
+    <arg name="window_width" value="$(arg mujoco_window_width)"/>
+    <arg name="window_height" value="$(arg mujoco_window_height)"/>
   </include>
 
 

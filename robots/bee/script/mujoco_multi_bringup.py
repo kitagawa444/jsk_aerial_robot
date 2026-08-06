@@ -32,6 +32,48 @@ class MujocoMultiBringup(object):
         spawn_yaw = rospy.get_param("~spawn_yaw", 0.0)
         grid_cols = rospy.get_param("~grid_cols", 0)
 
+        if (rospy.get_param("~grasp_staging_layout", True) and
+                rospy.get_param("~spawn_object", True) and robot_count >= 3):
+            object_x = rospy.get_param("~object_x", 0.0)
+            object_y = rospy.get_param("~object_y", 1.0)
+            object_yaw = rospy.get_param("~object_yaw", 0.0)
+            triangle_side = rospy.get_param("~object_triangle_side", 0.80)
+            staging_clearance = rospy.get_param("~grasp_staging_clearance", 0.80)
+            if triangle_side <= 0.0:
+                raise RuntimeError("object_triangle_side must be positive")
+            if staging_clearance <= 0.0:
+                raise RuntimeError("grasp_staging_clearance must be positive")
+
+            # For the mesh orientation used by the scene composer, the three
+            # outward side-face normals are 60, 180 and 300 degrees.  Spawn
+            # the first three Bees on those normals. After base_link rolls
+            # +pi/2, the physical feet point along body +Y, so body +Y is
+            # aligned with the inward face normal.
+            inradius = triangle_side / (2.0 * math.sqrt(3.0))
+            staging_radius = inradius + staging_clearance
+            robots = []
+            for index, base_angle in enumerate((math.pi / 3.0, math.pi, 5.0 * math.pi / 3.0)):
+                normal_angle = object_yaw + base_angle
+                robots.append({
+                    "name": "bee{}".format(index + 1),
+                    "pos": [
+                        object_x + staging_radius * math.cos(normal_angle),
+                        object_y + staging_radius * math.sin(normal_angle),
+                        spawn_z,
+                    ],
+                    "yaw": normal_angle + math.pi / 2.0,
+                })
+
+            # Additional robots remain outside the three-Bee grasp formation.
+            for index in range(3, robot_count):
+                robots.append({
+                    "name": "bee{}".format(index + 1),
+                    "pos": [object_x + 1.0 + spacing_x * (index - 3),
+                            object_y - 1.0, spawn_z],
+                    "yaw": object_yaw + math.pi / 2.0,
+                })
+            return robots
+
         if grid_cols <= 0:
             grid_cols = robot_count
 
@@ -49,11 +91,15 @@ class MujocoMultiBringup(object):
     def ensure_single_robot_model(self):
         force_regenerate = rospy.get_param("~regenerate_single_model", False)
         model_path = os.path.join(self.bee_path, "mujoco", "bee", "robot.xml")
-        if os.path.isfile(model_path) and not force_regenerate:
+        config_path = os.path.join(self.bee_path, "config", "mujoco_model.yaml")
+        model_is_current = (
+            os.path.isfile(model_path) and
+            os.path.getmtime(model_path) >= os.path.getmtime(config_path)
+        )
+        if model_is_current and not force_regenerate:
             return model_path
 
         generator_path = os.path.join(self.mujoco_ros_control_path, "scripts", "mujoco_model_generator.py")
-        config_path = os.path.join(self.bee_path, "config", "mujoco_model.yaml")
         subprocess.check_call([sys.executable, generator_path, config_path])
         return model_path
 
@@ -62,14 +108,18 @@ class MujocoMultiBringup(object):
             return []
 
         height = rospy.get_param("~object_height", 0.30)
-        triangle_side = rospy.get_param("~object_triangle_side", 0.36)
+        triangle_side = rospy.get_param("~object_triangle_side", 0.80)
         ground_clearance = rospy.get_param("~object_ground_clearance", 0.002)
         yaw = rospy.get_param("~object_yaw", 0.0)
         object_x = rospy.get_param("~object_x", 0.0)
         object_y = rospy.get_param("~object_y", 1.0)
         pedestal_enabled = rospy.get_param("~spawn_object_pedestal", True)
         pedestal_height = rospy.get_param("~object_pedestal_height", 0.65) if pedestal_enabled else 0.0
-        pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.09)
+        pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.20)
+        sliding_friction = rospy.get_param("~object_sliding_friction", 1.2)
+        torsional_friction = rospy.get_param("~object_torsional_friction", 2.0)
+        if sliding_friction < 0.0 or torsional_friction < 0.0:
+            raise RuntimeError("object friction coefficients must be non-negative")
 
         objects = []
         if pedestal_enabled:
@@ -78,7 +128,7 @@ class MujocoMultiBringup(object):
                 "type": "cylinder",
                 "pos": [object_x, object_y, pedestal_height / 2.0],
                 "size": [pedestal_radius, pedestal_height],
-                "friction": [1.2, 0.02, 0.001],
+                "friction": [sliding_friction, torsional_friction, 0.001],
                 "rgba": [0.35, 0.38, 0.42, 1.0],
             })
 
@@ -92,10 +142,10 @@ class MujocoMultiBringup(object):
             ],
             "euler": [0.0, 0.0, yaw],
             "size": [triangle_side, height],
-            "mass": rospy.get_param("~object_mass", 0.50),
+            "mass": rospy.get_param("~object_mass", 1.00),
             "friction": [
-                rospy.get_param("~object_sliding_friction", 1.2),
-                0.02,
+                sliding_friction,
+                torsional_friction,
                 0.001,
             ],
             "rgba": [0.92, 0.45, 0.08, 1.0],
@@ -125,6 +175,9 @@ class MujocoMultiBringup(object):
                 "name": robot["name"],
                 "pos": robot["pos"],
             }
+            yaw = robot.get("yaw")
+            if yaw is not None:
+                entry["quat"] = [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
             scene_config["robots"].append(entry)
 
         with open(scene_config_path, "w") as file_handle:
@@ -148,10 +201,13 @@ class MujocoMultiBringup(object):
             raise RuntimeError("robot_count must be positive")
 
         headless = rospy.get_param("~headless", False)
+        render_fps = rospy.get_param("~render_fps", 10.0)
+        vsync = rospy.get_param("~vsync", False)
+        render_shadows = rospy.get_param("~render_shadows", False)
+        render_reflections = rospy.get_param("~render_reflections", False)
+        window_width = rospy.get_param("~window_width", 640)
+        window_height = rospy.get_param("~window_height", 480)
         estimate_mode = rospy.get_param("~estimate_mode", 1)
-        launch_rviz = rospy.get_param("~launch_rviz", not headless)
-        first_robot_rviz_only = rospy.get_param("~first_robot_rviz_only", True)
-
         robot_namespaces = self.get_robot_namespaces(robot_count)
         robots = self.build_robot_layout(robot_count)
         objects = self.build_grasp_objects()
@@ -159,19 +215,20 @@ class MujocoMultiBringup(object):
         scene_model_path = self.compose_scene(robot_count, robots, objects)
 
         bringup_launch = roslaunch.rlutil.resolve_launch_arguments(["bee", "bringup.launch"])[0]
-        for index, robot in enumerate(robots):
+        for robot in robots:
             robot_id = robot["name"].replace("bee", "")
-            robot_launch_rviz = launch_rviz and (not first_robot_rviz_only or index == 0)
             bringup_args = [
                 "robot_id:={}".format(robot_id),
                 "real_machine:=false",
                 "simulation:=true",
+                # MuJoCo GUI and the one shared multi-robot RViz instance are
+                # launched by the parent.  Suppress per-robot RViz windows.
                 "headless:=true",
                 "estimate_mode:={}".format(estimate_mode),
                 "mujoco:=true",
                 "launch_mujoco_backend:=false",
                 "launch_mujoco_controller:=false",
-                "launch_rviz:={}".format("true" if robot_launch_rviz else "false"),
+                "launch_rviz:=false",
             ]
             self.start_launch(bringup_launch, bringup_args)
 
@@ -184,6 +241,12 @@ class MujocoMultiBringup(object):
             "headless:={}".format("true" if headless else "false"),
             "mujoco_model:={}".format(scene_model_path),
             "robot_namespaces:={}".format(str(robot_namespaces)),
+            "render_fps:={}".format(render_fps),
+            "vsync:={}".format("true" if vsync else "false"),
+            "render_shadows:={}".format("true" if render_shadows else "false"),
+            "render_reflections:={}".format("true" if render_reflections else "false"),
+            "window_width:={}".format(window_width),
+            "window_height:={}".format(window_height),
         ]
         self.start_launch(mujoco_launch, mujoco_args)
 
