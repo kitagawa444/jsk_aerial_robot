@@ -40,6 +40,7 @@ void GimbalrotorController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
 void GimbalrotorController::reset()
 {
   PoseLinearController::reset();
+  gravity_compensation_acc_ = 0.0;
 
   setAttitudeGains();
 }
@@ -52,6 +53,12 @@ void GimbalrotorController::rosParamInit()
   getParam<bool>(control_nh, "i_term_rp_calc_in_pc", i_term_rp_calc_in_pc_, false);
   getParam<bool>(control_nh, "hovering_approximate", hovering_approximate_, false);
   getParam<bool>(control_nh, "underactuate", underactuate_, false);
+  getParam<bool>(control_nh, "gravity_compensation", gravity_compensation_, false);
+  getParam<double>(control_nh, "gravity_compensation_transition_rate", gravity_compensation_transition_rate_, 2.0);
+  gravity_compensation_transition_rate_ = std::max(0.0, gravity_compensation_transition_rate_);
+
+  if (gravity_compensation_)
+    ROS_INFO("[GimbalrotorController] world-frame gravity feed-forward is enabled");
 }
 
 bool GimbalrotorController::update()
@@ -72,10 +79,56 @@ void GimbalrotorController::controlCore()
     return;
   }
 
+  if (gravity_compensation_)
+  {
+    const uint8_t navi_state = navigator_->getNaviState();
+    if (navigator_->getZControlMode() == aerial_robot_navigation::ACC_CONTROL_MODE)
+    {
+      // ACC mode defines target_acc_z as net inertial acceleration.  Complete
+      // the gravity handover immediately so target_acc_z=0 remains hover and
+      // no residual Z integral is needed by the contact controller.
+      gravity_compensation_acc_ = robot_model_->getGravity()(Z);
+      pid_controllers_.at(Z).setErrI(0.0);
+    }
+    const bool support_vehicle_weight =
+        navi_state == aerial_robot_navigation::HOVER_STATE || navi_state == aerial_robot_navigation::LAND_STATE;
+
+    if (support_vehicle_weight)
+    {
+      // Takeoff gains were tuned with gravity stored in the Z integrator.  Once
+      // HOVER is reached, move that support continuously from the I term to an
+      // explicit gravity feed-forward without changing the total acceleration
+      // command.  Limiting the transfer to the available positive I term also
+      // prevents a jump if HOVER is entered before the integrator reaches g.
+      const double gravity_acc = robot_model_->getGravity()(Z);
+      const double remaining_acc = std::max(0.0, gravity_acc - gravity_compensation_acc_);
+      const double requested_transfer =
+          std::min(remaining_acc, gravity_compensation_transition_rate_ * ctrl_loop_du_);
+      const double i_gain = pid_controllers_.at(Z).getIGain();
+      const double available_i_acc = std::max(0.0, pid_controllers_.at(Z).getITerm());
+      const double transferred_acc = std::min(requested_transfer, available_i_acc);
+
+      if (i_gain > 0.0 && transferred_acc > 0.0)
+      {
+        pid_controllers_.at(Z).setErrI(pid_controllers_.at(Z).getErrI() - transferred_acc / i_gain);
+        gravity_compensation_acc_ += transferred_acc;
+      }
+    }
+  }
+
   PoseLinearController::controlCore();
   tf::Matrix3x3 uav_rot = estimator_->getOrientation(Frame::COG, estimate_mode_);
   tf::Vector3 target_acc_w(pid_controllers_.at(X).result(), pid_controllers_.at(Y).result(),
                            pid_controllers_.at(Z).result());
+  if (gravity_compensation_)
+  {
+    // The position controller output is an acceleration command.  Add gravity
+    // in the world frame before transforming it to the current CoG frame so
+    // that a zero PID output corresponds to hover even when the vehicle is
+    // tilted.  The translational allocation matrix contains 1 / mass, making
+    // this acceleration feed-forward equivalent to an mg force command.
+    target_acc_w.setZ(target_acc_w.z() + gravity_compensation_acc_);
+  }
   tf::Vector3 target_acc_dash = (tf::Matrix3x3(tf::createQuaternionFromYaw(rpy_.z()))).inverse() * target_acc_w;
   tf::Vector3 target_acc_cog = uav_rot.inverse() * target_acc_w;
   Eigen::VectorXd target_wrench_acc_cog = Eigen::VectorXd::Zero(6);

@@ -10,6 +10,11 @@ controller:
   wrench_allocation_matrix_pub_interval: 0.1
   gimbal_calc_in_fc : true
   gimbal_angle_calc_in_fc : true
+  # Compensate the Bee's own weight explicitly.  The Z integral term then only
+  # has to absorb mass/thrust-model errors instead of building up to g.
+  gravity_compensation: true
+  # Transfer the hover support from Z-I to gravity feed-forward over about 5 s.
+  gravity_compensation_transition_rate: 2.0
 
   xy:
     p_gain: 1.0
