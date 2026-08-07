@@ -264,6 +264,14 @@ class MujocoGraspDemo(object):
                    metric["compression"] > self.compression_threshold
                    for metric in metrics)
 
+    def target_baselink_rpy(self, name):
+        """Return the base-link attitude target for one vehicle.
+
+        Demos that need per-vehicle contact-wrench trim can override this
+        without changing the common navigation-message path.
+        """
+        return self.commanded_roll, 0.0, 0.0
+
     def publish_accel_nav(self, name, accel_x, accel_y, yaw,
                           z_mode=FlightNav.POS_MODE, z_value=None,
                           external_force_z=None):
@@ -289,6 +297,8 @@ class MujocoGraspDemo(object):
         msg.pos_z_nav_mode = z_mode
         if z_mode == FlightNav.VEL_MODE:
             msg.target_vel_z = z_value if z_value is not None else 0.0
+        elif z_mode == FlightNav.ACC_MODE:
+            msg.target_acc_z = z_value if z_value is not None else 0.0
         else:
             msg.target_pos_z = z_value if z_value is not None else self.object_z
         self.nav_pubs[name].publish(msg)
@@ -296,9 +306,11 @@ class MujocoGraspDemo(object):
         baselink_rpy = Vector3Stamped()
         baselink_rpy.header.stamp = msg.header.stamp
         baselink_rpy.header.frame_id = "world"
-        baselink_rpy.vector.x = self.commanded_roll
-        baselink_rpy.vector.y = 0.0
-        baselink_rpy.vector.z = 0.0
+        target_roll, target_pitch, target_yaw = \
+            self.target_baselink_rpy(name)
+        baselink_rpy.vector.x = target_roll
+        baselink_rpy.vector.y = target_pitch
+        baselink_rpy.vector.z = target_yaw
         self.baselink_rpy_pubs[name].publish(baselink_rpy)
 
         if self.use_external_wrench:
