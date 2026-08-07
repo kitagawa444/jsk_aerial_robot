@@ -5,6 +5,9 @@ bee:
   input: ["robots/bee.urdf.xacro"]
   filename: ["bee"]
   meshdir: urdf/mesh
+  # Preserve the true motor-off command.  The URDF minimum thrust remains 1 N
+  # for running rotors, but an unarmed Bee must not be clipped from 0 to 1 N.
+  allow_zero_rotor_force: true
   # MuJoCo-only spring-loaded rubber pads at the four physical feet. Positive
   # slide displacement is compression toward base_link (+Z).
   compliant_feet:
@@ -12,15 +15,24 @@ bee:
     axis: [0.0, 0.0, 1.0]
     joint_range: [-0.001, 0.015]
     stiffness: 1500.0
-    damping: 10.0
+    # Match the Gazebo compliant-foot damping.  The previous 10 Ns/m left
+    # a small persistent oscillation when all four high-friction balls were
+    # constrained against a face at the same time.
+    damping: 20.0
     spring_reference: 0.0
     free_length: 0.024
     shaft_radius: 0.003
     shaft_mass: 0.001
     ball_radius: 0.012
     ball_mass: 0.006
-    friction: [0.5, 0.02, 0.001]
-    solref: [0.02, 1.0]
+    # Rubber-to-object sliding friction.  At 0.5, three Bees pressing at
+    # 1.25 N can provide at most 1.875 N vertically, less than the 1.96 N
+    # weight of the 200 g prism, so slip is unavoidable.  Match Gazebo's
+    # rubber contact coefficient here.
+    friction: [1.2, 0.02, 0.001]
+    # Keep approximately the same normal-contact stiffness (time constant x
+    # damping ratio is unchanged) while doubling constraint damping.
+    solref: [0.01, 2.0]
     solimp: [0.9, 0.95, 0.01]
     ball_rgba: [0.04, 0.04, 0.04, 1.0]
     shaft_rgba: [0.65, 0.65, 0.65, 1.0]

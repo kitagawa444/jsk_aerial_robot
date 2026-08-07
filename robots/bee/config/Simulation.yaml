@@ -15,6 +15,9 @@ simulation:
   ignored_mujoco_joint_prefixes: [spring_foot_]
   # Publish physical-foot ForceLists and grasp aliases (period in seconds).
   force_sensor_pub_rate: 0.01
+  # Allow high-preload grasp experiments through mujoco/external_wrench.
+  external_force_limit: 40.0
+  external_wrench_timeout: 1.0
 
   # gaussian noise
   ground_truth_pos_noise: 0.001

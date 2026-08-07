@@ -39,7 +39,7 @@ class MujocoGraspDemo(object):
         self.object_y = rospy.get_param("~object_y", 1.0)
         self.object_z = rospy.get_param("~object_z", 0.802)
         self.object_yaw = rospy.get_param("~object_yaw", 0.0)
-        self.object_mass = rospy.get_param("~object_mass", 1.00)
+        self.object_mass = rospy.get_param("~object_mass", 0.20)
         self.robot_mass = rospy.get_param("~robot_mass", 1.84199)
         self.triangle_side = rospy.get_param("~object_triangle_side", 0.80)
         self.staging_clearance = rospy.get_param("~grasp_staging_clearance", 0.80)
@@ -54,9 +54,12 @@ class MujocoGraspDemo(object):
         self.tangent_kp = rospy.get_param("~tangent_kp", 1.2)
         self.tangent_kd = rospy.get_param("~tangent_kd", 3.0)
         self.approach_accel_limit = rospy.get_param("~approach_accel_limit", 0.80)
-        self.press_accel_limit = rospy.get_param("~press_accel_limit", 1.0)
+        self.press_accel_limit = rospy.get_param("~press_accel_limit", 15.0)
         self.approach_roll = rospy.get_param("~approach_roll", math.pi / 2.0)
+        self.attitude_ramp_duration = rospy.get_param("~attitude_ramp_duration", 3.0)
+        self.attitude_settle_duration = rospy.get_param("~attitude_settle_duration", 1.0)
         self.attitude_tolerance = rospy.get_param("~attitude_tolerance", 0.10)
+        self.commanded_roll = 0.0
         # Physical-foot ball centre: base_link z=-0.083 m plus 24 mm
         # free-length offset along local -Z.
         self.foot_contact_offset = rospy.get_param("~foot_contact_offset", 0.107)
@@ -64,17 +67,27 @@ class MujocoGraspDemo(object):
         self.foot_max_compression = rospy.get_param("~foot_max_compression", 0.015)
         # Bee's current MuJoCo attitude convention reflects local X but not
         # local Y.  Keep both axis conversions explicit for model variants.
-        self.accel_command_sign_x = rospy.get_param("~accel_command_sign_x", -1.0)
+        self.accel_command_sign_x = rospy.get_param("~accel_command_sign_x", 1.0)
         self.accel_command_sign_y = rospy.get_param("~accel_command_sign_y", 1.0)
-        self.use_external_wrench = rospy.get_param("~use_external_wrench", True)
-        self.compression_target = rospy.get_param("~compression_target", 0.0015)
+        self.use_external_wrench = rospy.get_param("~use_external_wrench", False)
+        self.force_trial_mode = rospy.get_param("~force_trial_mode", True)
+        self.external_lift_force = rospy.get_param("~external_lift_force", 5.0)
+        self.hover_handover_duration = rospy.get_param("~hover_handover_duration", 4.0)
+        self.compression_target = rospy.get_param("~compression_target", 0.020)
         self.compression_gain = rospy.get_param("~compression_gain", 400.0)
+        self.press_radial_kp = rospy.get_param("~press_radial_kp", 400.0)
+        self.target_normal_force = rospy.get_param("~target_normal_force", 5.0)
+        self.normal_force_kp = rospy.get_param("~normal_force_kp", 0.40)
+        self.press_radius_safety_margin = rospy.get_param(
+            "~press_radius_safety_margin", 0.05)
         self.touch_threshold = rospy.get_param("~touch_threshold", 0.02)
         self.normal_force_threshold = rospy.get_param("~normal_force_threshold", 0.10)
         self.compression_threshold = rospy.get_param("~compression_threshold", 0.0002)
         self.contact_confirm_samples = rospy.get_param("~contact_confirm_samples", 10)
+        self.preload_duration = rospy.get_param("~preload_duration", 3.0)
+        self.preload_hold_mode = rospy.get_param("~preload_hold_mode", False)
 
-        self.lift_velocity = rospy.get_param("~lift_velocity", 0.015)
+        self.lift_velocity = rospy.get_param("~lift_velocity", 0.05)
         self.lift_height = rospy.get_param("~lift_height", 0.08)
         self.lift_timeout = rospy.get_param("~lift_timeout", 12.0)
         self.force_margin = rospy.get_param("~force_margin", 1.02)
@@ -146,6 +159,9 @@ class MujocoGraspDemo(object):
             self.object_pose = msg.pose
 
     def wait_for_data(self, timeout=20.0):
+        rospy.loginfo(
+            "grasp demo: waiting for three Bee flight states, odometry, "
+            "contact data, and object pose")
         deadline = time.monotonic() + timeout
         while not rospy.is_shutdown() and time.monotonic() < deadline:
             with self.lock:
@@ -156,6 +172,7 @@ class MujocoGraspDemo(object):
                          all(name in self.contact_states for name in self.names) and
                          self.object_pose is not None)
             if ready:
+                rospy.loginfo("grasp demo: all required input topics are ready")
                 return True
             time.sleep(0.05)
         return False
@@ -248,24 +265,21 @@ class MujocoGraspDemo(object):
                    for metric in metrics)
 
     def publish_accel_nav(self, name, accel_x, accel_y, yaw,
-                          z_mode=FlightNav.POS_MODE, z_value=None):
+                          z_mode=FlightNav.POS_MODE, z_value=None,
+                          external_force_z=None):
         msg = FlightNav()
         msg.header.stamp = rospy.Time.now()
-        msg.control_frame = FlightNav.LOCAL_FRAME
+        msg.control_frame = FlightNav.WORLD_FRAME
         msg.target = FlightNav.COG
         msg.pos_xy_nav_mode = FlightNav.ACC_MODE
-        # Convert the desired world acceleration into the inward-facing body
-        # frame.  FlightNav rotates it back using the estimated yaw.
-        local_accel_x = math.cos(yaw) * accel_x + math.sin(yaw) * accel_y
-        local_accel_y = -math.sin(yaw) * accel_x + math.cos(yaw) * accel_y
         if self.use_external_wrench:
             # Clear the vehicle controller's XY acceleration while a world
             # force is integrated by MuJoCo below.
             msg.target_acc_x = 0.0
             msg.target_acc_y = 0.0
         else:
-            msg.target_acc_x = self.accel_command_sign_x * local_accel_x
-            msg.target_acc_y = self.accel_command_sign_y * local_accel_y
+            msg.target_acc_x = self.accel_command_sign_x * accel_x
+            msg.target_acc_y = self.accel_command_sign_y * accel_y
         msg.yaw_nav_mode = FlightNav.POS_MODE
         msg.target_yaw = yaw
         msg.roll_nav_mode = FlightNav.POS_MODE
@@ -282,7 +296,7 @@ class MujocoGraspDemo(object):
         baselink_rpy = Vector3Stamped()
         baselink_rpy.header.stamp = msg.header.stamp
         baselink_rpy.header.frame_id = "world"
-        baselink_rpy.vector.x = self.approach_roll
+        baselink_rpy.vector.x = self.commanded_roll
         baselink_rpy.vector.y = 0.0
         baselink_rpy.vector.z = 0.0
         self.baselink_rpy_pubs[name].publish(baselink_rpy)
@@ -293,21 +307,34 @@ class MujocoGraspDemo(object):
             wrench.header.frame_id = "world"
             wrench.wrench.force.x = self.robot_mass * accel_x
             wrench.wrench.force.y = self.robot_mass * accel_y
+            if external_force_z is not None:
+                wrench.wrench.force.z = external_force_z
+            elif z_mode == FlightNav.VEL_MODE:
+                wrench.wrench.force.z = self.external_lift_force
             # Attitude is controlled only through final_target_baselink_rpy.
             # A second root torque would fight Bee's base-link controller.
             self.wrench_pubs[name].publish(wrench)
 
     def publish_stop(self):
+        odometry, _, _, _ = self.snapshot()
         for name in self.names:
             msg = FlightNav()
             msg.header.stamp = rospy.Time.now()
             msg.control_frame = FlightNav.WORLD_FRAME
             msg.target = FlightNav.COG
-            msg.pos_xy_nav_mode = FlightNav.ACC_MODE
-            msg.target_acc_x = 0.0
-            msg.target_acc_y = 0.0
-            msg.pos_z_nav_mode = FlightNav.VEL_MODE
-            msg.target_vel_z = 0.0
+            if name in odometry:
+                position = odometry[name].pose.pose.position
+                msg.pos_xy_nav_mode = FlightNav.POS_MODE
+                msg.target_pos_x = position.x
+                msg.target_pos_y = position.y
+                msg.pos_z_nav_mode = FlightNav.POS_MODE
+                msg.target_pos_z = position.z
+            else:
+                msg.pos_xy_nav_mode = FlightNav.ACC_MODE
+                msg.target_acc_x = 0.0
+                msg.target_acc_y = 0.0
+                msg.pos_z_nav_mode = FlightNav.VEL_MODE
+                msg.target_vel_z = 0.0
             msg.yaw_nav_mode = FlightNav.POS_MODE
             msg.target_yaw = self.face_frame(name)[2]
             msg.roll_nav_mode = FlightNav.POS_MODE
@@ -318,12 +345,125 @@ class MujocoGraspDemo(object):
             baselink_rpy = Vector3Stamped()
             baselink_rpy.header.stamp = msg.header.stamp
             baselink_rpy.header.frame_id = "world"
-            baselink_rpy.vector.x = self.approach_roll
+            baselink_rpy.vector.x = self.commanded_roll
             self.baselink_rpy_pubs[name].publish(baselink_rpy)
             wrench = WrenchStamped()
             wrench.header.stamp = msg.header.stamp
             wrench.header.frame_id = "world"
             self.wrench_pubs[name].publish(wrench)
+
+    def ramp_attitude_at_staging(self, desired_radii, desired_tangents):
+        """Tilt the physical feet toward the object without a step command."""
+        duration = max(0.0, self.attitude_ramp_duration)
+        start = time.monotonic()
+        rospy.loginfo("grasp demo: ramp base-link roll to %.3f rad over %.2f s",
+                      self.approach_roll, duration)
+        while not rospy.is_shutdown():
+            elapsed = time.monotonic() - start
+            alpha = 1.0 if duration == 0.0 else min(1.0, elapsed / duration)
+            # Smoothstep gives zero roll-rate at both ends of the transition.
+            blend = alpha * alpha * (3.0 - 2.0 * alpha)
+            self.commanded_roll = blend * self.approach_roll
+            odometry, _, _, _ = self.snapshot()
+            for name in self.names:
+                ax, ay, yaw, _ = self.control_acceleration(
+                    name, odometry[name], desired_radii[name], desired_tangents[name],
+                    [], False)
+                self.publish_accel_nav(name, ax, ay, yaw)
+            if alpha >= 1.0:
+                break
+            time.sleep(self.control_period)
+
+        settle_deadline = time.monotonic() + self.attitude_settle_duration
+        while not rospy.is_shutdown() and time.monotonic() < settle_deadline:
+            odometry, _, _, _ = self.snapshot()
+            for name in self.names:
+                ax, ay, yaw, _ = self.control_acceleration(
+                    name, odometry[name], desired_radii[name], desired_tangents[name],
+                    [], False)
+                self.publish_accel_nav(name, ax, ay, yaw)
+            time.sleep(self.control_period)
+
+    def hold_lifted_object(self, desired_radii, desired_tangents, baseline):
+        """Keep preload and hover at the achieved lift height until shutdown."""
+        odometry, _, _, object_pose = self.snapshot()
+        handover_start = rospy.get_time()
+        handover_duration = max(0.0, self.hover_handover_duration)
+        rospy.loginfo(
+            "grasp demo: hand over lifted load to flight controller over %.2f s",
+            handover_duration)
+        while not rospy.is_shutdown():
+            elapsed = rospy.get_time() - handover_start
+            alpha = (1.0 if handover_duration == 0.0 else
+                     min(1.0, elapsed / handover_duration))
+            blend = alpha * alpha * (3.0 - 2.0 * alpha)
+            target_velocity = self.lift_velocity * (1.0 - blend)
+            trial_force = self.external_lift_force * (1.0 - blend)
+            odometry, forces, contacts, object_pose = self.snapshot()
+            all_metrics, upward_friction = self.log_metrics(
+                "hover_handover", forces, contacts, baseline, object_pose)
+            for name in self.names:
+                ax, ay, yaw, _ = self.control_acceleration(
+                    name, odometry[name], desired_radii[name], desired_tangents[name],
+                    all_metrics[name], True)
+                self.publish_accel_nav(
+                    name, ax, ay, yaw, FlightNav.VEL_MODE, target_velocity,
+                    external_force_z=trial_force)
+            rospy.loginfo_throttle(
+                1.0, "grasp demo: handover object z %.3f m, vz target %.3f m/s, "
+                "trial force %.3f N/Bee, z friction %.3f N",
+                object_pose.position.z, target_velocity, trial_force, upward_friction)
+            if alpha >= 1.0:
+                break
+            time.sleep(self.control_period)
+
+        rospy.loginfo(
+            "grasp demo: HOLD: object z %.3f m; maintaining zero vertical velocity "
+            "and inward preload "
+            "until shutdown", object_pose.position.z)
+        while not rospy.is_shutdown():
+            odometry, forces, contacts, object_pose = self.snapshot()
+            all_metrics, upward_friction = self.log_metrics(
+                "hold", forces, contacts, baseline, object_pose)
+            for name in self.names:
+                ax, ay, yaw, _ = self.control_acceleration(
+                    name, odometry[name], desired_radii[name], desired_tangents[name],
+                    all_metrics[name], True, bounded_press=True)
+                # VEL=0 is the flight controller's closed-loop hover mode here.
+                self.publish_accel_nav(
+                    name, ax, ay, yaw, FlightNav.VEL_MODE, 0.0,
+                    external_force_z=0.0)
+            rospy.loginfo_throttle(
+                1.0, "grasp demo: HOLD object z %.3f m, upward z friction %.3f N",
+                object_pose.position.z, upward_friction)
+            time.sleep(self.control_period)
+        return True
+
+    def hold_preload(self, desired_radii, desired_tangents, baseline):
+        """Hold the three Bees against the supported object without lifting."""
+        rospy.loginfo(
+            "grasp demo: PRELOAD HOLD: lift is disabled; maintaining face-normal "
+            "preload until shutdown")
+        while not rospy.is_shutdown():
+            odometry, forces, contacts, object_pose = self.snapshot()
+            all_metrics, upward_friction = self.log_metrics(
+                "preload_hold", forces, contacts, baseline, object_pose)
+            normal_force_sum = 0.0
+            for name in self.names:
+                normal_force_sum += sum(metric["normal"]
+                                        for metric in all_metrics[name])
+                ax, ay, yaw, _ = self.control_acceleration(
+                    name, odometry[name], desired_radii[name], desired_tangents[name],
+                    all_metrics[name], True)
+                self.publish_accel_nav(
+                    name, ax, ay, yaw, FlightNav.POS_MODE, self.object_z,
+                    external_force_z=0.0)
+            rospy.loginfo_throttle(
+                1.0, "grasp demo: PRELOAD HOLD object z %.3f m, normal force sum "
+                "%.3f N, upward z force %.3f N",
+                object_pose.position.z, normal_force_sum, upward_friction)
+            time.sleep(self.control_period)
+        return True
 
     def open_log(self):
         directory = os.path.dirname(self.log_path)
@@ -344,9 +484,9 @@ class MujocoGraspDemo(object):
         all_metrics = {}
         for name in self.names:
             all_metrics[name] = self.contact_metrics(name, forces, contacts, baseline)
-            # Force sensors use MuJoCo's child-to-parent sign.  The opposite
-            # of the measured foot force is the force applied to the object.
-            upward_friction += sum(max(0.0, -m["delta"][2])
+            # Positive world-Z readings track the upward friction transmitted
+            # from the physical feet to the object in this sensor convention.
+            upward_friction += sum(max(0.0, m["delta"][2])
                                    for m in all_metrics[name])
         for name in self.names:
             for metric in all_metrics[name]:
@@ -369,7 +509,7 @@ class MujocoGraspDemo(object):
         return all_metrics, upward_friction
 
     def control_acceleration(self, name, odom, desired_radius, desired_tangent,
-                             metrics, pressing):
+                             metrics, pressing, bounded_press=False):
         normal, tangent, yaw = self.face_frame(name)
         pos = odom.pose.pose.position
         vel = odom.twist.twist.linear
@@ -381,10 +521,24 @@ class MujocoGraspDemo(object):
         tangent_velocity = vel.x * tangent[0] + vel.y * tangent[1]
 
         if pressing:
-            average_compression = sum(m["compression"] for m in metrics) / 4.0
-            radial_acceleration = (-self.compression_gain *
-                                   (self.compression_target - average_compression) -
-                                   self.radial_kd * radial_velocity)
+            if bounded_press:
+                # Radius error changes sign at the target, so HOLD remains
+                # bounded even if vertical contact is temporarily lost.
+                radial_acceleration = (self.press_radial_kp *
+                                       (desired_radius - radius) -
+                                       self.radial_kd * radial_velocity)
+            else:
+                measured_normal_force = sum(m["normal"] for m in metrics)
+                force_error = self.target_normal_force - measured_normal_force
+                radial_acceleration = (-self.normal_force_kp * force_error -
+                                       self.radial_kd * radial_velocity)
+                # If contact disappears after crossing the target plane, force
+                # feedback alone would keep accelerating inward.  Restore the
+                # vehicle toward the commanded face-normal radius instead.
+                if radius < desired_radius - self.press_radius_safety_margin:
+                    radial_acceleration = (self.press_radial_kp *
+                                           (desired_radius - radius) -
+                                           self.radial_kd * radial_velocity)
             acceleration_limit = self.press_accel_limit
         else:
             radial_acceleration = (self.radial_kp * (desired_radius - radius) -
@@ -509,7 +663,7 @@ class MujocoGraspDemo(object):
                     settled = settled and abs(tangent_position) < self.staging_tolerance
                     settled = settled and planar_speed < 0.08
                     settled = settled and abs(
-                        self.angle_error(self.approach_roll, roll)) < self.attitude_tolerance
+                        self.angle_error(self.commanded_roll, roll)) < self.attitude_tolerance
                     settled = settled and abs(pitch) < self.attitude_tolerance
                     settled = settled and abs(
                         self.angle_error(yaw, measured_yaw)) < self.attitude_tolerance
@@ -522,6 +676,8 @@ class MujocoGraspDemo(object):
                     rospy.logerr("grasp demo: staging wall-time watchdog expired")
                     return False
                 time.sleep(self.control_period)
+
+            self.ramp_attitude_at_staging(desired_radii, desired_tangents)
 
             baseline = self.force_baseline()
             # This is deliberately unreachable: the physical face and the
@@ -549,18 +705,27 @@ class MujocoGraspDemo(object):
                 for name in self.names:
                     established = self.four_point_contact(all_metrics[name])
                     contact_counts[name] = contact_counts[name] + 1 if established else 0
-                    if contact_counts[name] < self.contact_confirm_samples:
+                    if (self.force_trial_mode or
+                            contact_counts[name] < self.contact_confirm_samples):
                         desired_radii[name] = max(
                             minimum_fc_radius,
                             desired_radii[name] - self.approach_speed * dt)
-                    pressing = contact_counts[name] >= self.contact_confirm_samples
+                    pressing = (not self.force_trial_mode and
+                                contact_counts[name] >= self.contact_confirm_samples)
                     ax, ay, yaw, _ = self.control_acceleration(
                         name, odometry[name], desired_radii[name], desired_tangents[name],
                         all_metrics[name], pressing)
                     self.publish_accel_nav(name, ax, ay, yaw)
 
-                if all(contact_counts[name] >= self.contact_confirm_samples
-                       for name in self.names):
+                if self.force_trial_mode and all(
+                        desired_radii[name] <= minimum_fc_radius + 1.0e-6
+                        for name in self.names):
+                    rospy.loginfo(
+                        "grasp demo: force trial reached geometric preload target")
+                    break
+                if (not self.force_trial_mode and
+                        all(contact_counts[name] >= self.contact_confirm_samples
+                            for name in self.names)):
                     break
                 if now_sim - approach_start_sim > self.approach_timeout:
                     rospy.logerr("grasp demo: approach timed out in simulation time")
@@ -580,9 +745,44 @@ class MujocoGraspDemo(object):
                     ",".join("{:.3f}".format(m["normal"]) for m in all_metrics[name]),
                     ",".join("{:.2f}".format(1000.0 * m["compression"])
                              for m in all_metrics[name]))
-            if not all(self.four_point_contact(all_metrics[name]) for name in self.names):
+            if (not self.force_trial_mode and
+                    not all(self.four_point_contact(all_metrics[name])
+                            for name in self.names)):
                 rospy.logerr("grasp demo: touch + normal force + compression condition was lost")
                 return False
+
+            # Do not start lifting on the first confirmed contact sample.  Hold
+            # the requested inward preload long enough for all three vehicles,
+            # compliant feet, and the object to reach a force-balanced state.
+            preload_start = rospy.get_time()
+            rospy.loginfo("grasp demo: hold inward preload for %.2f s", self.preload_duration)
+            while (not rospy.is_shutdown() and
+                   rospy.get_time() - preload_start < self.preload_duration):
+                odometry, forces, contacts, object_pose = self.snapshot()
+                all_metrics, _ = self.log_metrics(
+                    "preload", forces, contacts, baseline, object_pose)
+                for name in self.names:
+                    ax, ay, yaw, _ = self.control_acceleration(
+                        name, odometry[name], desired_radii[name], desired_tangents[name],
+                        all_metrics[name], True)
+                    self.publish_accel_nav(name, ax, ay, yaw)
+                time.sleep(self.control_period)
+
+            odometry, forces, contacts, object_pose = self.snapshot()
+            all_metrics, _ = self.log_metrics(
+                "preload_complete", forces, contacts, baseline, object_pose)
+            for name in self.names:
+                rospy.loginfo(
+                    "%s preload: normal=%s N, compression=%s mm",
+                    name,
+                    ",".join("{:.3f}".format(m["normal"])
+                             for m in all_metrics[name]),
+                    ",".join("{:.2f}".format(1000.0 * m["compression"])
+                             for m in all_metrics[name]))
+
+            if self.preload_hold_mode:
+                return self.hold_preload(
+                    desired_radii, desired_tangents, baseline)
 
             lift_start_z = object_pose.position.z
             required_upward_force = self.object_mass * 9.80665 * self.force_margin
@@ -613,12 +813,21 @@ class MujocoGraspDemo(object):
                     1.0, "grasp demo: object rise %.3f m, upward z friction %.3f / %.3f N",
                     rise, upward_friction, required_upward_force)
                 if (rise >= self.lift_height and
-                        friction_counts >= self.force_confirm_samples):
-                    rospy.loginfo(
-                        "grasp demo: SUCCESS: 12 touches and normal forces remain; "
-                        "z friction %.3f N > object threshold %.3f N; object rose %.3f m",
-                        upward_friction, required_upward_force, rise)
-                    return True
+                        (self.force_trial_mode or
+                         friction_counts >= self.force_confirm_samples)):
+                    if self.force_trial_mode:
+                        rospy.loginfo(
+                            "grasp demo: FORCE TRIAL SUCCESS: z friction %.3f N; "
+                            "object rose %.3f m",
+                            upward_friction, rise)
+                    else:
+                        rospy.loginfo(
+                            "grasp demo: SUCCESS: 12 touches and normal forces remain; "
+                            "z friction %.3f N > object threshold %.3f N; "
+                            "object rose %.3f m",
+                            upward_friction, required_upward_force, rise)
+                    return self.hold_lifted_object(
+                        desired_radii, desired_tangents, baseline)
                 if rospy.get_time() - lift_start_sim > self.lift_timeout:
                     rospy.logerr(
                         "grasp demo: lift failed: rise %.3f m, z friction %.3f / %.3f N, contacts=%s",
