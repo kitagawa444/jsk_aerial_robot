@@ -26,11 +26,12 @@ Three-Bee observer force + object-relative contact control
   s : decrease common normal force
   i/k : increase/decrease object world-X velocity after HOLD
   j/l : increase/decrease object world-Y velocity after HOLD
+  q/e : increase/decrease object yaw velocity after HOLD
   m : stop object XY translation
   [ : increase lift trajectory velocity limit
   ] : decrease lift trajectory velocity limit
       (after HOLD: increase/decrease object world-Z velocity)
-SPACE: stop object XYZ translation
+SPACE: stop object XYZ and yaw translation
   r : reset force and Z velocity
   p : print current command
   x : stop demo
@@ -108,7 +109,13 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.translation_acceleration_rate_limit = rospy.get_param(
             "~translation_acceleration_rate_limit", 0.30)
         self.translation_z_range = rospy.get_param(
-            "~translation_z_range", 0.10)
+            "~translation_z_range", 0.30)
+        self.translation_z_limit_active = 0
+        self.yaw_velocity_step = rospy.get_param(
+            "~keyboard_yaw_velocity_step", 0.02)
+        self.yaw_velocity_limit = rospy.get_param(
+            "~yaw_velocity_limit", 0.10)
+        self.yaw_velocity_command = 0.0
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
         self.normal_force_ramp_rate = rospy.get_param(
@@ -431,6 +438,9 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_tangential_acceleration_pub = rospy.Publisher(
             "/mujoco_triple_press/lift_yaw_tangential_acceleration",
             Float32, queue_size=1)
+        self.object_yaw_velocity_command_pub = rospy.Publisher(
+            "/mujoco_triple_press/object_yaw_velocity_command",
+            Float32, queue_size=1)
         self.active_force_pub = rospy.Publisher(
             "/mujoco_triple_press/active_common_normal_force",
             Float32, queue_size=1)
@@ -500,6 +510,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_rate = 0.0
         self.lift_yaw_moment_feedback = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.yaw_velocity_command = 0.0
+        self.translation_z_limit_active = 0
         self.lift_initial_relative_contact_z = None
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
@@ -540,6 +552,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_rate = 0.0
         self.lift_yaw_moment_feedback = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.yaw_velocity_command = 0.0
+        self.translation_z_limit_active = 0
         # Capture the actual three-Bee mean on the first LIFT update.  The
         # geometric target can differ slightly from the settled contact pose.
         self.lift_initial_relative_contact_z = None
@@ -567,6 +581,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_z_acceleration_command = 0.0
         self.lift_common_slip_acceleration = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.yaw_velocity_command = 0.0
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
         for name in self.names:
@@ -892,9 +907,18 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.target_z_velocity * dt)
             self.lift_hold_target_object_z = self.clamp_value(
                 unclamped_target_z, minimum_target_z, maximum_target_z)
+            self.translation_z_limit_active = 0
             if abs(self.lift_hold_target_object_z - unclamped_target_z) > \
                     1.0e-9:
+                self.translation_z_limit_active = (
+                    1 if unclamped_target_z > maximum_target_z else -1)
                 self.target_z_velocity = 0.0
+                rospy.logwarn(
+                    "triple press: object Z command stopped at %s limit "
+                    "%.3f m (set ~translation_z_range to extend it)",
+                    "upper" if self.translation_z_limit_active > 0 else
+                    "lower",
+                    self.lift_hold_target_object_z)
 
         ramp_duration = max(0.0, self.lift_force_ramp_duration)
         if ramp_duration <= 1.0e-6:
@@ -1067,6 +1091,10 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.lift_yaw_target)
 
         dt = self.clamp_value(dt, 0.0, 0.05)
+        if self.lift_hold_reached and dt > 0.0:
+            self.lift_yaw_target = self.angle_error(
+                self.lift_yaw_target +
+                self.yaw_velocity_command * dt, 0.0)
         self.lift_yaw_error = self.angle_error(
             current_yaw, self.lift_yaw_target)
         self.lift_yaw_rate = object_twist[3]
@@ -1610,6 +1638,9 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "target_z_velocity",
             "translation_target_velocity_x",
             "translation_target_velocity_y",
+            "yaw_velocity_command",
+            "translation_target_z",
+            "translation_z_limit_active",
             "translation_acceleration_x",
             "translation_acceleration_y",
             "control_mode", "lift_fault",
@@ -1695,6 +1726,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.translation_velocity_command[0]),
             "translation_target_velocity_y": "{:.6f}".format(
                 self.translation_velocity_command[1]),
+            "yaw_velocity_command": "{:.6f}".format(
+                self.yaw_velocity_command),
+            "translation_target_z": "{:.8f}".format(
+                self.lift_hold_target_object_z
+                if self.lift_hold_target_object_z is not None else
+                object_pose.position.z),
+            "translation_z_limit_active": str(
+                self.translation_z_limit_active),
             "translation_acceleration_x": "{:.6f}".format(
                 self.translation_acceleration_command[0]),
             "translation_acceleration_y": "{:.6f}".format(
@@ -2014,6 +2053,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_state_pub.publish(yaw_state)
         self.lift_yaw_tangential_acceleration_pub.publish(
             Float32(data=self.lift_yaw_tangential_acceleration))
+        self.object_yaw_velocity_command_pub.publish(
+            Float32(data=self.yaw_velocity_command))
         translation = Vector3Stamped()
         translation.header.stamp = message.header.stamp
         translation.header.frame_id = "world"
@@ -2028,16 +2069,25 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.translation_acceleration_command[0]
         translation_acceleration.vector.y = \
             self.translation_acceleration_command[1]
+        translation_acceleration.vector.z = \
+            self.lift_object_acceleration_command
         self.translation_acceleration_pub.publish(translation_acceleration)
 
     def log_command(self):
         rospy.loginfo(
             "triple press command: requested/active force %.2f/%.2f N, "
-            "object velocity XYZ [%+.3f, %+.3f, %+.3f] m/s, mode %s%s",
+            "object velocity XYZ [%+.3f, %+.3f, %+.3f] m/s, yaw rate "
+            "%+.3f rad/s, target Z/yaw [%.3f, %+.3f]%s, mode %s%s",
             self.common_normal_force(), self.applied_common_normal_force(),
             self.translation_velocity_command[0],
             self.translation_velocity_command[1],
             self.target_z_velocity,
+            self.yaw_velocity_command,
+            self.lift_hold_target_object_z
+            if self.lift_hold_target_object_z is not None else 0.0,
+            self.lift_yaw_target
+            if self.lift_yaw_target is not None else 0.0,
+            " Z-LIMIT" if self.translation_z_limit_active else "",
             "LIFT" if self.lift_mode_active else "PRELOAD",
             " FAULT" if self.lift_fault else "")
 
@@ -2054,6 +2104,16 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             scale = self.translation_velocity_limit / speed
             self.translation_velocity_command[0] *= scale
             self.translation_velocity_command[1] *= scale
+        return True
+
+    def adjust_yaw_velocity(self, increment):
+        if not self.lift_hold_reached or self.lift_fault:
+            rospy.logwarn_throttle(
+                1.0, "triple press: object yaw motion is enabled after HOLD")
+            return False
+        self.yaw_velocity_command = self.clamp_value(
+            self.yaw_velocity_command + increment,
+            -self.yaw_velocity_limit, self.yaw_velocity_limit)
         return True
 
     def handle_key(self, key):
@@ -2076,6 +2136,11 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 return
         elif key == "m":
             self.translation_velocity_command = [0.0, 0.0]
+        elif key in ("q", "e"):
+            direction = 1.0 if key == "q" else -1.0
+            if not self.adjust_yaw_velocity(
+                    direction * self.yaw_velocity_step):
+                return
         elif key == "[":
             if self.lift_hold_reached:
                 self.target_z_velocity = self.clamp_value(
@@ -2101,11 +2166,13 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         elif key == " ":
             self.translation_velocity_command = [0.0, 0.0]
             self.target_z_velocity = 0.0
+            self.yaw_velocity_command = 0.0
         elif key == "r":
             self.set_common_normal_force(self.initial_normal_force)
             self.translation_velocity_command = [0.0, 0.0]
             self.translation_acceleration_command = [0.0, 0.0]
             self.target_z_velocity = 0.0
+            self.yaw_velocity_command = 0.0
             self.reset_lift_mode()
         elif key == "p":
             self.log_command()
