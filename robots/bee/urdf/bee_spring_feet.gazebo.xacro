@@ -63,7 +63,7 @@
     </gazebo>
   </xacro:macro>
 
-  <xacro:macro name="bee_spring_feet" params="stiffness:=600.0 damping:=20.0">
+  <xacro:macro name="bee_spring_feet" params="stiffness:=1000.0 damping:=15.0">
     <material name="bee_spring_shaft_gray">
       <color rgba="0.65 0.65 0.65 1.0"/>
     </material>

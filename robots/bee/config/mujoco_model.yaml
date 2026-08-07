@@ -14,11 +14,11 @@ bee:
     parent_body: base_link
     axis: [0.0, 0.0, 1.0]
     joint_range: [-0.001, 0.015]
-    stiffness: 1500.0
-    # Match the Gazebo compliant-foot damping.  The previous 10 Ns/m left
-    # a small persistent oscillation when all four high-friction balls were
-    # constrained against a face at the same time.
-    damping: 20.0
+    # Give each of the four balls about 1 mm travel at a 1 N share of a
+    # 4 N/Bee preload.  The previous 1500 N/m setting compressed only
+    # 0.67 mm and made small attitude errors concentrate load on two feet.
+    stiffness: 1000.0
+    damping: 15.0
     spring_reference: 0.0
     free_length: 0.024
     shaft_radius: 0.003

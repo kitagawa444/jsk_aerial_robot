@@ -11,7 +11,7 @@
   <xacro:include filename="$(find bee)/urdf/bee_spring_feet.gazebo.xacro" />
   <!-- ODE needs more joint damping than MuJoCo for the same vehicle-level
        settling because the contact solvers regularize impacts differently. -->
-  <xacro:bee_spring_feet stiffness="600.0" damping="20.0"/>
+  <xacro:bee_spring_feet stiffness="1000.0" damping="15.0"/>
 
   <!-- gazebo plugin for default controller and sensors -->
   <xacro:include filename="$(find aerial_robot_simulation)/xacro/spinal.gazebo.xacro" />

@@ -172,6 +172,11 @@ class MujocoMultiBringup(object):
             "output_model": scene_model_path,
             "robots": [],
             "objects": objects,
+            "option": {
+                "impratio": rospy.get_param("~contact_impratio", 50.0),
+                "cone": rospy.get_param("~friction_cone", "elliptic"),
+                "solver": rospy.get_param("~constraint_solver", "Newton"),
+            },
         }
         if objects:
             scene_config["jacobian"] = "dense"

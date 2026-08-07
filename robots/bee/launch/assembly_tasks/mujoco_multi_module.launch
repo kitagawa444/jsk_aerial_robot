@@ -26,6 +26,10 @@
   <arg name="backend_start_delay" default="1.0"/>
   <arg name="param_load_delay" default="1.0"/>
   <arg name="regenerate_single_model" default="false"/>
+  <!-- MuJoCo soft friction otherwise creeps under sustained payload load. -->
+  <arg name="contact_impratio" default="50.0"/>
+  <arg name="friction_cone" default="elliptic"/>
+  <arg name="constraint_solver" default="Newton"/>
   <arg name="spawn_object" default="true"/>
   <arg name="object_x" default="0.0"/>
   <arg name="object_y" default="1.0"/>
@@ -70,6 +74,9 @@
     <param name="backend_start_delay" value="$(arg backend_start_delay)"/>
     <param name="param_load_delay" value="$(arg param_load_delay)"/>
     <param name="regenerate_single_model" value="$(arg regenerate_single_model)"/>
+    <param name="contact_impratio" value="$(arg contact_impratio)"/>
+    <param name="friction_cone" value="$(arg friction_cone)"/>
+    <param name="constraint_solver" value="$(arg constraint_solver)"/>
     <param name="spawn_object" value="$(arg spawn_object)"/>
     <param name="object_x" value="$(arg object_x)"/>
     <param name="object_y" value="$(arg object_y)"/>
