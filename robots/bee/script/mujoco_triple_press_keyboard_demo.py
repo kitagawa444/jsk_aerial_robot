@@ -212,6 +212,22 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_moment_acceleration_limit", 0.20)
         self.lift_moment_acceleration_rate_limit = rospy.get_param(
             "~lift_moment_acceleration_rate_limit", 1.0)
+        self.lift_yaw_control_enabled = rospy.get_param(
+            "~lift_yaw_control_enabled", True)
+        self.lift_yaw_angle_kp = rospy.get_param(
+            "~lift_yaw_angle_kp", 0.50)
+        self.lift_yaw_rate_kd = rospy.get_param(
+            "~lift_yaw_rate_kd", 0.20)
+        self.lift_yaw_observer_moment_gain = rospy.get_param(
+            "~lift_yaw_observer_moment_gain", 0.80)
+        self.lift_yaw_moment_deadband = rospy.get_param(
+            "~lift_yaw_moment_deadband", 0.002)
+        self.lift_yaw_tangential_acceleration_limit = rospy.get_param(
+            "~lift_yaw_tangential_acceleration_limit", 0.12)
+        self.lift_yaw_tangential_acceleration_rate_limit = rospy.get_param(
+            "~lift_yaw_tangential_acceleration_rate_limit", 0.30)
+        self.lift_yaw_error_abort_limit = rospy.get_param(
+            "~lift_yaw_error_abort_limit", 0.35)
         self.lift_abort_moment_threshold = rospy.get_param(
             "~lift_abort_moment_threshold", 0.05)
         self.lift_progress_timeout = rospy.get_param(
@@ -292,6 +308,11 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
         self.lift_common_slip_feedback_active = False
+        self.lift_yaw_target = None
+        self.lift_yaw_error = 0.0
+        self.lift_yaw_rate = 0.0
+        self.lift_yaw_moment_feedback = 0.0
+        self.lift_yaw_tangential_acceleration = 0.0
         self.lift_common_slip_activation_rise = rospy.get_param(
             "~lift_common_slip_activation_rise", self.lift_hold_height)
         self.lift_common_slip_kp = rospy.get_param(
@@ -404,6 +425,12 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_slip_acceleration_pub = rospy.Publisher(
             "/mujoco_triple_press/lift_common_slip_acceleration",
             Float32, queue_size=1)
+        self.lift_yaw_state_pub = rospy.Publisher(
+            "/mujoco_triple_press/lift_yaw_state",
+            Vector3Stamped, queue_size=1)
+        self.lift_yaw_tangential_acceleration_pub = rospy.Publisher(
+            "/mujoco_triple_press/lift_yaw_tangential_acceleration",
+            Float32, queue_size=1)
         self.active_force_pub = rospy.Publisher(
             "/mujoco_triple_press/active_common_normal_force",
             Float32, queue_size=1)
@@ -468,6 +495,11 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
         self.lift_common_slip_feedback_active = False
+        self.lift_yaw_target = None
+        self.lift_yaw_error = 0.0
+        self.lift_yaw_rate = 0.0
+        self.lift_yaw_moment_feedback = 0.0
+        self.lift_yaw_tangential_acceleration = 0.0
         self.lift_initial_relative_contact_z = None
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
@@ -503,6 +535,11 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
         self.lift_common_slip_feedback_active = False
+        self.lift_yaw_target = None
+        self.lift_yaw_error = 0.0
+        self.lift_yaw_rate = 0.0
+        self.lift_yaw_moment_feedback = 0.0
+        self.lift_yaw_tangential_acceleration = 0.0
         # Capture the actual three-Bee mean on the first LIFT update.  The
         # geometric target can differ slightly from the settled contact pose.
         self.lift_initial_relative_contact_z = None
@@ -529,6 +566,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.target_z_velocity = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_common_slip_acceleration = 0.0
+        self.lift_yaw_tangential_acceleration = 0.0
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
         for name in self.names:
@@ -1003,6 +1041,65 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 desired[axis] - self.translation_acceleration_command[axis],
                 -maximum_step, maximum_step)
         return tuple(self.translation_acceleration_command)
+
+    def update_lift_yaw_control(self, object_pose, object_twist, dt):
+        """Hold object yaw with a pure circulating tangential command.
+
+        Every Bee receives the same scalar acceleration along its own face
+        tangent.  The three tangential world-force vectors sum to zero for an
+        equilateral grasp, while their moments about the prism centre add.
+        Object yaw and yaw rate provide the primary restoring feedback; the
+        filtered observer Mz is only a low-band correction for contact bias.
+        """
+        current_yaw = self.quaternion_to_rpy(object_pose.orientation)[2]
+        if not self.lift_mode_active or self.lift_fault:
+            self.lift_yaw_target = None
+            self.lift_yaw_error = 0.0
+            self.lift_yaw_rate = object_twist[3]
+            self.lift_yaw_moment_feedback = 0.0
+            self.lift_yaw_tangential_acceleration = 0.0
+            return 0.0
+
+        if self.lift_yaw_target is None:
+            self.lift_yaw_target = current_yaw
+            rospy.loginfo(
+                "triple press: latch LIFT object yaw target %.4f rad",
+                self.lift_yaw_target)
+
+        dt = self.clamp_value(dt, 0.0, 0.05)
+        self.lift_yaw_error = self.angle_error(
+            current_yaw, self.lift_yaw_target)
+        self.lift_yaw_rate = object_twist[3]
+        self.lift_yaw_moment_feedback = self.deadband_with_limit(
+            self.filtered_object_moment[2],
+            self.lift_yaw_moment_deadband)
+
+        if (not self.lift_yaw_control_enabled or dt <= 0.0 or
+                not self.lift_preload_ready()):
+            desired = 0.0
+        else:
+            desired = -(
+                self.lift_yaw_angle_kp * self.lift_yaw_error +
+                self.lift_yaw_rate_kd * self.lift_yaw_rate +
+                self.lift_yaw_observer_moment_gain *
+                self.lift_yaw_moment_feedback)
+            desired = self.clamp_value(
+                desired,
+                -self.lift_yaw_tangential_acceleration_limit,
+                self.lift_yaw_tangential_acceleration_limit)
+
+        maximum_step = (
+            self.lift_yaw_tangential_acceleration_rate_limit * dt)
+        self.lift_yaw_tangential_acceleration += self.clamp_value(
+            desired - self.lift_yaw_tangential_acceleration,
+            -maximum_step, maximum_step)
+
+        if (self.lift_hold_reached and
+                abs(self.lift_yaw_error) > self.lift_yaw_error_abort_limit):
+            self.abort_lift(
+                "object yaw error {:.3f} rad exceeded {:.3f} rad".format(
+                    self.lift_yaw_error, self.lift_yaw_error_abort_limit))
+        return self.lift_yaw_tangential_acceleration
 
     def update_lift_moment_control(
             self, local_states, object_pose, normal_forces, dt):
@@ -1527,12 +1624,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "lift_common_slip_error",
             "lift_common_slip_velocity",
             "lift_common_slip_acceleration",
+            "lift_yaw_target", "lift_yaw_error", "object_yaw_rate",
+            "lift_yaw_moment_feedback",
+            "lift_yaw_tangential_acceleration",
             "lift_reference_z", "lift_reference_velocity",
             "lift_reference_acceleration",
             "lift_object_acceleration_command",
             "lift_common_z_acceleration_command",
             "object_z_velocity",
-            "object_x", "object_y", "object_z",
+            "object_x", "object_y", "object_z", "object_yaw",
             "object_force_world_x", "object_force_world_y",
             "object_force_world_z", "object_moment_world_x",
             "object_moment_world_y", "object_moment_world_z",
@@ -1627,6 +1727,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.lift_common_slip_velocity),
             "lift_common_slip_acceleration": "{:.6f}".format(
                 self.lift_common_slip_acceleration),
+            "lift_yaw_target": "{:.8f}".format(
+                self.lift_yaw_target
+                if self.lift_yaw_target is not None else 0.0),
+            "lift_yaw_error": "{:.8f}".format(self.lift_yaw_error),
+            "object_yaw_rate": "{:.8f}".format(self.lift_yaw_rate),
+            "lift_yaw_moment_feedback": "{:.8f}".format(
+                self.lift_yaw_moment_feedback),
+            "lift_yaw_tangential_acceleration": "{:.8f}".format(
+                self.lift_yaw_tangential_acceleration),
             "lift_reference_z": "{:.6f}".format(
                 self.lift_reference_z if self.lift_reference_z is not None
                 else object_pose.position.z),
@@ -1642,6 +1751,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "object_x": "{:.8f}".format(object_pose.position.x),
             "object_y": "{:.8f}".format(object_pose.position.y),
             "object_z": "{:.8f}".format(object_pose.position.z),
+            "object_yaw": "{:.8f}".format(
+                self.quaternion_to_rpy(object_pose.orientation)[2]),
             "object_force_world_x": "{:.8f}".format(object_force[0]),
             "object_force_world_y": "{:.8f}".format(object_force[1]),
             "object_force_world_z": "{:.8f}".format(object_force[2]),
@@ -1892,6 +2003,17 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             Float32(data=self.lift_force_ramp_ratio))
         self.lift_common_slip_acceleration_pub.publish(
             Float32(data=self.lift_common_slip_acceleration))
+        yaw_state = Vector3Stamped()
+        yaw_state.header.stamp = message.header.stamp
+        yaw_state.header.frame_id = "world"
+        yaw_state.vector.x = (
+            self.lift_yaw_target
+            if self.lift_yaw_target is not None else 0.0)
+        yaw_state.vector.y = self.lift_yaw_error
+        yaw_state.vector.z = self.lift_yaw_rate
+        self.lift_yaw_state_pub.publish(yaw_state)
+        self.lift_yaw_tangential_acceleration_pub.publish(
+            Float32(data=self.lift_yaw_tangential_acceleration))
         translation = Vector3Stamped()
         translation.header.stamp = message.header.stamp
         translation.header.frame_id = "world"
@@ -2028,6 +2150,10 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                       self.radial_kd * radial_velocity)
         tangential = (-self.relative_tangent_kp * tangent_position -
                       self.relative_tangent_kd * tangent_velocity)
+        if self.lift_mode_active:
+            # Equal scalar commands along the three face tangents create a
+            # yaw couple without adding a common XY translation command.
+            tangential += self.lift_yaw_tangential_acceleration
         radial = self.clamp(radial, self.press_accel_limit)
         tangential = self.clamp(tangential, self.approach_accel_limit)
         return (radial * normal[0] + tangential * tangent[0],
@@ -2220,6 +2346,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                     translation_acceleration = \
                         self.update_translation_control(
                             object_twist, control_dt)
+                    self.update_lift_yaw_control(
+                        object_pose, object_twist, control_dt)
                     last_moment_control_time = now
                     for name in self.names:
                         ax, ay, yaw = self.press_acceleration(
@@ -2263,7 +2391,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                         "[%.3f, %.3f, %.3f] N, Fz %.3f/%.3f N, "
                         "ramp %.2f, a_ref %+.3f, slip %.4f m/"
                         "%+.3f m/s2, common az %+.3f m/s2, "
-                        "mode %s%s, |M_object| %.4f Nm, object z %.3f m",
+                        "mode %s%s, |M_object| %.4f Nm, yaw err/rate "
+                        "%+.3f/%+.3f, yaw at %+.3f m/s2, object z %.3f m",
                         self.common_normal_force(),
                         self.applied_common_normal_force(),
                         filtered_forces["bee1"], filtered_forces["bee2"],
@@ -2278,6 +2407,9 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                         "LIFT" if self.lift_mode_active else "PRELOAD",
                         " FAULT" if self.lift_fault else "",
                         self.vector_norm3(object_moment),
+                        self.lift_yaw_error,
+                        self.lift_yaw_rate,
+                        self.lift_yaw_tangential_acceleration,
                         object_pose.position.z)
                     time.sleep(self.control_period)
         finally:
