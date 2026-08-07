@@ -288,7 +288,18 @@ namespace aerial_robot_control
         target_acc_.setZ(0);
       }
 
-    pid_controllers_.at(Z).update(err_z, du_z, err_v_z, target_acc_.z());
+    if(navigator_->getZControlMode() == aerial_robot_navigation::ACC_CONTROL_MODE)
+      {
+        // Z acceleration mode is a direct net-acceleration interface.  Drop
+        // the position/velocity feedback and any stored hover integral so an
+        // external contact controller owns the complete Z residual command.
+        pid_controllers_.at(Z).reset();
+        pid_controllers_.at(Z).update(0, du_z, 0, target_acc_.z());
+      }
+    else
+      {
+        pid_controllers_.at(Z).update(err_z, du_z, err_v_z, target_acc_.z());
+      }
 
     if(pid_controllers_.at(Z).getErrI() < 0) pid_controllers_.at(Z).setErrI(0);
 

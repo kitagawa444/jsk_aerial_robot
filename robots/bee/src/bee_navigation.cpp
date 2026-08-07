@@ -304,11 +304,14 @@ void BeeNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg)
 
   if (msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::VEL_MODE)
   {
+    setZControlMode(VEL_CONTROL_MODE);
     setTargetVelZ(msg->target_vel_z);
+    setTargetAccZ(0);
     teleop_reset_time_ = teleop_reset_duration_ + ros::Time::now().toSec();
   }
   else if (msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_MODE)
   {
+    setZControlMode(POS_CONTROL_MODE);
     tf::Vector3 target_cog_pos(0, 0, msg->target_pos_z);
     if (msg->target == aerial_robot_msgs::FlightNav::BASELINK)
     {
@@ -325,9 +328,11 @@ void BeeNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg)
 
     setTargetPosZ(target_cog_pos.z());
     setTargetVelZ(0);
+    setTargetAccZ(0);
   }
   else if (msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_VEL_MODE)
   {
+    setZControlMode(POS_CONTROL_MODE);
     tf::Vector3 target_cog_pos(0, 0, msg->target_pos_z);
     if (msg->target == aerial_robot_msgs::FlightNav::BASELINK)
     {
@@ -346,6 +351,12 @@ void BeeNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg)
     trajectory_reset_time_ = trajectory_reset_duration_ + ros::Time::now().toSec();
     setTargetPosZ(target_cog_pos.z());
     setTargetVelZ(msg->target_vel_z);
+    setTargetAccZ(0);
+  }
+  else if (msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::ACC_MODE)
+  {
+    setZControlMode(ACC_CONTROL_MODE);
+    setTargetAccZ(msg->target_acc_z);
   }
 }
 
@@ -518,11 +529,14 @@ void BeeNavigator::assemblyNavCallback(const aerial_robot_msgs::FlightNavConstPt
   if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::VEL_MODE)
     {
       /* special */
+      setZControlMode(POS_CONTROL_MODE);
       addTargetPosZ(msg->target_pos_diff_z);
       setTargetVelZ(0);
+      setTargetAccZ(0);
     }
   else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_MODE)
     {
+      setZControlMode(POS_CONTROL_MODE);
       tf::Vector3 target_cog_pos(0, 0, msg->target_pos_z);
       if(msg->target == aerial_robot_msgs::FlightNav::BASELINK)
         {
@@ -546,12 +560,19 @@ void BeeNavigator::assemblyNavCallback(const aerial_robot_msgs::FlightNavConstPt
       setTargetPosCandZ(target_cog_pos.z());
 
       setTargetVelZ(0);
+      setTargetAccZ(0);
     }
   else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_VEL_MODE)
     {
-
+      setZControlMode(POS_CONTROL_MODE);
       setTargetPosCandZ(msg->target_pos_z);
       setTargetVelZ(msg->target_vel_z);
+      setTargetAccZ(0);
+    }
+  else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::ACC_MODE)
+    {
+      setZControlMode(ACC_CONTROL_MODE);
+      setTargetAccZ(msg->target_acc_z);
     }
 }
 

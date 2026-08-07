@@ -66,6 +66,8 @@ namespace aerial_robot_navigation
 
     inline uint8_t getXyControlMode(){  return (uint8_t)xy_control_mode_;}
     inline void setXyControlMode(uint8_t mode){  xy_control_mode_ = mode;}
+    inline uint8_t getZControlMode(){  return (uint8_t)z_control_mode_;}
+    inline void setZControlMode(uint8_t mode){  z_control_mode_ = mode;}
 
     inline uint8_t getControlframe(){  return (uint8_t)control_frame_;}
     inline void setControlframe(uint8_t frame_type){  control_frame_ = frame_type;}
@@ -91,6 +93,7 @@ namespace aerial_robot_navigation
     inline void setTargetAcc(tf::Vector3 vel) { target_acc_ = vel; }
     inline void setTargetAcc(double x, double y, double z) { setTargetAcc(tf::Vector3(x, y, z)); }
     inline void setTargetZeroAcc() { setTargetAcc(tf::Vector3(0,0,0)); }
+    inline void setTargetZeroXyAcc() { setTargetAccX(0); setTargetAccY(0); }
 
     inline void setTargetRoll(float value) { target_rpy_.setX(value); }
     inline void setTargetOmega(tf::Vector3 omega) { target_omega_ = omega; }
@@ -268,6 +271,7 @@ namespace aerial_robot_navigation
 
     int  xy_control_mode_;
     int  prev_xy_control_mode_;
+    int  z_control_mode_;
     bool xy_vel_mode_pos_ctrl_takeoff_;
 
     double loop_du_;
@@ -368,6 +372,7 @@ namespace aerial_robot_navigation
       estimator_->setFlyingFlag(false);
 
       trajectory_mode_ = false;
+      z_control_mode_ = POS_CONTROL_MODE;
       init_height_ = 0;
       land_height_ = 0;
     }
@@ -428,6 +433,7 @@ namespace aerial_robot_navigation
 
       setNaviState(START_STATE);
       trajectory_mode_ = false;
+      setZControlMode(POS_CONTROL_MODE);
       setTargetXyFromCurrentState();
       setTargetPosZ(takeoff_height_);
       setTargetVelZ(0);
@@ -493,6 +499,8 @@ namespace aerial_robot_navigation
 
       if(!teleop_flag_) return;
 
+      setZControlMode(POS_CONTROL_MODE);
+      setTargetAccZ(0);
       setNaviState(LAND_STATE);
       ROS_INFO("Land state");
     }
@@ -576,6 +584,7 @@ namespace aerial_robot_navigation
 
     void setTargetZFromCurrentState()
     {
+      setZControlMode(POS_CONTROL_MODE);
       tf::Vector3 pos_cog = estimator_->getPos(Frame::COG, estimate_mode_);
       setTargetPosZ(pos_cog.z());
 

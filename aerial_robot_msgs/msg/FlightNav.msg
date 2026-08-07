@@ -47,4 +47,4 @@ uint8 pos_z_nav_mode
 float32 target_pos_z
 float32 target_vel_z
 float32 target_pos_diff_z
-
+float32 target_acc_z
