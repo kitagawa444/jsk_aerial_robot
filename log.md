@@ -419,6 +419,49 @@ multi-module起動時、MuJoCoのclock/sensor開始と3台のbase node初期化�
 - yaw角速度の後半平均は正転時+0.01983 rad/s、逆転時-0.01996 rad/sだった。回転中は駆動トルクを作るため4.3--5.4 degの定常yaw誤差が生じたが、Space後は約0.001 radまで収束し、yaw rateもほぼ0になった。
 - 最終停止後129.4秒間、物体Zは約0.835 mを維持した。全試験で`lift_fault=0`、Z制限到達なし、物体落下なしだった。
 
+## 2026-08-08 自動把持・運搬・設置・release
+
+### 実装
+
+- MuJoCo sceneへ任意位置・高さ・半径の`place_pedestal`を追加した。既存デモへ影響しないよう`spawn_destination_pedestal`の既定値はfalseとした。
+- `mujoco_triple_transport_place_demo.py`を追加し、`LIFT -> TRANSPORT -> DESTINATION_SETTLE -> DESCEND -> UNLOAD -> RELEASE -> RETREAT -> UNWIND -> VERIFY -> COMPLETE`を自動実行するようにした。
+- TRANSPORTでは物体world-XY位置誤差から速度目標を作り、既存の共通XY加速度制御を使用する。DESCENDでは物体Z目標を5 mm/sで台座上面まで下げる。
+- UNLOADでは鉛直支持feed-forwardを3秒かけて0へ下げ、物体重量を台座へ移す。その後、法線力を4 N/台から0 Nへrampし、observer法線力が十分低下したことを確認してから3台を放射方向へ退避させる。
+- 退避後はBeeのrollを`pi/2 -> 0`へ戻し、物体poseと速度が目的地で安定したことを確認して完了する。制御feedbackは従来どおりobserverと物体poseを使用し、force-siteとばね圧縮量はCSV診断のみである。
+- CSVへ`task_phase`を追加し、各状態の開始・終了を追跡可能にした。目的地台座はRViz markerにも追加した。
+
+### headless MuJoCo検証
+
+同一条件で2回連続して全状態を完了した。2回目のCSVでは次の結果だった。
+
+- 物体を`(0.000, 1.000, 0.800) m`付近から持ち上げ、TRANSPORTを43.7 simulation秒行って目的地`(0.800, 1.000) m`へ移動した。
+- 目的地到着時のXY誤差は約8 mm。50 mm持ち上げた状態から約10.8秒で台座へ下降した。
+- UNLOAD後、法線力を約6.1秒で`4.0 -> 0.0 N/台`へ下げた。observer法線力は約0.04 N以下となり、接触解除後に3台が退避した。
+- 最終物体poseは`(0.7996, 0.9999, 0.7983) m`で、目標に対するXY/Z誤差は約0.4/1.7 mm。物体yawは0.0138 rad、全工程で`lift_fault=0`だった。
+- 最初のMuJoCo起動ではBee2 base node初期化時に既存のEigen matrix assertionが一度発生し、必要topic待機で終了した。launchをクリーンに再起動した後の2試行は正常に完了しており、transport/place状態機械内の失敗はなかった。
+
+起動は以下の2端末で行う。
+
+```bash
+roslaunch bee mujoco_multi_module.launch headless:=true launch_rviz:=false spawn_destination_pedestal:=true
+rosrun bee mujoco_triple_transport_place_demo.py
+```
+
+### 500 g物体・長距離運搬・落下時フェイルセーフ
+
+- 三角柱の既定質量を`0.20 -> 0.50 kg`、目的地の既定X位置を`0.80 -> 1.50 m`へ変更した。運搬timeoutも`120 -> 180 simulation秒`へ延長した。
+- 運搬中は物体速度・yaw角速度、2台以上のobserver法線力消失、Bee接触面と物体の相対Zずれ、物体poseおよび各Bee odometryの更新停止を監視する。
+- 異常検出時は物体poseを制御基準として追跡する処理を即座に切る。各Beeの異常検出時のworld位置とyawを固定目標として4秒間繰り返し送り、rollを2秒かけて直立へ戻した後にデモを終了する。
+- フェイルセーフ状態は`/mujoco_triple_transport_place/phase`へ`FAILSAFE_HOLD`、停止完了後は`FAILED`として出力する。
+- `FAILSAFE_HOLD`へ入った後は通常の落下判定・observer更新・力/モーメント制御を再実行せず、固定world位置指令だけを送る。これにより二重faultが安全保持時間を打ち切らないようにした。
+- 重量増加時の定常Z追従誤差があっても台座へ確実に荷重を渡せるよう、設置時のBee側制御目標を台座面より10 mm下へ置く。物体poseは直接操作せず、接触後は従来どおり鉛直feed-forwardを徐々に抜く。
+
+#### 検証
+
+- 500 g物体を初期位置`(0.000, 1.000, 0.799) m`から目的地X=1.50 mまで運搬し、全状態を完了した。TRANSPORTは約81.2 simulation秒、最終poseは`(1.4977, 1.0020, 0.7984) m`、目的地XY誤差は約3.1 mm、全工程で`lift_fault=0`だった。
+- 設置プリロード追加前は物体Z=0.806 mで下降が止まりtimeoutした。この際、`FAILSAFE_HOLD -> FAILED`が動作することを確認した。追加後はZ=0.800 mでUNLOADへ入り、法線力を4 N/台から0へ落として正常に設置できた。
+- 異常系では試験時だけ物体速度上限を0.005 m/sへ下げ、TRANSPORT開始直後に意図的に発火させた。物体追従を切った`FAILSAFE_HOLD`を指定8 wall秒維持して`FAILED`へ終了した。終了後の3台の並進速度は最大約0.0008 m/sで、落下物体の追跡や発散はなかった。
+
 ## 採用しない方針の一覧
 
 - root body直接操作: めり込み、ジャンプ、非物理的。
@@ -441,3 +484,116 @@ multi-module起動時、MuJoCoのclock/sensor開始と3台のbase node初期化�
 - `log.md`: 本文書。コード変更とは分離したdocumentation commitとして保存する。
 
 各コミット前に差分checkを行い、最終状態で`catkin build bee --no-status`の依存21 package成功とPython構文checkを確認した。
+
+## 2026-08-08 実物EPSに合わせた縦貫通穴
+
+- 物体を中実の三角柱から、Z方向に同心・同方向の正三角形貫通穴を持つ一体EPSへ変更した。外側一辺0.80 m、内側一辺0.52 m、高さ0.30 mで、Beeが接触する3側面には穴や継ぎ目を設けない。
+- 96倍EPSの既定密度を`1000/96 = 10.4167 kg/m^3`とし、外側体積から内側体積を引いて質量を求める。既定体積は0.048012 m3、計算質量は0.50013 kgとなる。
+- 同心三角柱の差分について、解析的な重心と慣性をscene composerで設定する。重心は幾何中心のままで、MuJoCoの凸包が穴を塞がないよう物体を3個の凸な台形壁meshへ分割した。
+- `object_density`、`object_inner_triangle_side`をlaunch引数化した。`object_mass <= 0`では密度計算を使い、正値を指定した場合だけ実測質量で上書きできる。
+- RViz markerにも上下面だけが開いた縦貫通穴を反映した。headless MuJoCoで生成モデルが読み込まれ、0.50013 kgのinertialと3個のcollision geomを持つことを確認した。
+- composed sceneの初期カメラを`grasp_prism`へ合わせた。単体Bee modelの古い`statistic center/extent`を引き継いで物体が視野外になる問題を避け、`scene_camera_extent`で表示範囲を調整できる。
+- MuJoCoと同じ外側/内側三角形から、発注添付用の`robots/bee/mujoco/grasp_prism_eps_order_spec.svg`を作成した。上面図、Z方向貫通、接触面、法線壁厚80.8 mm、4球接触範囲を記載している。
+
+### 等幅・等高への寸法修正
+
+- 「足が正方形配置なので物体を正方形にする」という解釈は誤りだったため、正方形モデルの試作変更は取り下げた。断面は正三角形のまま、横に平たい形状を避けるため外側一辺とZ高さをともに600 mmへ変更した。
+- 500 gと96倍EPS相当密度を維持するため、Z方向の同心三角形貫通穴を一辺418.626 mmとした。殻体積は0.048 m3、面法線方向の壁厚は52.358 mmである。
+- MuJoCo GUIへBee 3台とともにspawnし、inertial mass 0.500000 kg、3個のmesh collision geom、台座上で物体姿勢がほぼ単位quaternionのまま静止することを確認した。
+- 把持・運搬デモ側に旧寸法の一辺0.80 m、物体中心Z=0.802 m、高さ0.30 mが独立した既定値として残っていたため、新モデルでは接触半径が約58 mm外側、接触高度が約148 mm下側へずれていた。デモ固有の明示的な上書きは維持しつつ、通常時は`bee_mujoco_multi_bringup`の実際の物体寸法・位置・台座設定を一元参照するよう変更した。
+
+## 2026-08-09 物体roll/pitch姿勢制御
+
+### 実装
+
+- 既存の持ち上げ中Mx/My制御を、observerモーメントだけでなく物体姿勢・角速度も使う外側姿勢ループへ拡張した。LIFT開始時の物体上向き軸とroll/pitchを目標としてlatchする。
+- quaternionの時刻差からworld座標の物体角速度を計算する。目標上向き軸と現在上向き軸の外積をworld-X/Y傾き誤差とし、`-Kp*tilt_error-Kd*angular_rate-Km*observer_Mxy`から目標Mx/Myを生成する。
+- 目標Mx/Myは既存の接触位置allocationで3台のZ加速度へ変換する。差動Z加速度の合計は0を維持するため、共通Zの物体重量feed-forwardを変更しない。
+- 既定ゲインは姿勢`Kp=0.015 Nm/rad`、角速度`Kd=0.030 Nms/rad`。物体傾きが0.30 radを超えた場合は把持失敗として停止する。
+- `/mujoco_triple_press/lift_tilt_state`、`object_angular_velocity`、`lift_tilt_moment_command`を追加した。CSVにも物体roll/pitch、角速度、傾き誤差、目標モーメントを記録する。
+- MuJoCoのtouch、force-site、ばね圧縮量は従来どおり診断専用で、制御feedbackには使用しない。
+
+### A/B試験
+
+600 mm角・高さ600 mm・200 gの中空形状、押し付け4 N/台、持ち上げ20 mm、XY速度0、60 simulation秒で比較した。
+
+- roll/pitch姿勢制御なしでは傾きRMS 0.00820 rad、roll/pitch角速度標準偏差0.00624/0.00593 rad/sだった。
+- 既定の姿勢制御ありでは傾きRMS 0.00666 rad、roll/pitch角速度標準偏差0.00510/0.00572 rad/sとなった。傾きRMSは約19%、roll角速度は約18%低下した。
+- `Kp=0.03、Kd=0.08`の強ゲイン、およびobserver Mx/Myゲインを0.50から0.20へ下げた組合せは改善しなかったため採用しない。
+- 新形状の物体Zは制御なし/ありの双方で約90--100 mmの大きな周期振動が残った。roll/pitchループ固有の発散ではなく、共通Z支持制御側の別問題であり、今回の変更だけでは新形状の安定保持を達成していない。
+
+旧ソリッド形状（一辺800 mm、高さ300 mm、200 g）でも同じ制御で回帰試験した。60 simulation秒保持し、物体Z変動幅5.18 mm、傾きRMS 0.00091 rad、Mx/My RMS 0.00171/0.00178 Nmで、既存の安定保持を維持した。各試験末尾のTRANSPORT timeoutはXY速度を意図的に0へ設定したことによる。
+
+## 2026-08-09 新形状の共通Z持続保持
+
+### 原因
+
+- 600 mm角・高さ600 mm・200 gの中空形状では、物体Z応答に約0.45秒の遅れがある一方、位置PDは`Kp=6.0`、追従加速度上限は`0.15 m/s^2`だった。さらに保持回復力の比例項が最大0.4 Nまで変化し、約0.35 Hz、90--100 mm幅のlimit cycleを作っていた。
+- 離床用0.4 N marginを50 mmの保持高度まで出し続けていた。200 g物体には約2 m/s2の追加加速度に相当し、HOLD切替時に大きな上向き速度が残った。
+- HOLDで`target_z_velocity=0`へ戻すと内部Z軌道速度も1 mm/sへ落ち、物体は目標へ到達しているのに内部referenceだけが数cm下に残った。
+- 相対接触高さ補正が下向き最大値へ張り付き、比例型の保持回復力と相殺した。ゲインを上げると定常偏差ではなくZ振動が再発した。
+
+### 変更
+
+- 共通Zの物体位置ループを`Kp=1.0`、`Kd=1.5`、追従加速度上限`0.04 m/s2`へ低帯域化した。HOLD後も内部軌道速度上限`0.01 m/s`を維持する。
+- 離床marginは物体が3 mm上昇した時点で解除する。HOLD進入には3 mmの許容差を持たせるが、幾何学的な最終目標高度は変更しない。
+- 高さ誤差へ直接掛けていた保持回復PDを無効化し、`Ki=0.8 N/(m s)`の片側・最大0.4 Nの低帯域積分へ変更した。離床margin解除直後から不足支持力を学習するため、HOLD閾値直下で停止する形状でも所定高度へ到達できる。
+- 相対接触高さ制御はHOLD遷移時にも必ず基準を再ラッチする。既定値は`Kp=5.0`、`Kd=2.0`、加速度上限`0.03 m/s2`とし、絶対Z積分が静的な相殺分を補う。
+- UNLOAD開始時は保持回復積分ゲインも0へ切り、支持feed-forwardのramp-downを妨げないようにした。
+
+### headless MuJoCo検証
+
+- 新形状（一辺/高さ600 mm、内側一辺532 mm、200 g）、4 N/台で120 simulation秒HOLDした。後半40秒の物体Zは平均1.00383 m、reference 1.00430 m、変動幅1.15 mm、Z速度標準偏差0.019 mm/sだった。傾き誤差平均は0.00247 rad、yaw rate標準偏差は0.00026 rad/sで、`lift_fault=0`を維持した。
+- 旧ソリッド形状（一辺800 mm、高さ300 mm、200 g）でも既定の3 mm進入許容のまま60 simulation秒HOLDした。後半20秒のZ変動幅は4.12 mm、最終Zは0.85038 m、referenceは0.85058 m、傾き誤差平均は0.00110 radだった。
+- 試験末尾の`transport timed out`は保持観察のため`transport_velocity_limit=0`を指定した意図的な終了であり、把持・Z制御faultではない。
+
+### 不採用試験
+
+- 相対滑り補正を完全に無効化すると、離床後に約160 mmオーバーシュートして落下判定へ入った。
+- 保持回復`Kp`を20から40 N/mへ上げると20--30 mmの周期振動が再発した。
+- 相対滑り補正上限を`0.03 -> 0.015 m/s2`へ下げると後半の減衰が不足し、約44 mm幅の振動になった。逆に`0.05 m/s2`へ上げるとHOLD直後の下向き補正が強すぎて落下した。
+- HOLD進入許容だけを10 mmへ広げる案は旧形状を保持できたが、目標より10 mm低い時点で運搬状態へ移るため不採用とした。前HOLD積分で所定高度近傍まで持ち上げてから遷移する方式へ置き換えた。
+
+### 離床追加力の独立ramp化
+
+- 従来は`mg`と離床用0.4 N marginを同じ1.5秒のforce rampで増やし、3 mm離床した時点でmarginを即時に除去していた。離床追加力を独立状態へ分離し、`0.05 N/s`で増加、離床後は`0.10 N/s`で減少させるようにした。
+- 保持回復積分の上限を`lift_hold_recovery_force_limit=0.4 N`として分離した。これにより離床marginを小さく、または低速にしても、HOLD中の静的不足力を補う能力は失われない。
+- CSVへ`lift_breakaway_force`を追加し、booleanだけでなく実際に加えた鉛直力を記録する。
+- 現在の既定形状（一辺/高さ600 mm、内側一辺418.626 mm、500 g）で試験した。物体は追加力0.0125 Nで離床し、0.4 N上限へ到達しなかった。60 simulation秒HOLDし、後半20秒のZ変動幅は3.76 mm、最終Zは0.99815 mだった。
+- HOLD直後10秒のZ変動幅は19.2 mm残った。HOLD進入時の上向き速度が5.68 mm/s、内部referenceが物体より11.4 mm下に残っていたためで、離床marginのステップではない。次の低減対象はHOLD進入時の速度条件とreferenceのbumpless transferである。
+
+## 2026-08-09 LIFT-HOLD-TRANSPORT連続制御
+
+### 変更
+
+- 初期Z速度指令を、無限に継続する速度指令ではなく有限高さ軌道の開始トリガとして扱うようにした。`mg` ramp完了時に開始高さ、最終高さ、軌道速度上限を同時にlatchし、以後は同じjerk/加速度制限付きreferenceをLIFT、HOLD、TRANSPORTで継続する。
+- HOLD到達時に行っていたZ速度指令の急停止、observer積分・補正値のreset、observer filter時定数/Kp/Ki/補正上限の切替、鉛直feed-forward倍率の切替を廃止した。observerは全区間で同じ低帯域補正を使い、旧`lift_hold_observer_*` parameterは統一ゲインのfallbackとして互換性を残した。
+- HOLDを制御モードではなく状態判定へ変更した。物体Z誤差3 mm以下、物体Z速度3 mm/s以下、内部reference誤差0.5 mm以下、reference速度1 mm/s以下が1秒継続した場合だけ`lift_hold_reached`を立てる。このflagはTRANSPORT操作の許可にだけ使用し、Z制御状態には触れない。
+- common-slip feedbackの開始をHOLD flagから切り離し、物体上昇量だけで開始するようにした。既定では最終高さの3 mm手前でlatchするため、HOLD判定前に補正が立ち上がる。
+- 共通XY速度feedbackもHOLD後だけでなくLIFT開始から有効にした。目標速度0の間は物体の横速度を減衰し、安定待ち中に把持編隊全体が流れるのを防ぐ。TRANSPORT開始時は同じfeedbackへ目標速度を連続的に与える。
+- 長いLIFT安定待ち中に生じるゴム球の初期なじみ量をTRANSPORTの接触喪失量へ混ぜないよう、自律デモの安全監視だけをTRANSPORT開始時の相対接触高さへrebaseした。common-slip制御の基準値や制御出力は変更しない。
+
+### headless MuJoCo検証
+
+現行の一辺/高さ600 mm、内側一辺418.626 mm、500 g物体、法線力4 N/台で、目的地X=1.5 mの把持・運搬・設置デモをクリーン起動して実行した。
+
+- HOLDは物体Z誤差2.8 mm、Z速度0.2 mm/sが1秒安定した後に成立した。LIFT中の物体XY移動量は10.1 mmだった。
+- LIFT最終sampleからTRANSPORT最初のsampleで、物体Z目標と内部referenceは不変、feed-forward倍率は1.0のままだった。共通Z加速度差は`-0.000007 m/s2`、observer補正差は`+0.000007`、保持回復力差は`+0.000110 N`で、通常のrate更新分以外の段差はなかった。
+- TRANSPORT中の物体Zは`0.99725..0.99999 m`。1.5 m先の到着時は`(1.4995, 1.0003, 1.0000) m`だった。
+- 続くDESCEND、UNLOAD、RELEASE、RETREAT、UNWIND、VERIFYも通過し、`COMPLETE`へ到達した。最終物体poseは`(1.5023, 1.0009, 0.9499) m`、`lift_fault=0`だった。
+- `catkin build bee --no-status`は依存21 packageすべて成功した。既存の`spinal/ApplyWrench`とclock skew warningだけが残る。最終変更後のPython構文checkと`git diff --check`も成功した。
+
+## 2026-08-10 物体質量別の回帰試験
+
+連続Z制御の回帰試験を、現行の一辺/高さ600 mm、内側一辺418.626 mmの中空三角柱に対して200 g、350 g、500 gの3条件で行った。物体質量以外は同じで、押し付け法線力は4 N/Bee、接触摩擦係数は0.5、運搬目的地はX=1.5 mとした。MuJoCoはheadlessでクリーン起動し、各Beeの`aerial_robot_base_node`が存在し、`attitude_controller`が`running`であることを確認してからデモを開始した。
+
+| 物体質量 | HOLD | 1.5 m運搬/載置 | LIFT中XY移動量 | TRANSPORT中Z範囲 | 運搬中最大roll/pitch傾き | 最終pose [m] |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| 200 g | 成功 | `COMPLETE` | 36.3 mm | 0.99719--0.99998 m | 0.231 deg | (1.4888, 0.9935, 0.9499) |
+| 350 g | 成功 | `COMPLETE` | 26.0 mm | 0.99728--1.00001 m | 0.369 deg | (1.4921, 0.9944, 0.9499) |
+| 500 g | 成功 | `COMPLETE` | 16.0 mm | 0.99719--0.99996 m | 0.349 deg | (1.4994, 0.9941, 0.9499) |
+
+- 3条件ともDESCEND、UNLOAD、RELEASE、RETREAT、UNWIND、VERIFYまで通過し、`lift_fault=0`で終了した。
+- LIFT最終sampleからTRANSPORT最初sampleでは、3条件とも`lift_reference_z/velocity/acceleration`に段差はなかった。共通Z加速度の差は`-8e-6..+1e-6 m/s2`、observer補正の差は`0..14e-6`で、HOLD成立による制御切替ステップは見られなかった。
+- 軽い200 gはLIFT中のXY移動量が最も大きく、500 gの約2.3倍だった。完走には影響しなかったが、軽量物への並進外乱感度として今後も監視する。
+- 最初の一括試験は`/bee3/ground_truth`の出現だけを起動完了条件にしたため、controller起動前にデモが始まりHOVER timeoutとなった。これは物体制御前の無効試験とした。また350 gの再起動1回目でBee3制御ノードが初期化中に終了したため、完全停止後に再起動した。以後の重量別評価は3台のノードとcontroller状態を確認した有効試験のみを使用する。
