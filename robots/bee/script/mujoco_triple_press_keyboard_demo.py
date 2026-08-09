@@ -133,7 +133,9 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.object_twist_filter_alpha = rospy.get_param(
             "~object_twist_filter_alpha", 0.20)
         self.object_twist = [0.0, 0.0, 0.0, 0.0]
+        self.object_angular_velocity_world = [0.0, 0.0, 0.0]
         self.previous_object_state = None
+        self.previous_object_orientation = None
         self.relative_contact_z = None
         # Nominal centre of the four physical rubber balls, expressed from
         # the FC site in base axes.  This is rigid geometry only: no MuJoCo
@@ -219,6 +221,24 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_moment_acceleration_limit", 0.20)
         self.lift_moment_acceleration_rate_limit = rospy.get_param(
             "~lift_moment_acceleration_rate_limit", 1.0)
+        self.lift_tilt_control_enabled = rospy.get_param(
+            "~lift_tilt_control_enabled", True)
+        # These gains produce a desired world-X/Y object moment.  The existing
+        # three-contact allocation then converts that moment into zero-sum Bee
+        # Z accelerations.  Keep the observer term as the low-band disturbance
+        # correction and use pose/rate feedback to damp actual object motion.
+        self.lift_tilt_angle_kp = rospy.get_param(
+            "~lift_tilt_angle_kp", 0.015)
+        self.lift_tilt_rate_kd = rospy.get_param(
+            "~lift_tilt_rate_kd", 0.030)
+        self.lift_tilt_abort_limit = rospy.get_param(
+            "~lift_tilt_abort_limit", 0.30)
+        self.lift_tilt_target_world = None
+        self.lift_roll_target = None
+        self.lift_pitch_target = None
+        self.lift_tilt_error_world = [0.0, 0.0]
+        self.lift_tilt_angle_error = 0.0
+        self.lift_tilt_moment_command = [0.0, 0.0]
         self.lift_yaw_control_enabled = rospy.get_param(
             "~lift_yaw_control_enabled", True)
         self.lift_yaw_angle_kp = rospy.get_param(
@@ -245,10 +265,20 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_rise_confirmation_duration", 1.0)
         self.lift_hold_height = rospy.get_param(
             "~lift_hold_height", 0.02)
+        self.lift_hold_entry_tolerance = rospy.get_param(
+            "~lift_hold_entry_tolerance", 0.003)
+        self.lift_hold_velocity_tolerance = rospy.get_param(
+            "~lift_hold_velocity_tolerance", 0.003)
+        self.lift_hold_reference_tolerance = rospy.get_param(
+            "~lift_hold_reference_tolerance", 0.0005)
+        self.lift_hold_reference_velocity_tolerance = rospy.get_param(
+            "~lift_hold_reference_velocity_tolerance", 0.001)
+        self.lift_hold_confirmation_duration = rospy.get_param(
+            "~lift_hold_confirmation_duration", 1.0)
         self.lift_drop_abort_distance = rospy.get_param(
             "~lift_drop_abort_distance", 0.015)
         object_mass_default = rospy.get_param(
-            "/bee_mujoco_multi_bringup/object_mass", 0.20)
+            "/bee_mujoco_multi_bringup/object_mass", 0.50)
         self.grasp_object_mass = rospy.get_param(
             "~grasp_object_mass", object_mass_default)
         self.gravity_acceleration = rospy.get_param(
@@ -257,46 +287,58 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_trajectory_acceleration_limit", 0.03)
         self.lift_trajectory_jerk_limit = rospy.get_param(
             "~lift_trajectory_jerk_limit", 0.10)
+        self.lift_trajectory_velocity_limit = rospy.get_param(
+            "~lift_trajectory_velocity_limit", 0.01)
         self.lift_trajectory_position_kp = rospy.get_param(
-            "~lift_trajectory_position_kp", 6.0)
+            "~lift_trajectory_position_kp", 1.0)
         self.lift_trajectory_velocity_kd = rospy.get_param(
-            "~lift_trajectory_velocity_kd", 3.0)
+            "~lift_trajectory_velocity_kd", 1.5)
         self.lift_trajectory_tracking_acceleration_limit = rospy.get_param(
-            "~lift_trajectory_tracking_acceleration_limit", 0.15)
+            "~lift_trajectory_tracking_acceleration_limit", 0.04)
         self.lift_force_ramp_duration = rospy.get_param(
             "~lift_force_ramp_duration", 1.5)
         self.lift_breakaway_force_margin = rospy.get_param(
             "~lift_breakaway_force_margin", 0.40)
+        self.lift_breakaway_force_ramp_rate = rospy.get_param(
+            "~lift_breakaway_force_ramp_rate", 0.05)
+        self.lift_breakaway_force_release_rate = rospy.get_param(
+            "~lift_breakaway_force_release_rate", 0.10)
+        self.lift_breakaway_release_rise = rospy.get_param(
+            "~lift_breakaway_release_rise", 0.003)
         self.lift_hold_recovery_force_kp = rospy.get_param(
-            "~lift_hold_recovery_force_kp", 80.0)
+            "~lift_hold_recovery_force_kp", 0.0)
         self.lift_hold_recovery_force_kd = rospy.get_param(
-            "~lift_hold_recovery_force_kd", 4.0)
+            "~lift_hold_recovery_force_kd", 0.0)
+        self.lift_hold_recovery_force_ki = rospy.get_param(
+            "~lift_hold_recovery_force_ki", 0.8)
+        self.lift_hold_recovery_force_limit = rospy.get_param(
+            "~lift_hold_recovery_force_limit", 0.40)
         self.lift_hold_recovery_force_rate_limit = rospy.get_param(
             "~lift_hold_recovery_force_rate_limit", 2.0)
         self.lift_hold_support_floor_scale = rospy.get_param(
             "~lift_hold_support_floor_scale", 0.0)
         self.lift_hold_force_feedforward_scale = rospy.get_param(
-            "~lift_hold_force_feedforward_scale", 1.15)
+            "~lift_hold_force_feedforward_scale", 1.0)
+        # One low-band observer correction is retained from LIFT start through
+        # HOLD and TRANSPORT.  The legacy hold parameter names remain valid as
+        # fallbacks, but there is no longer a phase-dependent gain switch.
         self.lift_observer_force_time_constant = rospy.get_param(
-            "~lift_observer_force_time_constant", 0.50)
+            "~lift_observer_force_time_constant",
+            rospy.get_param("~lift_hold_observer_force_time_constant", 1.0))
         self.lift_observer_force_kp = rospy.get_param(
-            "~lift_observer_force_kp", 0.04)
+            "~lift_observer_force_kp",
+            rospy.get_param("~lift_hold_observer_force_kp", 0.02))
         self.lift_observer_force_ki = rospy.get_param(
-            "~lift_observer_force_ki", 0.002)
+            "~lift_observer_force_ki",
+            rospy.get_param("~lift_hold_observer_force_ki", 0.0))
         self.lift_vertical_force_deadband = rospy.get_param(
             "~lift_vertical_force_deadband", 0.03)
         self.lift_observer_force_integral_limit = rospy.get_param(
             "~lift_observer_force_integral_limit", 0.05)
         self.lift_observer_force_correction_limit = rospy.get_param(
-            "~lift_observer_force_correction_limit", 0.15)
-        self.lift_hold_observer_force_time_constant = rospy.get_param(
-            "~lift_hold_observer_force_time_constant", 1.0)
-        self.lift_hold_observer_force_kp = rospy.get_param(
-            "~lift_hold_observer_force_kp", 0.02)
-        self.lift_hold_observer_force_ki = rospy.get_param(
-            "~lift_hold_observer_force_ki", 0.0)
-        self.lift_hold_observer_force_correction_limit = rospy.get_param(
-            "~lift_hold_observer_force_correction_limit", 0.08)
+            "~lift_observer_force_correction_limit",
+            rospy.get_param(
+                "~lift_hold_observer_force_correction_limit", 0.08))
         self.lift_common_z_acceleration_limit = rospy.get_param(
             "~lift_common_z_acceleration_limit", 1.0)
         self.filtered_object_vertical_force = 0.0
@@ -306,11 +348,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_z = None
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
+        self.lift_reference_velocity_limit = 0.0
+        self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
         self.lift_breakaway_force_active = False
+        self.lift_breakaway_force = 0.0
         self.lift_hold_recovery_force = 0.0
+        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -321,13 +367,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_moment_feedback = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
         self.lift_common_slip_activation_rise = rospy.get_param(
-            "~lift_common_slip_activation_rise", self.lift_hold_height)
+            "~lift_common_slip_activation_rise",
+            max(0.0,
+                self.lift_hold_height - self.lift_hold_entry_tolerance))
         self.lift_common_slip_kp = rospy.get_param(
-            "~lift_common_slip_kp", 15.0)
+            "~lift_common_slip_kp", 5.0)
         self.lift_common_slip_kd = rospy.get_param(
-            "~lift_common_slip_kd", 3.0)
+            "~lift_common_slip_kd", 2.0)
         self.lift_common_slip_acceleration_limit = rospy.get_param(
-            "~lift_common_slip_acceleration_limit", 0.08)
+            "~lift_common_slip_acceleration_limit", 0.03)
         self.lift_common_slip_acceleration_rate_limit = rospy.get_param(
             "~lift_common_slip_acceleration_rate_limit", 2.0)
         self.lift_relative_z_kp = rospy.get_param(
@@ -438,6 +486,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_tangential_acceleration_pub = rospy.Publisher(
             "/mujoco_triple_press/lift_yaw_tangential_acceleration",
             Float32, queue_size=1)
+        self.lift_tilt_state_pub = rospy.Publisher(
+            "/mujoco_triple_press/lift_tilt_state",
+            Vector3Stamped, queue_size=1)
+        self.object_angular_velocity_pub = rospy.Publisher(
+            "/mujoco_triple_press/object_angular_velocity",
+            Vector3Stamped, queue_size=1)
+        self.lift_tilt_moment_command_pub = rospy.Publisher(
+            "/mujoco_triple_press/lift_tilt_moment_command",
+            Vector3Stamped, queue_size=1)
         self.object_yaw_velocity_command_pub = rospy.Publisher(
             "/mujoco_triple_press/object_yaw_velocity_command",
             Float32, queue_size=1)
@@ -479,6 +536,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
     def applied_common_normal_force(self):
         return self.active_common_normal_force
 
+    def reset_lift_tilt_control(self):
+        self.lift_tilt_target_world = None
+        self.lift_roll_target = None
+        self.lift_pitch_target = None
+        self.lift_tilt_error_world = [0.0, 0.0]
+        self.lift_tilt_angle_error = 0.0
+        self.lift_tilt_moment_command = [0.0, 0.0]
+
     def reset_lift_mode(self):
         self.lift_mode_active = False
         self.lift_fault = False
@@ -496,11 +561,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_z = None
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
+        self.lift_reference_velocity_limit = 0.0
+        self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
         self.lift_breakaway_force_active = False
+        self.lift_breakaway_force = 0.0
         self.lift_hold_recovery_force = 0.0
+        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -510,6 +579,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_rate = 0.0
         self.lift_yaw_moment_feedback = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.reset_lift_tilt_control()
         self.yaw_velocity_command = 0.0
         self.translation_z_limit_active = 0
         self.lift_initial_relative_contact_z = None
@@ -538,11 +608,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_z = None
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
+        self.lift_reference_velocity_limit = 0.0
+        self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
         self.lift_breakaway_force_active = True
+        self.lift_breakaway_force = 0.0
         self.lift_hold_recovery_force = 0.0
+        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -552,6 +626,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_yaw_rate = 0.0
         self.lift_yaw_moment_feedback = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.reset_lift_tilt_control()
         self.yaw_velocity_command = 0.0
         self.translation_z_limit_active = 0
         # Capture the actual three-Bee mean on the first LIFT update.  The
@@ -581,6 +656,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_common_z_acceleration_command = 0.0
         self.lift_common_slip_acceleration = 0.0
         self.lift_yaw_tangential_acceleration = 0.0
+        self.lift_tilt_moment_command = [0.0, 0.0]
         self.yaw_velocity_command = 0.0
         self.translation_velocity_command = [0.0, 0.0]
         self.translation_acceleration_command = [0.0, 0.0]
@@ -659,7 +735,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
 
     def update_lift_progress(
             self, object_pose, odometry=None, object_twist=None):
-        """Confirm object motion, stop at lift height, and detect a drop."""
+        """Confirm lift progress and declare HOLD without changing control."""
         if (not self.lift_mode_active or self.lift_fault or
                 not self.lift_preload_ready()):
             return
@@ -671,10 +747,32 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_command_start_time = now
             self.lift_start_object_z = object_pose.position.z
             self.lift_peak_object_z = object_pose.position.z
+            self.lift_hold_target_object_z = (
+                self.lift_start_object_z + self.lift_hold_height)
+            self.lift_reference_velocity_limit = max(
+                self.lift_velocity_threshold,
+                self.lift_trajectory_velocity_limit,
+                abs(self.target_z_velocity))
+            # The initial velocity command starts the finite-height trajectory;
+            # it is not a persistent velocity command.  Consume it here so the
+            # later HOLD declaration cannot alter the controller input.
+            self.target_z_velocity = 0.0
             return
         self.lift_peak_object_z = max(
             self.lift_peak_object_z, object_pose.position.z)
         rise = object_pose.position.z - self.lift_start_object_z
+        if (not self.lift_hold_reached and
+                self.lift_breakaway_force_active and
+                rise >= self.lift_breakaway_release_rise):
+            # The margin is only needed to leave the pedestal.  Keeping the
+            # full margin until the final hover height gives a light object a
+            # large upward velocity that the delayed common-Z loop cannot
+            # remove without overshoot.
+            self.lift_breakaway_force_active = False
+            rospy.loginfo(
+                "triple press: release %.3f N breakaway margin after "
+                "object rise %.4f m",
+                self.lift_breakaway_force_margin, rise)
         if not self.lift_progress_confirmed:
             if rise >= self.lift_minimum_object_rise:
                 if self.lift_rise_confirmation_start_time is None:
@@ -696,27 +794,41 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                     rise, self.lift_progress_timeout))
             return
         if (not self.lift_hold_reached and
-                self.lift_hold_height > 0.0 and
-                rise >= self.lift_hold_height):
-            self.lift_progress_confirmed = True
-            self.target_z_velocity = 0.0
-            self.lift_hold_reached = True
-            self.lift_breakaway_force_active = False
-            self.lift_hold_recovery_force = 0.0
-            # The acceleration-limited reference decelerates at the requested
-            # height, so retain that geometric target instead of freezing a
-            # possible measurement overshoot as the new hover altitude.
-            self.lift_hold_target_object_z = (
-                self.lift_start_object_z + self.lift_hold_height)
-            # The reference trajectory has already decelerated toward this
-            # altitude.  Clear only the slow observer correction integral;
-            # gravity and trajectory acceleration remain feed-forward terms.
-            self.lift_observer_force_integral = 0.0
-            self.lift_observer_force_correction = 0.0
-            rospy.loginfo(
-                "triple press: LIFT HOLD reached at object rise %.4f m; "
-                "switch total-Z target to mg; retained initial contact z %.4f m",
-                rise, self.lift_initial_relative_contact_z)
+                self.lift_hold_target_object_z is not None):
+            vertical_velocity = (
+                object_twist[2] if object_twist is not None else float("inf"))
+            object_settled = (
+                abs(self.lift_hold_target_object_z -
+                    object_pose.position.z) <=
+                self.lift_hold_entry_tolerance and
+                abs(vertical_velocity) <= self.lift_hold_velocity_tolerance)
+            reference_settled = (
+                self.lift_reference_z is not None and
+                abs(self.lift_hold_target_object_z - self.lift_reference_z) <=
+                self.lift_hold_reference_tolerance and
+                abs(self.lift_reference_velocity) <=
+                self.lift_hold_reference_velocity_tolerance)
+            if (self.lift_progress_confirmed and object_settled and
+                    reference_settled):
+                if self.lift_hold_stable_start_time is None:
+                    self.lift_hold_stable_start_time = now
+                elif (now - self.lift_hold_stable_start_time >=
+                      self.lift_hold_confirmation_duration):
+                    # This flag only authorizes transport commands.  Keep the
+                    # target, feed-forward, observer filter/gains, integrals,
+                    # and acceleration outputs exactly as they were in LIFT.
+                    self.lift_hold_reached = True
+                    self.lift_breakaway_force_active = False
+                    rospy.loginfo(
+                        "triple press: LIFT HOLD confirmed after %.2f s "
+                        "stable; continuous Z controller retained "
+                        "(error %+.4f m, vz %+.4f m/s)",
+                        self.lift_hold_confirmation_duration,
+                        self.lift_hold_target_object_z -
+                        object_pose.position.z,
+                        vertical_velocity)
+            else:
+                self.lift_hold_stable_start_time = None
         if (self.lift_hold_reached and
                 self.lift_hold_target_object_z - object_pose.position.z >=
                 self.lift_drop_abort_distance):
@@ -733,15 +845,20 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_reference_acceleration = 0.0
 
         target_z = (
-            self.lift_hold_target_object_z if self.lift_hold_reached else
+            self.lift_hold_target_object_z
+            if self.lift_hold_target_object_z is not None else
             self.lift_start_object_z + self.lift_hold_height)
         error = target_z - self.lift_reference_z
         acceleration_limit = max(
             1.0e-6, self.lift_trajectory_acceleration_limit)
+        # The start command is consumed when this finite-height trajectory is
+        # latched.  Keep its velocity limit as controller state so LIFT, HOLD,
+        # and TRANSPORT all advance the same reference generator.
         velocity_limit = max(
-            self.lift_velocity_threshold, abs(self.target_z_velocity))
-        if self.lift_hold_reached:
-            velocity_limit = max(velocity_limit, self.lift_velocity_threshold)
+            self.lift_velocity_threshold,
+            self.lift_trajectory_velocity_limit,
+            self.lift_reference_velocity_limit,
+            abs(self.target_z_velocity))
 
         stopping_velocity = math.sqrt(
             max(0.0, 2.0 * acceleration_limit * abs(error)))
@@ -785,11 +902,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             return
 
         dt = self.clamp_value(dt, 0.0, 0.05)
-        filter_tau = max(
-            1.0e-3,
-            self.lift_hold_observer_force_time_constant
-            if self.lift_hold_reached else
-            self.lift_observer_force_time_constant)
+        filter_tau = max(1.0e-3, self.lift_observer_force_time_constant)
         alpha = dt / (filter_tau + dt) if dt > 0.0 else 0.0
         self.filtered_object_vertical_force += alpha * (
             observed_object_vertical_force -
@@ -883,7 +996,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         if (self.lift_fault or not self.lift_preload_ready() or dt <= 0.0):
             self.lift_common_z_acceleration_command = 0.0
             return
-        if (not self.lift_hold_reached and
+        if (self.lift_command_start_time is None and
                 self.target_z_velocity <= self.lift_velocity_threshold):
             self.lift_common_z_acceleration_command = 0.0
             self.lift_observer_force_integral = 0.0
@@ -927,6 +1040,23 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_force_ramp_ratio = min(
                 1.0, self.lift_force_ramp_ratio + dt / ramp_duration)
 
+        # Increase the breakaway margin independently from the mg ramp.  The
+        # old implementation reached 0.4 N together with mg in 1.5 s and then
+        # removed the whole margin as soon as the object rose 3 mm.  Slew both
+        # edges so neither change becomes an impulse at the compliant feet.
+        desired_breakaway_force = (
+            self.lift_breakaway_force_margin
+            if (self.lift_breakaway_force_active and
+                self.lift_force_ramp_ratio >= 1.0 - 1.0e-6) else 0.0)
+        breakaway_rate = (
+            self.lift_breakaway_force_ramp_rate
+            if desired_breakaway_force > self.lift_breakaway_force else
+            self.lift_breakaway_force_release_rate)
+        maximum_breakaway_step = max(0.0, breakaway_rate) * dt
+        self.lift_breakaway_force += self.clamp_value(
+            desired_breakaway_force - self.lift_breakaway_force,
+            -maximum_breakaway_step, maximum_breakaway_step)
+
         if (self.lift_force_ramp_ratio >= 1.0 - 1.0e-6 and
                 self.lift_start_object_z is not None):
             self.update_lift_reference(object_pose, dt)
@@ -951,66 +1081,64 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_reference_acceleration = 0.0
             self.lift_object_acceleration_command = 0.0
 
-        if (self.lift_hold_reached and
-                self.lift_hold_target_object_z is not None):
-            # Do not switch a fixed 0.4 N margin on and off.  That drove a
-            # several-millimetre height limit cycle which ratcheted the rubber
-            # contacts upward at every cycle.  A bounded force-domain PD term
-            # supplies only the missing support and is slew-limited before it
-            # reaches the acceleration feed-forward path.
-            hold_drop = (
-                self.lift_hold_target_object_z - object_pose.position.z)
+        recovery_target_z = None
+        if (self.lift_hold_target_object_z is not None and
+                self.lift_force_ramp_ratio >= 1.0 - 1.0e-6 and
+                not self.lift_breakaway_force_active):
+            # Once the short breakaway margin has been removed, begin
+            # learning the static support deficit before HOLD.  Otherwise a
+            # geometry that settles just below the entry threshold never
+            # enables the recovery controller.
+            recovery_target_z = self.lift_hold_target_object_z
+
+        if recovery_target_z is not None:
+            recovery_drop = recovery_target_z - object_pose.position.z
+            # Learn the static force deficit slowly.  A large proportional
+            # force term makes the delayed object/contact dynamics behave as
+            # a stiff vertical spring and eventually creates a limit cycle.
+            # The bounded integral retains the required bias at zero height
+            # error and unwinds whenever the object is above its target.
+            self.lift_hold_recovery_force_integral = self.clamp_value(
+                self.lift_hold_recovery_force_integral +
+                self.lift_hold_recovery_force_ki * recovery_drop * dt,
+                0.0, self.lift_hold_recovery_force_limit)
             desired_recovery_force = self.clamp_value(
-                self.lift_hold_recovery_force_kp * hold_drop -
-                self.lift_hold_recovery_force_kd * object_twist[2],
-                0.0, self.lift_breakaway_force_margin)
+                self.lift_hold_recovery_force_kp * recovery_drop -
+                self.lift_hold_recovery_force_kd * object_twist[2] +
+                self.lift_hold_recovery_force_integral,
+                0.0, self.lift_hold_recovery_force_limit)
             maximum_recovery_step = (
                 self.lift_hold_recovery_force_rate_limit * dt)
             self.lift_hold_recovery_force += self.clamp_value(
                 desired_recovery_force - self.lift_hold_recovery_force,
                 -maximum_recovery_step, maximum_recovery_step)
-            self.lift_breakaway_force_active = (
-                self.lift_hold_recovery_force > 1.0e-3)
-            breakaway_force = self.lift_hold_recovery_force
         else:
             self.lift_hold_recovery_force = 0.0
-            breakaway_force = (
-                self.lift_force_ramp_ratio * self.lift_breakaway_force_margin
-                if self.lift_breakaway_force_active else 0.0)
+            self.lift_hold_recovery_force_integral = 0.0
+        additional_vertical_force = (
+            self.lift_breakaway_force + self.lift_hold_recovery_force)
         self.lift_vertical_force_target = max(
             0.0, self.grasp_object_mass * (
                 self.lift_force_ramp_ratio * self.gravity_acceleration +
-                self.lift_object_acceleration_command) + breakaway_force)
+                self.lift_object_acceleration_command) +
+            additional_vertical_force)
         force_error = self.deadband_with_limit(
             self.lift_vertical_force_target -
             self.filtered_object_vertical_force,
             self.lift_vertical_force_deadband)
-        observer_kp = (
-            self.lift_hold_observer_force_kp if self.lift_hold_reached else
-            self.lift_observer_force_kp)
-        observer_ki = (
-            self.lift_hold_observer_force_ki if self.lift_hold_reached else
-            self.lift_observer_force_ki)
-        observer_correction_limit = (
-            self.lift_hold_observer_force_correction_limit
-            if self.lift_hold_reached else
-            self.lift_observer_force_correction_limit)
         self.lift_observer_force_integral = self.clamp_value(
             self.lift_observer_force_integral +
-            observer_ki * force_error * dt,
+            self.lift_observer_force_ki * force_error * dt,
             -self.lift_observer_force_integral_limit,
             self.lift_observer_force_integral_limit)
         self.lift_observer_force_correction = self.clamp_value(
-            observer_kp * force_error +
+            self.lift_observer_force_kp * force_error +
             self.lift_observer_force_integral,
-            -observer_correction_limit,
-            observer_correction_limit)
+            -self.lift_observer_force_correction_limit,
+            self.lift_observer_force_correction_limit)
 
-        force_feedforward_scale = (
-            self.lift_hold_force_feedforward_scale
-            if self.lift_hold_reached else 1.0)
         corrected_object_force = max(
-            0.0, force_feedforward_scale *
+            0.0, self.lift_hold_force_feedforward_scale *
             self.lift_vertical_force_target +
             self.lift_observer_force_correction)
         force_acceleration_per_bee = (
@@ -1043,7 +1171,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         independent, so this moves the grasped formation without changing the
         requested mean normal force.
         """
-        if (not self.lift_hold_reached or self.lift_fault or dt <= 0.0):
+        if (not self.lift_mode_active or self.lift_fault or dt <= 0.0):
             self.translation_acceleration_command = [0.0, 0.0]
             return tuple(self.translation_acceleration_command)
 
@@ -1131,16 +1259,50 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
 
     def update_lift_moment_control(
             self, local_states, object_pose, normal_forces, dt):
-        """Balance vertical friction with per-Bee Z-acceleration offsets.
+        """Control object tilt with per-Bee zero-sum Z accelerations.
 
         During lift, an upward force at a side contact creates object Mx/My
-        through the large horizontal arm.  Correct it with vertical motion,
-        not with radial force through the very small contact-height arm.
+        through the large horizontal arm.  Object tilt/rate supplies the
+        motion feedback and the observer Mx/My supplies a low-band wrench
+        correction.  Correct both with vertical motion, not radial force
+        through the very small contact-height arm.
         """
         if not self.lift_mode_active:
             for name in self.names:
                 self.lift_z_acceleration_offsets[name] = 0.0
+            self.lift_tilt_moment_command = [0.0, 0.0]
             return
+
+        current_rpy = self.quaternion_to_rpy(object_pose.orientation)
+        current_vertical = self.rotate_cog_to_world(
+            (0.0, 0.0, 1.0), object_pose.orientation)
+        if self.lift_tilt_target_world is None:
+            self.lift_tilt_target_world = tuple(current_vertical)
+            self.lift_roll_target = current_rpy[0]
+            self.lift_pitch_target = current_rpy[1]
+            rospy.loginfo(
+                "triple press: latch LIFT object roll/pitch target "
+                "[%.4f, %.4f] rad",
+                self.lift_roll_target, self.lift_pitch_target)
+
+        tilt_cross = self.cross(
+            self.lift_tilt_target_world, current_vertical)
+        tilt_cross_norm = self.vector_norm3(tilt_cross)
+        tilt_dot = self.clamp_value(
+            sum(first * second for first, second in zip(
+                self.lift_tilt_target_world, current_vertical)),
+            -1.0, 1.0)
+        self.lift_tilt_error_world = [tilt_cross[0], tilt_cross[1]]
+        self.lift_tilt_angle_error = math.atan2(
+            tilt_cross_norm, tilt_dot)
+        if (self.lift_tilt_control_enabled and
+                self.lift_tilt_angle_error > self.lift_tilt_abort_limit):
+            self.abort_lift(
+                "object tilt {:.3f} rad exceeded {:.3f} rad".format(
+                    self.lift_tilt_angle_error,
+                    self.lift_tilt_abort_limit))
+            return
+
         horizontal_moment = math.sqrt(
             self.filtered_object_moment[0] ** 2 +
             self.filtered_object_moment[1] ** 2)
@@ -1175,16 +1337,24 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.deadband_with_limit(
                 self.filtered_object_moment[1], self.lift_moment_deadband),
         )
+        self.lift_tilt_moment_command = [
+            -self.lift_moment_acceleration_gain * moment_error[axis] -
+            (self.lift_tilt_angle_kp * self.lift_tilt_error_world[axis] +
+             self.lift_tilt_rate_kd *
+             self.object_angular_velocity_world[axis]
+             if self.lift_tilt_control_enabled else 0.0)
+            for axis in range(2)
+        ]
         vertical_force_correction = self.solve_three_by_three(
             allocation_matrix,
-            (-moment_error[0], -moment_error[1], 0.0))
+            (self.lift_tilt_moment_command[0],
+             self.lift_tilt_moment_command[1], 0.0))
         if vertical_force_correction is None:
             self.abort_lift("vertical-friction allocation is singular")
             return
         maximum_step = self.lift_moment_acceleration_rate_limit * dt
         for index, name in enumerate(self.names):
             desired = self.clamp_value(
-                self.lift_moment_acceleration_gain *
                 vertical_force_correction[index] /
                 max(1.0e-6, self.robot_mass),
                 -self.lift_moment_acceleration_limit,
@@ -1402,6 +1572,29 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.local_moment_trim_pubs[name].publish(message)
         self.object_moment_yaw_trim_pub.publish(
             Float32(data=self.object_moment_yaw_trim))
+
+        tilt_state = Vector3Stamped()
+        tilt_state.header.stamp = stamp
+        tilt_state.header.frame_id = "world"
+        tilt_state.vector.x = self.lift_tilt_error_world[0]
+        tilt_state.vector.y = self.lift_tilt_error_world[1]
+        tilt_state.vector.z = self.lift_tilt_angle_error
+        self.lift_tilt_state_pub.publish(tilt_state)
+
+        angular_velocity = Vector3Stamped()
+        angular_velocity.header.stamp = stamp
+        angular_velocity.header.frame_id = "world"
+        angular_velocity.vector.x = self.object_angular_velocity_world[0]
+        angular_velocity.vector.y = self.object_angular_velocity_world[1]
+        angular_velocity.vector.z = self.object_angular_velocity_world[2]
+        self.object_angular_velocity_pub.publish(angular_velocity)
+
+        moment_command = Vector3Stamped()
+        moment_command.header.stamp = stamp
+        moment_command.header.frame_id = "world"
+        moment_command.vector.x = self.lift_tilt_moment_command[0]
+        moment_command.vector.y = self.lift_tilt_moment_command[1]
+        self.lift_tilt_moment_command_pub.publish(moment_command)
 
     @staticmethod
     def cross(first, second):
@@ -1643,13 +1836,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "translation_z_limit_active",
             "translation_acceleration_x",
             "translation_acceleration_y",
-            "control_mode", "lift_fault",
+            "control_mode", "task_phase", "lift_fault",
             "lift_hold_reached", "lift_vertical_force_target",
             "filtered_object_vertical_force",
             "lift_observer_force_correction",
             "lift_force_ramp_ratio",
             "lift_force_feedforward_scale",
             "lift_breakaway_force_active",
+            "lift_breakaway_force",
             "lift_hold_recovery_force",
             "lift_common_slip_feedback_active",
             "lift_common_slip_error",
@@ -1658,12 +1852,19 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "lift_yaw_target", "lift_yaw_error", "object_yaw_rate",
             "lift_yaw_moment_feedback",
             "lift_yaw_tangential_acceleration",
+            "lift_roll_target", "lift_pitch_target",
+            "lift_tilt_error_world_x", "lift_tilt_error_world_y",
+            "lift_tilt_angle_error",
+            "object_roll_rate", "object_pitch_rate",
+            "lift_tilt_moment_command_world_x",
+            "lift_tilt_moment_command_world_y",
             "lift_reference_z", "lift_reference_velocity",
             "lift_reference_acceleration",
             "lift_object_acceleration_command",
             "lift_common_z_acceleration_command",
             "object_z_velocity",
-            "object_x", "object_y", "object_z", "object_yaw",
+            "object_x", "object_y", "object_z",
+            "object_roll", "object_pitch", "object_yaw",
             "object_force_world_x", "object_force_world_y",
             "object_force_world_z", "object_moment_world_x",
             "object_moment_world_y", "object_moment_world_z",
@@ -1741,6 +1942,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "control_mode": (
                 "LIFT_HOLD" if self.lift_hold_reached else
                 "LIFT" if self.lift_mode_active else "PRELOAD"),
+            "task_phase": getattr(self, "task_phase", "MANUAL"),
             "lift_fault": "1" if self.lift_fault else "0",
             "lift_hold_reached": "1" if self.lift_hold_reached else "0",
             "lift_vertical_force_target": "{:.6f}".format(
@@ -1752,10 +1954,11 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "lift_force_ramp_ratio": "{:.6f}".format(
                 self.lift_force_ramp_ratio),
             "lift_force_feedforward_scale": "{:.6f}".format(
-                self.lift_hold_force_feedforward_scale
-                if self.lift_hold_reached else 1.0),
+                self.lift_hold_force_feedforward_scale),
             "lift_breakaway_force_active": (
                 "1" if self.lift_breakaway_force_active else "0"),
+            "lift_breakaway_force": "{:.6f}".format(
+                self.lift_breakaway_force),
             "lift_hold_recovery_force": "{:.6f}".format(
                 self.lift_hold_recovery_force),
             "lift_common_slip_feedback_active": (
@@ -1775,6 +1978,26 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.lift_yaw_moment_feedback),
             "lift_yaw_tangential_acceleration": "{:.8f}".format(
                 self.lift_yaw_tangential_acceleration),
+            "lift_roll_target": "{:.8f}".format(
+                self.lift_roll_target
+                if self.lift_roll_target is not None else 0.0),
+            "lift_pitch_target": "{:.8f}".format(
+                self.lift_pitch_target
+                if self.lift_pitch_target is not None else 0.0),
+            "lift_tilt_error_world_x": "{:.8f}".format(
+                self.lift_tilt_error_world[0]),
+            "lift_tilt_error_world_y": "{:.8f}".format(
+                self.lift_tilt_error_world[1]),
+            "lift_tilt_angle_error": "{:.8f}".format(
+                self.lift_tilt_angle_error),
+            "object_roll_rate": "{:.8f}".format(
+                self.object_angular_velocity_world[0]),
+            "object_pitch_rate": "{:.8f}".format(
+                self.object_angular_velocity_world[1]),
+            "lift_tilt_moment_command_world_x": "{:.8f}".format(
+                self.lift_tilt_moment_command[0]),
+            "lift_tilt_moment_command_world_y": "{:.8f}".format(
+                self.lift_tilt_moment_command[1]),
             "lift_reference_z": "{:.6f}".format(
                 self.lift_reference_z if self.lift_reference_z is not None
                 else object_pose.position.z),
@@ -1790,6 +2013,10 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "object_x": "{:.8f}".format(object_pose.position.x),
             "object_y": "{:.8f}".format(object_pose.position.y),
             "object_z": "{:.8f}".format(object_pose.position.z),
+            "object_roll": "{:.8f}".format(
+                self.quaternion_to_rpy(object_pose.orientation)[0]),
+            "object_pitch": "{:.8f}".format(
+                self.quaternion_to_rpy(object_pose.orientation)[1]),
             "object_yaw": "{:.8f}".format(
                 self.quaternion_to_rpy(object_pose.orientation)[2]),
             "object_force_world_x": "{:.8f}".format(object_force[0]),
@@ -1861,12 +2088,58 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 "{:.8f}".format(self.local_moment_yaw_trim[name])
         writer.writerow(row)
 
+    @staticmethod
+    def quaternion_tuple(quaternion):
+        norm = math.sqrt(
+            quaternion.x * quaternion.x +
+            quaternion.y * quaternion.y +
+            quaternion.z * quaternion.z +
+            quaternion.w * quaternion.w)
+        if norm <= 1.0e-12:
+            return (0.0, 0.0, 0.0, 1.0)
+        return (quaternion.x / norm, quaternion.y / norm,
+                quaternion.z / norm, quaternion.w / norm)
+
+    @staticmethod
+    def quaternion_product(first, second):
+        x1, y1, z1, w1 = first
+        x2, y2, z2, w2 = second
+        return (
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        )
+
+    @classmethod
+    def quaternion_angular_velocity_world(cls, previous, current, dt):
+        """Return the shortest-arc world angular velocity between poses."""
+        if dt <= 1.0e-12:
+            return (0.0, 0.0, 0.0)
+        delta = cls.quaternion_product(
+            current, (-previous[0], -previous[1], -previous[2], previous[3]))
+        norm = math.sqrt(sum(value * value for value in delta))
+        if norm <= 1.0e-12:
+            return (0.0, 0.0, 0.0)
+        delta = tuple(value / norm for value in delta)
+        if delta[3] < 0.0:
+            delta = tuple(-value for value in delta)
+        vector_norm = math.sqrt(sum(value * value for value in delta[:3]))
+        if vector_norm <= 1.0e-12:
+            return tuple(2.0 * value / dt for value in delta[:3])
+        angle = 2.0 * math.atan2(vector_norm, delta[3])
+        return tuple(
+            value * angle / (vector_norm * dt) for value in delta[:3])
+
     def reset_object_twist(self, object_pose):
         yaw = self.quaternion_to_rpy(object_pose.orientation)[2]
         self.previous_object_state = (
             rospy.get_time(), object_pose.position.x,
             object_pose.position.y, object_pose.position.z, yaw)
         self.object_twist = [0.0, 0.0, 0.0, 0.0]
+        self.previous_object_orientation = self.quaternion_tuple(
+            object_pose.orientation)
+        self.object_angular_velocity_world = [0.0, 0.0, 0.0]
 
     def update_object_twist(self, object_pose):
         """Estimate world vx, vy, vz and yaw rate from the object pose topic."""
@@ -1876,10 +2149,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                    object_pose.position.z, yaw)
         if self.previous_object_state is None:
             self.previous_object_state = current
+            self.previous_object_orientation = self.quaternion_tuple(
+                object_pose.orientation)
             return tuple(self.object_twist)
         dt = now - self.previous_object_state[0]
         if dt <= 1.0e-6 or dt > 0.5:
             self.previous_object_state = current
+            self.previous_object_orientation = self.quaternion_tuple(
+                object_pose.orientation)
             return tuple(self.object_twist)
         raw = (
             (current[1] - self.previous_object_state[1]) / dt,
@@ -1891,6 +2168,15 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         for axis in range(4):
             self.object_twist[axis] += alpha * (
                 raw[axis] - self.object_twist[axis])
+        current_orientation = self.quaternion_tuple(object_pose.orientation)
+        if self.previous_object_orientation is not None:
+            raw_angular_velocity = self.quaternion_angular_velocity_world(
+                self.previous_object_orientation, current_orientation, dt)
+            for axis in range(3):
+                self.object_angular_velocity_world[axis] += alpha * (
+                    raw_angular_velocity[axis] -
+                    self.object_angular_velocity_world[axis])
+        self.previous_object_orientation = current_orientation
         self.previous_object_state = current
         return tuple(self.object_twist)
 
@@ -1968,6 +2254,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
 
     def contact_z_acceleration(self, name):
         """Return common plus zero-sum differential world-Z acceleration."""
+        if not self.lift_mode_active:
+            return 0.0
         if self.lift_fault or not self.lift_preload_ready():
             if not self.lift_fault:
                 rospy.loginfo_throttle(
