@@ -34,15 +34,56 @@ class MujocoGraspDemo(object):
         self.world_forces = {}
         self.contact_states = {}
         self.object_pose = None
+        self.odometry_receipt_times = {}
+        self.object_pose_receipt_time = None
 
-        self.object_x = rospy.get_param("~object_x", 0.0)
-        self.object_y = rospy.get_param("~object_y", 1.0)
-        self.object_z = rospy.get_param("~object_z", 0.802)
-        self.object_yaw = rospy.get_param("~object_yaw", 0.0)
-        self.object_mass = rospy.get_param("~object_mass", 0.20)
+        # Use the dimensions resolved by the running scene bringup.  Keeping
+        # separate hard-coded defaults here caused approach radius and contact
+        # height to remain on the old payload after its geometry changed.
+        bringup_ns = "/bee_mujoco_multi_bringup/"
+        scene_object_x = rospy.get_param(bringup_ns + "object_x", 0.0)
+        scene_object_y = rospy.get_param(bringup_ns + "object_y", 1.0)
+        scene_object_yaw = rospy.get_param(bringup_ns + "object_yaw", 0.0)
+        scene_object_height = rospy.get_param(
+            bringup_ns + "object_height", 0.60)
+        scene_ground_clearance = rospy.get_param(
+            bringup_ns + "object_ground_clearance", 0.0)
+        scene_has_pedestal = rospy.get_param(
+            bringup_ns + "spawn_object_pedestal", True)
+        scene_pedestal_height = rospy.get_param(
+            bringup_ns + "object_pedestal_height", 0.65)
+        scene_support_height = (
+            scene_pedestal_height if scene_has_pedestal else 0.0)
+
+        self.object_x = rospy.get_param("~object_x", scene_object_x)
+        self.object_y = rospy.get_param("~object_y", scene_object_y)
+        self.object_yaw = rospy.get_param("~object_yaw", scene_object_yaw)
+        self.object_height = rospy.get_param(
+            "~object_height", scene_object_height)
+        self.object_ground_clearance = rospy.get_param(
+            "~object_ground_clearance", scene_ground_clearance)
+        self.object_z = rospy.get_param(
+            "~object_z",
+            scene_support_height + self.object_ground_clearance +
+            self.object_height / 2.0)
+        object_mass_default = rospy.get_param(
+            "/bee_mujoco_multi_bringup/object_mass", 0.50)
+        self.object_mass = rospy.get_param(
+            "~object_mass", object_mass_default)
         self.robot_mass = rospy.get_param("~robot_mass", 1.84199)
-        self.triangle_side = rospy.get_param("~object_triangle_side", 0.80)
-        self.staging_clearance = rospy.get_param("~grasp_staging_clearance", 0.80)
+        scene_triangle_side = rospy.get_param(
+            bringup_ns + "object_triangle_side", 0.60)
+        scene_staging_clearance = rospy.get_param(
+            bringup_ns + "grasp_staging_clearance", 0.80)
+        self.triangle_side = rospy.get_param(
+            "~object_triangle_side", scene_triangle_side)
+        self.staging_clearance = rospy.get_param(
+            "~grasp_staging_clearance", scene_staging_clearance)
+        rospy.loginfo(
+            "grasp demo scene geometry: triangle side %.3f m, height %.3f m, "
+            "centre [%.3f, %.3f, %.3f] m, yaw %.3f rad",
+            self.triangle_side, self.object_height, self.object_x,
+            self.object_y, self.object_z, self.object_yaw)
 
         self.control_period = rospy.get_param("~control_period", 0.01)
         self.staging_timeout = rospy.get_param("~staging_timeout", 150.0)
@@ -135,6 +176,7 @@ class MujocoGraspDemo(object):
     def odometry_cb(self, msg, name):
         with self.lock:
             self.odometry[name] = msg
+            self.odometry_receipt_times[name] = time.monotonic()
 
     def force_cb(self, msg, name):
         with self.lock:
@@ -157,6 +199,7 @@ class MujocoGraspDemo(object):
     def object_pose_cb(self, msg):
         with self.lock:
             self.object_pose = msg.pose
+            self.object_pose_receipt_time = time.monotonic()
 
     def wait_for_data(self, timeout=20.0):
         rospy.loginfo(

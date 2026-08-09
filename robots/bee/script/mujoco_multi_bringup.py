@@ -37,7 +37,7 @@ class MujocoMultiBringup(object):
             object_x = rospy.get_param("~object_x", 0.0)
             object_y = rospy.get_param("~object_y", 1.0)
             object_yaw = rospy.get_param("~object_yaw", 0.0)
-            triangle_side = rospy.get_param("~object_triangle_side", 0.80)
+            triangle_side = rospy.get_param("~object_triangle_side", 0.60)
             staging_clearance = rospy.get_param("~grasp_staging_clearance", 0.80)
             if triangle_side <= 0.0:
                 raise RuntimeError("object_triangle_side must be positive")
@@ -45,14 +45,15 @@ class MujocoMultiBringup(object):
                 raise RuntimeError("grasp_staging_clearance must be positive")
 
             # For the mesh orientation used by the scene composer, the three
-            # outward side-face normals are 60, 180 and 300 degrees.  Spawn
+            # outward side-face normals are 60, 180 and 300 degrees. Spawn
             # the first three Bees on those normals. After base_link rolls
             # +pi/2, the physical feet point along body +Y, so body +Y is
             # aligned with the inward face normal.
-            inradius = triangle_side / (2.0 * math.sqrt(3.0))
-            staging_radius = inradius + staging_clearance
+            staging_radius = (triangle_side / (2.0 * math.sqrt(3.0)) +
+                              staging_clearance)
             robots = []
-            for index, base_angle in enumerate((math.pi / 3.0, math.pi, 5.0 * math.pi / 3.0)):
+            for index, base_angle in enumerate(
+                    (math.pi / 3.0, math.pi, 5.0 * math.pi / 3.0)):
                 normal_angle = object_yaw + base_angle
                 robots.append({
                     "name": "bee{}".format(index + 1),
@@ -68,7 +69,8 @@ class MujocoMultiBringup(object):
             for index in range(3, robot_count):
                 robots.append({
                     "name": "bee{}".format(index + 1),
-                    "pos": [object_x + 1.0 + spacing_x * (index - 3),
+                    "pos": [object_x + 1.0 +
+                            spacing_x * (index - 3),
                             object_y - 1.0, spawn_z],
                     "yaw": object_yaw + math.pi / 2.0,
                 })
@@ -107,8 +109,34 @@ class MujocoMultiBringup(object):
         if not rospy.get_param("~spawn_object", True):
             return []
 
-        height = rospy.get_param("~object_height", 0.30)
-        triangle_side = rospy.get_param("~object_triangle_side", 0.80)
+        height = rospy.get_param("~object_height", 0.60)
+        outer_side = rospy.get_param("~object_triangle_side", 0.60)
+        inner_side = rospy.get_param(
+            "~object_inner_triangle_side", 0.4186262221)
+        density = rospy.get_param(
+            "~object_density", 1000.0 / 96.0)
+        mass_override = rospy.get_param("~object_mass", -1.0)
+        if height <= 0.0 or outer_side <= 0.0:
+            raise RuntimeError("object dimensions must be positive")
+        if inner_side < 0.0 or inner_side >= outer_side:
+            raise RuntimeError(
+                "object inner side must be non-negative and smaller than "
+                "the outer side")
+        if density <= 0.0:
+            raise RuntimeError("object_density must be positive")
+        volume = (math.sqrt(3.0) / 4.0 *
+                  (outer_side ** 2 - inner_side ** 2) * height)
+        density_mass = density * volume
+        object_mass = mass_override if mass_override > 0.0 else density_mass
+        # Controllers use this resolved value for gravity feed-forward.  Keep
+        # the public parameter numeric even when launch selected density mode.
+        rospy.set_param("~object_mass", object_mass)
+        rospy.loginfo(
+            "grasp triangular_prism: outer %.3f m, inner %.3f m, "
+            "height %.3f m, "
+            "density %.3f kg/m^3, volume %.6f m^3, mass %.4f kg%s",
+            outer_side, inner_side, height, density, volume,
+            object_mass, " (override)" if mass_override > 0.0 else "")
         ground_clearance = rospy.get_param("~object_ground_clearance", 0.0)
         yaw = rospy.get_param("~object_yaw", 0.0)
         object_x = rospy.get_param("~object_x", 0.0)
@@ -116,6 +144,16 @@ class MujocoMultiBringup(object):
         pedestal_enabled = rospy.get_param("~spawn_object_pedestal", True)
         pedestal_height = rospy.get_param("~object_pedestal_height", 0.65) if pedestal_enabled else 0.0
         pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.20)
+        destination_pedestal_enabled = rospy.get_param(
+            "~spawn_destination_pedestal", False)
+        destination_pedestal_x = rospy.get_param(
+            "~destination_pedestal_x", object_x + 1.50)
+        destination_pedestal_y = rospy.get_param(
+            "~destination_pedestal_y", object_y)
+        destination_pedestal_height = rospy.get_param(
+            "~destination_pedestal_height", pedestal_height)
+        destination_pedestal_radius = rospy.get_param(
+            "~destination_pedestal_radius", pedestal_radius)
         sliding_friction = rospy.get_param("~object_sliding_friction", 0.5)
         torsional_friction = rospy.get_param("~object_torsional_friction", 0.5)
         pedestal_torsional_friction = rospy.get_param(
@@ -134,8 +172,28 @@ class MujocoMultiBringup(object):
                 "friction": [sliding_friction, pedestal_torsional_friction, 0.001],
                 "rgba": [0.35, 0.38, 0.42, 1.0],
             })
+        if destination_pedestal_enabled:
+            objects.append({
+                "name": "place_pedestal",
+                "type": "cylinder",
+                "pos": [
+                    destination_pedestal_x,
+                    destination_pedestal_y,
+                    destination_pedestal_height / 2.0,
+                ],
+                "size": [
+                    destination_pedestal_radius,
+                    destination_pedestal_height,
+                ],
+                "friction": [
+                    sliding_friction,
+                    pedestal_torsional_friction,
+                    0.001,
+                ],
+                "rgba": [0.20, 0.48, 0.32, 1.0],
+            })
 
-        objects.append({
+        grasp_object = {
             "name": "grasp_prism",
             "type": "triangular_prism",
             "pos": [
@@ -144,8 +202,7 @@ class MujocoMultiBringup(object):
                 pedestal_height + ground_clearance + height / 2.0,
             ],
             "euler": [0.0, 0.0, yaw],
-            "size": [triangle_side, height],
-            "mass": rospy.get_param("~object_mass", 0.20),
+            "size": [outer_side, height],
             "freejoint_damping": rospy.get_param("~object_freejoint_damping", 0.5),
             "friction": [
                 sliding_friction,
@@ -155,7 +212,13 @@ class MujocoMultiBringup(object):
             "solref": [0.02, 1.0],
             "solimp": [0.9, 0.95, 0.01],
             "rgba": [0.92, 0.45, 0.08, 1.0],
-        })
+        }
+        grasp_object["inner_triangle_side"] = inner_side
+        objects.append(grasp_object)
+        if mass_override > 0.0:
+            objects[-1]["mass"] = object_mass
+        else:
+            objects[-1]["density"] = density
         return objects
 
     def compose_scene(self, robot_count, robots, objects):
@@ -180,6 +243,14 @@ class MujocoMultiBringup(object):
         }
         if objects:
             scene_config["jacobian"] = "dense"
+            focus_object = next(
+                (entry for entry in objects
+                 if entry.get("name") == "grasp_prism"), None)
+            if focus_object is not None:
+                scene_config["statistic"] = {
+                    "center": focus_object["pos"],
+                    "extent": rospy.get_param("~scene_camera_extent", 1.2),
+                }
 
         for robot in robots:
             entry = {

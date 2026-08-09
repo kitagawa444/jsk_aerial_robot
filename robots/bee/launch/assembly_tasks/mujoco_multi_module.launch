@@ -10,6 +10,7 @@
   <arg name="render_reflections" default="false"/>
   <arg name="window_width" default="640"/>
   <arg name="window_height" default="480"/>
+  <arg name="scene_camera_extent" default="1.2"/>
   <arg name="first_robot_rviz_only" default="true"/>
   <arg name="estimate_mode" default="1"/>
   <arg name="spawn_x_start" default="-2.0"/>
@@ -35,9 +36,15 @@
   <arg name="object_y" default="1.0"/>
   <arg name="object_ground_clearance" default="0.0"/>
   <arg name="object_yaw" default="0.0"/>
-  <arg name="object_height" default="0.30"/>
-  <arg name="object_triangle_side" default="0.80"/>
-  <arg name="object_mass" default="0.20"/>
+  <!-- Equal-width/equal-height EPS prism: 600 mm outer side and height. A
+       concentric 418.626 mm vertical triangular hole gives exactly 0.500 kg
+       at the 96-times EPS density below. Normal wall thickness is 52.36 mm. -->
+  <arg name="object_height" default="0.60"/>
+  <arg name="object_triangle_side" default="0.60"/>
+  <arg name="object_inner_triangle_side" default="0.4186262221"/>
+  <arg name="object_density" default="10.4166666667"/>
+  <!-- Positive values override density-derived mass; <= 0 selects density. -->
+  <arg name="object_mass" default="-1.0"/>
   <arg name="object_freejoint_damping" default="0.5"/>
   <arg name="object_sliding_friction" default="0.5"/>
   <arg name="object_torsional_friction" default="0.5"/>
@@ -45,6 +52,11 @@
   <arg name="spawn_object_pedestal" default="true"/>
   <arg name="object_pedestal_height" default="0.65"/>
   <arg name="object_pedestal_radius" default="0.20"/>
+  <arg name="spawn_destination_pedestal" default="false"/>
+  <arg name="destination_pedestal_x" default="1.50"/>
+  <arg name="destination_pedestal_y" default="1.00"/>
+  <arg name="destination_pedestal_height" default="0.65"/>
+  <arg name="destination_pedestal_radius" default="0.20"/>
 
   <!-- Robot bringup nodes must use simulation time from their initialization.
        The shared MuJoCo backend, which also sets this parameter, starts later. -->
@@ -60,6 +72,7 @@
     <param name="render_reflections" value="$(arg render_reflections)"/>
     <param name="window_width" value="$(arg window_width)"/>
     <param name="window_height" value="$(arg window_height)"/>
+    <param name="scene_camera_extent" value="$(arg scene_camera_extent)"/>
     <param name="first_robot_rviz_only" value="$(arg first_robot_rviz_only)"/>
     <param name="estimate_mode" value="$(arg estimate_mode)"/>
     <param name="spawn_x_start" value="$(arg spawn_x_start)"/>
@@ -84,6 +97,8 @@
     <param name="object_yaw" value="$(arg object_yaw)"/>
     <param name="object_height" value="$(arg object_height)"/>
     <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
+    <param name="object_inner_triangle_side" value="$(arg object_inner_triangle_side)"/>
+    <param name="object_density" value="$(arg object_density)"/>
     <param name="object_mass" value="$(arg object_mass)"/>
     <param name="object_freejoint_damping" value="$(arg object_freejoint_damping)"/>
     <param name="object_sliding_friction" value="$(arg object_sliding_friction)"/>
@@ -92,6 +107,11 @@
     <param name="spawn_object_pedestal" value="$(arg spawn_object_pedestal)"/>
     <param name="object_pedestal_height" value="$(arg object_pedestal_height)"/>
     <param name="object_pedestal_radius" value="$(arg object_pedestal_radius)"/>
+    <param name="spawn_destination_pedestal" value="$(arg spawn_destination_pedestal)"/>
+    <param name="destination_pedestal_x" value="$(arg destination_pedestal_x)"/>
+    <param name="destination_pedestal_y" value="$(arg destination_pedestal_y)"/>
+    <param name="destination_pedestal_height" value="$(arg destination_pedestal_height)"/>
+    <param name="destination_pedestal_radius" value="$(arg destination_pedestal_radius)"/>
   </node>
 
   <group if="$(arg launch_rviz)">
@@ -104,10 +124,16 @@
       <param name="object_yaw" value="$(arg object_yaw)"/>
       <param name="object_height" value="$(arg object_height)"/>
       <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
+      <param name="object_inner_triangle_side" value="$(arg object_inner_triangle_side)"/>
       <param name="spawn_object" value="$(arg spawn_object)"/>
       <param name="spawn_object_pedestal" value="$(arg spawn_object_pedestal)"/>
       <param name="object_pedestal_height" value="$(arg object_pedestal_height)"/>
       <param name="object_pedestal_radius" value="$(arg object_pedestal_radius)"/>
+      <param name="spawn_destination_pedestal" value="$(arg spawn_destination_pedestal)"/>
+      <param name="destination_pedestal_x" value="$(arg destination_pedestal_x)"/>
+      <param name="destination_pedestal_y" value="$(arg destination_pedestal_y)"/>
+      <param name="destination_pedestal_height" value="$(arg destination_pedestal_height)"/>
+      <param name="destination_pedestal_radius" value="$(arg destination_pedestal_radius)"/>
     </node>
     <node pkg="rviz" type="rviz" name="bee_mujoco_multi_rviz"
           args="-d $(find bee)/config/mujoco_multi.rviz" output="screen"/>

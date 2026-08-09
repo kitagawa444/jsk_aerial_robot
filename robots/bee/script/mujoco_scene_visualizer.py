@@ -31,11 +31,23 @@ class MujocoSceneVisualizer(object):
         self.object_x = rospy.get_param("~object_x", 0.0)
         self.object_y = rospy.get_param("~object_y", 1.0)
         self.object_yaw = rospy.get_param("~object_yaw", 0.0)
-        self.object_height = rospy.get_param("~object_height", 0.30)
-        self.triangle_side = rospy.get_param("~object_triangle_side", 0.80)
+        self.object_height = rospy.get_param("~object_height", 0.60)
+        self.triangle_side = rospy.get_param("~object_triangle_side", 0.60)
+        self.inner_triangle_side = rospy.get_param(
+            "~object_inner_triangle_side", 0.4186262221)
         self.ground_clearance = rospy.get_param("~object_ground_clearance", 0.002)
         self.pedestal_height = rospy.get_param("~object_pedestal_height", 0.65)
         self.pedestal_radius = rospy.get_param("~object_pedestal_radius", 0.20)
+        self.spawn_destination_pedestal = rospy.get_param(
+            "~spawn_destination_pedestal", False)
+        self.destination_pedestal_x = rospy.get_param(
+            "~destination_pedestal_x", self.object_x + 1.50)
+        self.destination_pedestal_y = rospy.get_param(
+            "~destination_pedestal_y", self.object_y)
+        self.destination_pedestal_height = rospy.get_param(
+            "~destination_pedestal_height", self.pedestal_height)
+        self.destination_pedestal_radius = rospy.get_param(
+            "~destination_pedestal_radius", self.pedestal_radius)
         support_height = self.pedestal_height if self.spawn_pedestal else 0.0
 
         self.object_pose = PoseStamped()
@@ -108,30 +120,88 @@ class MujocoSceneVisualizer(object):
         self.set_color(marker, 0.35, 0.38, 0.42)
         return marker
 
+    def destination_pedestal_marker(self, stamp):
+        marker = Marker()
+        marker.header.frame_id = "world"
+        marker.header.stamp = stamp
+        marker.ns = "grasp_scene"
+        marker.id = 2
+        marker.type = Marker.CYLINDER
+        marker.action = Marker.ADD
+        marker.pose.position.x = self.destination_pedestal_x
+        marker.pose.position.y = self.destination_pedestal_y
+        marker.pose.position.z = self.destination_pedestal_height / 2.0
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 2.0 * self.destination_pedestal_radius
+        marker.scale.y = 2.0 * self.destination_pedestal_radius
+        marker.scale.z = self.destination_pedestal_height
+        self.set_color(marker, 0.20, 0.48, 0.32)
+        return marker
+
     def prism_marker(self, stamp, pose):
-        radius = self.triangle_side / math.sqrt(3.0)
-        rear_x = -radius / 2.0
-        side_y = self.triangle_side / 2.0
         z_min = -self.object_height / 2.0
         z_max = self.object_height / 2.0
-        vertices = (
-            (radius, 0.0, z_min),
-            (rear_x, side_y, z_min),
-            (rear_x, -side_y, z_min),
-            (radius, 0.0, z_max),
-            (rear_x, side_y, z_max),
-            (rear_x, -side_y, z_max),
-        )
-        faces = (
-            (0, 2, 1),
-            (3, 4, 5),
-            (0, 1, 4),
-            (0, 4, 3),
-            (1, 2, 5),
-            (1, 5, 4),
-            (2, 0, 3),
-            (2, 3, 5),
-        )
+
+        def triangle_vertices(side):
+            radius = side / math.sqrt(3.0)
+            rear_x = -radius / 2.0
+            side_y = side / 2.0
+            return (
+                (radius, 0.0, z_min),
+                (rear_x, side_y, z_min),
+                (rear_x, -side_y, z_min),
+                (radius, 0.0, z_max),
+                (rear_x, side_y, z_max),
+                (rear_x, -side_y, z_max),
+            )
+
+        outer = triangle_vertices(self.triangle_side)
+        inner_side = self.inner_triangle_side
+        inner = triangle_vertices(inner_side)
+        edge_count = 3
+
+        if inner_side > 0.0:
+            vertices = outer + inner
+            faces = []
+            for edge_index in range(edge_count):
+                next_index = (edge_index + 1) % edge_count
+                outer_bottom = edge_index
+                outer_next_bottom = next_index
+                outer_top = edge_index + edge_count
+                outer_next_top = next_index + edge_count
+                inner_bottom = edge_index + 2 * edge_count
+                inner_next_bottom = next_index + 2 * edge_count
+                inner_top = edge_index + 3 * edge_count
+                inner_next_top = next_index + 3 * edge_count
+                faces.extend((
+                    # Uninterrupted outer contact face.
+                    (outer_bottom, outer_next_bottom, outer_next_top),
+                    (outer_bottom, outer_next_top, outer_top),
+                    # Wall of the vertical through-hole.
+                    (inner_bottom, inner_next_top, inner_next_bottom),
+                    (inner_bottom, inner_top, inner_next_top),
+                    # Triangular-ring top and bottom surfaces.
+                    (outer_top, outer_next_top, inner_next_top),
+                    (outer_top, inner_next_top, inner_top),
+                    (outer_bottom, inner_bottom, inner_next_bottom),
+                    (outer_bottom, inner_next_bottom, outer_next_bottom),
+                ))
+        else:
+            vertices = outer
+            faces = []
+            for edge_index in range(edge_count):
+                next_index = (edge_index + 1) % edge_count
+                faces.extend((
+                    (edge_index, next_index, next_index + edge_count),
+                    (edge_index, next_index + edge_count,
+                     edge_index + edge_count),
+                ))
+            for index in range(1, edge_count - 1):
+                faces.extend((
+                    (0, index + 1, index),
+                    (edge_count, edge_count + index,
+                     edge_count + index + 1),
+                ))
         marker = Marker()
         marker.header.frame_id = "world"
         marker.header.stamp = stamp
@@ -185,6 +255,8 @@ class MujocoSceneVisualizer(object):
         message = MarkerArray()
         if self.spawn_pedestal:
             message.markers.append(self.pedestal_marker(stamp))
+        if self.spawn_destination_pedestal:
+            message.markers.append(self.destination_pedestal_marker(stamp))
         if self.spawn_object:
             message.markers.append(self.prism_marker(stamp, object_pose))
         if not rospy.is_shutdown():
