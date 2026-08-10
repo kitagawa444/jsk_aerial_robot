@@ -1,9 +1,38 @@
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 
+#include <cmath>
+
 using namespace std;
 
 namespace aerial_robot_control
 {
+double GimbalrotorController::calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot)
+{
+  if (integrated_map_inv_rot.cols() <= Z)
+    return 0.0;
+
+  constexpr double rosserial_scale = 1000.0;
+  double max_abs_yaw_scale = 0.0;
+  double signed_yaw_scale = 0.0;
+  for (Eigen::Index i = 0; i < integrated_map_inv_rot.rows(); ++i)
+  {
+    const double yaw_scale = integrated_map_inv_rot(i, Z);
+    const double scaled_yaw_scale = yaw_scale * rosserial_scale;
+    if (!std::isfinite(yaw_scale) || std::abs(scaled_yaw_scale) > INT16_MAX)
+      continue;
+
+    /* Match the int16 quantization and row ordering seen by FC exactly. */
+    const double quantized_yaw_scale = static_cast<int16_t>(scaled_yaw_scale) / rosserial_scale;
+    const double abs_yaw_scale = std::abs(quantized_yaw_scale);
+    if (abs_yaw_scale > max_abs_yaw_scale)
+    {
+      max_abs_yaw_scale = abs_yaw_scale;
+      signed_yaw_scale = quantized_yaw_scale;
+    }
+  }
+  return signed_yaw_scale;
+}
+
 GimbalrotorController::GimbalrotorController() : PoseLinearController()
 {
 }
@@ -318,7 +347,6 @@ void GimbalrotorController::controlCore()
   }
 
   /*  calculate target base thrust (considering only translational components)*/
-  double max_yaw_scale = 0;  // for reconstruct yaw control term in spinal
   for (int i = 0; i < motor_num_; i++)
   {
     Eigen::VectorXd f_i;
@@ -337,11 +365,15 @@ void GimbalrotorController::controlCore()
       target_base_thrust_.at(rotor_coef_ * i + 1) = f_i[1];
       target_base_thrust_.at(rotor_coef_ * i + 2) = f_i[2];
     }
-    if (integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW)) > max_yaw_scale)
-      max_yaw_scale = integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW));  // underactuated: yaw col is shifted
-
     last_col += rotor_coef_;
   }
+
+  /*
+   * FC reconstructs the yaw PI term using the signed yaw gain with the largest
+   * magnitude across all virtual rotors.  Keeping the sign lets the scale stay
+   * well-conditioned when the strongest gains become negative after inversion.
+   */
+  const double max_yaw_scale = calculateMaxYawScale(integrated_map_inv_rot_);
   candidate_yaw_term_ = pid_controllers_.at(YAW).result() * max_yaw_scale;
 
   /* calculate target full thrusts and gimbal angles (considering full components)*/
