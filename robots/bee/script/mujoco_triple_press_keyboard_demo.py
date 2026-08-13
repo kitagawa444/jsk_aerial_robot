@@ -293,28 +293,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_trajectory_position_kp", 1.0)
         self.lift_trajectory_velocity_kd = rospy.get_param(
             "~lift_trajectory_velocity_kd", 1.5)
+        self.lift_trajectory_position_ki = rospy.get_param(
+            "~lift_trajectory_position_ki", 0.20)
+        self.lift_trajectory_integral_acceleration_limit = rospy.get_param(
+            "~lift_trajectory_integral_acceleration_limit", 0.08)
         self.lift_trajectory_tracking_acceleration_limit = rospy.get_param(
             "~lift_trajectory_tracking_acceleration_limit", 0.04)
         self.lift_force_ramp_duration = rospy.get_param(
             "~lift_force_ramp_duration", 1.5)
-        self.lift_breakaway_force_margin = rospy.get_param(
-            "~lift_breakaway_force_margin", 0.40)
-        self.lift_breakaway_force_ramp_rate = rospy.get_param(
-            "~lift_breakaway_force_ramp_rate", 0.05)
-        self.lift_breakaway_force_release_rate = rospy.get_param(
-            "~lift_breakaway_force_release_rate", 0.10)
-        self.lift_breakaway_release_rise = rospy.get_param(
-            "~lift_breakaway_release_rise", 0.003)
-        self.lift_hold_recovery_force_kp = rospy.get_param(
-            "~lift_hold_recovery_force_kp", 0.0)
-        self.lift_hold_recovery_force_kd = rospy.get_param(
-            "~lift_hold_recovery_force_kd", 0.0)
-        self.lift_hold_recovery_force_ki = rospy.get_param(
-            "~lift_hold_recovery_force_ki", 0.8)
-        self.lift_hold_recovery_force_limit = rospy.get_param(
-            "~lift_hold_recovery_force_limit", 0.40)
-        self.lift_hold_recovery_force_rate_limit = rospy.get_param(
-            "~lift_hold_recovery_force_rate_limit", 2.0)
         self.lift_hold_support_floor_scale = rospy.get_param(
             "~lift_hold_support_floor_scale", 0.0)
         self.lift_hold_force_feedforward_scale = rospy.get_param(
@@ -349,14 +335,12 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
         self.lift_reference_velocity_limit = 0.0
+        self.lift_trajectory_integral_acceleration = 0.0
+        self.lift_trajectory_integral_enabled = False
         self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
-        self.lift_breakaway_force_active = False
-        self.lift_breakaway_force = 0.0
-        self.lift_hold_recovery_force = 0.0
-        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -562,14 +546,12 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
         self.lift_reference_velocity_limit = 0.0
+        self.lift_trajectory_integral_acceleration = 0.0
+        self.lift_trajectory_integral_enabled = False
         self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
-        self.lift_breakaway_force_active = False
-        self.lift_breakaway_force = 0.0
-        self.lift_hold_recovery_force = 0.0
-        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -609,14 +591,12 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_reference_velocity = 0.0
         self.lift_reference_acceleration = 0.0
         self.lift_reference_velocity_limit = 0.0
+        self.lift_trajectory_integral_acceleration = 0.0
+        self.lift_trajectory_integral_enabled = True
         self.lift_hold_stable_start_time = None
         self.lift_object_acceleration_command = 0.0
         self.lift_common_z_acceleration_command = 0.0
         self.lift_force_ramp_ratio = 0.0
-        self.lift_breakaway_force_active = True
-        self.lift_breakaway_force = 0.0
-        self.lift_hold_recovery_force = 0.0
-        self.lift_hold_recovery_force_integral = 0.0
         self.lift_common_slip_error = 0.0
         self.lift_common_slip_velocity = 0.0
         self.lift_common_slip_acceleration = 0.0
@@ -761,18 +741,6 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.lift_peak_object_z = max(
             self.lift_peak_object_z, object_pose.position.z)
         rise = object_pose.position.z - self.lift_start_object_z
-        if (not self.lift_hold_reached and
-                self.lift_breakaway_force_active and
-                rise >= self.lift_breakaway_release_rise):
-            # The margin is only needed to leave the pedestal.  Keeping the
-            # full margin until the final hover height gives a light object a
-            # large upward velocity that the delayed common-Z loop cannot
-            # remove without overshoot.
-            self.lift_breakaway_force_active = False
-            rospy.loginfo(
-                "triple press: release %.3f N breakaway margin after "
-                "object rise %.4f m",
-                self.lift_breakaway_force_margin, rise)
         if not self.lift_progress_confirmed:
             if rise >= self.lift_minimum_object_rise:
                 if self.lift_rise_confirmation_start_time is None:
@@ -818,7 +786,6 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                     # target, feed-forward, observer filter/gains, integrals,
                     # and acceleration outputs exactly as they were in LIFT.
                     self.lift_hold_reached = True
-                    self.lift_breakaway_force_active = False
                     rospy.loginfo(
                         "triple press: LIFT HOLD confirmed after %.2f s "
                         "stable; continuous Z controller retained "
@@ -1040,88 +1007,67 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_force_ramp_ratio = min(
                 1.0, self.lift_force_ramp_ratio + dt / ramp_duration)
 
-        # Increase the breakaway margin independently from the mg ramp.  The
-        # old implementation reached 0.4 N together with mg in 1.5 s and then
-        # removed the whole margin as soon as the object rose 3 mm.  Slew both
-        # edges so neither change becomes an impulse at the compliant feet.
-        desired_breakaway_force = (
-            self.lift_breakaway_force_margin
-            if (self.lift_breakaway_force_active and
-                self.lift_force_ramp_ratio >= 1.0 - 1.0e-6) else 0.0)
-        breakaway_rate = (
-            self.lift_breakaway_force_ramp_rate
-            if desired_breakaway_force > self.lift_breakaway_force else
-            self.lift_breakaway_force_release_rate)
-        maximum_breakaway_step = max(0.0, breakaway_rate) * dt
-        self.lift_breakaway_force += self.clamp_value(
-            desired_breakaway_force - self.lift_breakaway_force,
-            -maximum_breakaway_step, maximum_breakaway_step)
-
         if (self.lift_force_ramp_ratio >= 1.0 - 1.0e-6 and
                 self.lift_start_object_z is not None):
             self.update_lift_reference(object_pose, dt)
+            position_error = (
+                self.lift_reference_z - object_pose.position.z)
+            velocity_error = (
+                self.lift_reference_velocity - object_twist[2])
             tracking_acceleration = self.clamp_value(
-                self.lift_trajectory_position_kp * (
-                    self.lift_reference_z - object_pose.position.z) +
-                self.lift_trajectory_velocity_kd * (
-                    self.lift_reference_velocity - object_twist[2]),
+                self.lift_trajectory_position_kp * position_error +
+                self.lift_trajectory_velocity_kd * velocity_error,
                 -self.lift_trajectory_tracking_acceleration_limit,
                 self.lift_trajectory_tracking_acceleration_limit)
+
+            # Integrate the same moving-reference error used by P/D.  The
+            # previous hold-recovery loop integrated the final HOLD target
+            # while the reference was still moving, which made it a separate
+            # lift-force generator rather than the I term of the Z servo.
+            integral_limit = max(
+                0.0, self.lift_trajectory_integral_acceleration_limit)
+            integral_step = (
+                self.lift_trajectory_position_ki * position_error * dt
+                if self.lift_trajectory_integral_enabled else 0.0)
+            integral_candidate = self.clamp_value(
+                self.lift_trajectory_integral_acceleration + integral_step,
+                -integral_limit, integral_limit)
+            # Conditional integration is the anti-windup mechanism: when the
+            # I term is already saturated, only an error that unwinds it is
+            # accepted.  The integrator remains continuous through HOLD and
+            # TRANSPORT because their controller and reference are shared.
+            saturated_high = (
+                self.lift_trajectory_integral_acceleration >=
+                integral_limit - 1.0e-12 and integral_step > 0.0)
+            saturated_low = (
+                self.lift_trajectory_integral_acceleration <=
+                -integral_limit + 1.0e-12 and integral_step < 0.0)
+            if not self.lift_trajectory_integral_enabled:
+                self.lift_trajectory_integral_acceleration = 0.0
+            elif not saturated_high and not saturated_low:
+                self.lift_trajectory_integral_acceleration = \
+                    integral_candidate
             self.lift_object_acceleration_command = self.clamp_value(
-                self.lift_reference_acceleration + tracking_acceleration,
+                self.lift_reference_acceleration + tracking_acceleration +
+                self.lift_trajectory_integral_acceleration,
                 -self.lift_trajectory_acceleration_limit -
-                self.lift_trajectory_tracking_acceleration_limit,
+                self.lift_trajectory_tracking_acceleration_limit -
+                integral_limit,
                 self.lift_trajectory_acceleration_limit +
-                self.lift_trajectory_tracking_acceleration_limit)
+                self.lift_trajectory_tracking_acceleration_limit +
+                integral_limit)
         else:
             # First unload the pedestal smoothly.  Do not advance the object
             # trajectory until the complete static mg feed-forward is active.
             self.lift_reference_z = object_pose.position.z
             self.lift_reference_velocity = 0.0
             self.lift_reference_acceleration = 0.0
+            self.lift_trajectory_integral_acceleration = 0.0
             self.lift_object_acceleration_command = 0.0
-
-        recovery_target_z = None
-        if (self.lift_hold_target_object_z is not None and
-                self.lift_force_ramp_ratio >= 1.0 - 1.0e-6 and
-                not self.lift_breakaway_force_active):
-            # Once the short breakaway margin has been removed, begin
-            # learning the static support deficit before HOLD.  Otherwise a
-            # geometry that settles just below the entry threshold never
-            # enables the recovery controller.
-            recovery_target_z = self.lift_hold_target_object_z
-
-        if recovery_target_z is not None:
-            recovery_drop = recovery_target_z - object_pose.position.z
-            # Learn the static force deficit slowly.  A large proportional
-            # force term makes the delayed object/contact dynamics behave as
-            # a stiff vertical spring and eventually creates a limit cycle.
-            # The bounded integral retains the required bias at zero height
-            # error and unwinds whenever the object is above its target.
-            self.lift_hold_recovery_force_integral = self.clamp_value(
-                self.lift_hold_recovery_force_integral +
-                self.lift_hold_recovery_force_ki * recovery_drop * dt,
-                0.0, self.lift_hold_recovery_force_limit)
-            desired_recovery_force = self.clamp_value(
-                self.lift_hold_recovery_force_kp * recovery_drop -
-                self.lift_hold_recovery_force_kd * object_twist[2] +
-                self.lift_hold_recovery_force_integral,
-                0.0, self.lift_hold_recovery_force_limit)
-            maximum_recovery_step = (
-                self.lift_hold_recovery_force_rate_limit * dt)
-            self.lift_hold_recovery_force += self.clamp_value(
-                desired_recovery_force - self.lift_hold_recovery_force,
-                -maximum_recovery_step, maximum_recovery_step)
-        else:
-            self.lift_hold_recovery_force = 0.0
-            self.lift_hold_recovery_force_integral = 0.0
-        additional_vertical_force = (
-            self.lift_breakaway_force + self.lift_hold_recovery_force)
         self.lift_vertical_force_target = max(
             0.0, self.grasp_object_mass * (
                 self.lift_force_ramp_ratio * self.gravity_acceleration +
-                self.lift_object_acceleration_command) +
-            additional_vertical_force)
+                self.lift_object_acceleration_command))
         force_error = self.deadband_with_limit(
             self.lift_vertical_force_target -
             self.filtered_object_vertical_force,
@@ -1842,9 +1788,7 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "lift_observer_force_correction",
             "lift_force_ramp_ratio",
             "lift_force_feedforward_scale",
-            "lift_breakaway_force_active",
-            "lift_breakaway_force",
-            "lift_hold_recovery_force",
+            "lift_trajectory_integral_acceleration",
             "lift_common_slip_feedback_active",
             "lift_common_slip_error",
             "lift_common_slip_velocity",
@@ -1955,12 +1899,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.lift_force_ramp_ratio),
             "lift_force_feedforward_scale": "{:.6f}".format(
                 self.lift_hold_force_feedforward_scale),
-            "lift_breakaway_force_active": (
-                "1" if self.lift_breakaway_force_active else "0"),
-            "lift_breakaway_force": "{:.6f}".format(
-                self.lift_breakaway_force),
-            "lift_hold_recovery_force": "{:.6f}".format(
-                self.lift_hold_recovery_force),
+            "lift_trajectory_integral_acceleration": "{:.6f}".format(
+                self.lift_trajectory_integral_acceleration),
             "lift_common_slip_feedback_active": (
                 "1" if self.lift_common_slip_feedback_active else "0"),
             "lift_common_slip_error": "{:.6f}".format(

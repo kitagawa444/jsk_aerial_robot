@@ -447,9 +447,11 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 self.lift_common_slip_activation_rise = float("inf")
                 self.lift_common_slip_feedback_active = False
                 self.lift_common_slip_acceleration = 0.0
-                self.lift_hold_recovery_force_kp = 0.0
-                self.lift_hold_recovery_force_kd = 0.0
-                self.lift_hold_recovery_force_ki = 0.0
+                # The pedestal now carries the object.  End the unified Z PID
+                # integral here, not at LIFT/HOLD/TRANSPORT boundaries, so it
+                # cannot command a residual upward acceleration during unload.
+                self.lift_trajectory_integral_acceleration = 0.0
+                self.lift_trajectory_integral_enabled = False
                 self.release_support_scale = (
                     self.lift_hold_force_feedforward_scale)
                 self.transition(
