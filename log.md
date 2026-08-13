@@ -597,3 +597,45 @@ rosrun bee mujoco_triple_transport_place_demo.py
 - LIFT最終sampleからTRANSPORT最初sampleでは、3条件とも`lift_reference_z/velocity/acceleration`に段差はなかった。共通Z加速度の差は`-8e-6..+1e-6 m/s2`、observer補正の差は`0..14e-6`で、HOLD成立による制御切替ステップは見られなかった。
 - 軽い200 gはLIFT中のXY移動量が最も大きく、500 gの約2.3倍だった。完走には影響しなかったが、軽量物への並進外乱感度として今後も監視する。
 - 最初の一括試験は`/bee3/ground_truth`の出現だけを起動完了条件にしたため、controller起動前にデモが始まりHOVER timeoutとなった。これは物体制御前の無効試験とした。また350 gの再起動1回目でBee3制御ノードが初期化中に終了したため、完全停止後に再起動した。以後の重量別評価は3台のノードとcontroller状態を確認した有効試験のみを使用する。
+
+## 2026-08-12 離床追加力の削除
+
+- 旧制御は`m(g+a_ref)`とは別に、最大0.4 Nの開ループbreakaway marginを離床時だけ加えていた。上向き軌道加速度がすでに重力以上の目標力を生成するため、重複する開ループ項が必要かを検証した。
+- 削除前に`lift_breakaway_force_margin=0`とし、200 g、350 g、500 gのすべてで離床と全工程の完走例を確認した。500 gは別の1試行で目的地下降中に平均接触面滑り60.3 mmで安全停止したが、これはHOLDとTRANSPORT完了後で、離床可否とは無関係だった。
+- `lift_breakaway_force_margin/ramp_rate/release_rate/release_rise`、active/force状態、離床高さでの解除処理、CSVの2列を削除した。この時点の物体Z目標力は`m_object * (ramp * g + a_ref) + hold_recovery_force`としたが、後節で`hold_recovery_force`もZ軌道PIDのI項へ統合した。
+
+### 削除後のheadless MuJoCo回帰試験
+
+| 物体質量 | 結果 | LIFT中XY移動量 | TRANSPORT中Z範囲 | 最大平均接触面滑り | 最終pose [m] |
+| --- | --- | ---: | ---: | ---: | --- |
+| 200 g | `COMPLETE` | 19.1 mm | 0.99717--0.99996 m | 24.4 mm | (1.5057, 0.9932, 0.9499) |
+| 350 g | `COMPLETE` | 56.2 mm | 0.99722--1.00000 m | 39.3 mm | (1.4749, 1.0038, 0.9499) |
+| 500 g | `COMPLETE` | 12.6 mm | 0.99718--0.99995 m | 59.6 mm | (1.4980, 1.0036, 0.9499) |
+
+- 3条件ともHOLD、TRANSPORT、DESCEND、UNLOAD、RELEASE、RETREAT、UNWIND、VERIFYを通過し、`lift_fault=0`で終了した。CSVにbreakaway関連列が残っていないことも確認した。
+- 350 gの載置後X誤差は25.1 mmで、VERIFY許容30 mm内だが他の2条件より大きい。また500 gの滑り59.6 mmは安全閾値60 mmに近い。これらは離床追加力とは別の運搬/下降制御の再現性課題として残る。
+- 起動待ち中にBee2制御ノードが終了した200 gの1試行は、物体制御前の無効試験とした。最終評価では3台のcontrollerが`running`で、各odometryとobject poseの実データが届いていることを確認してから実行した。
+
+## 2026-08-12 物体Z軌道PIDへのI項統合
+
+- 旧`hold_recovery_force`はP/Dが使う移動中の`lift_reference_z`ではなく、最終HOLD高さと物体Zの誤差を離床中から積分していた。そのため開ループbreakaway力ではないが、Z軌道PIDとは別の追加力生成器になっていた。
+- P/I/Dを同じ移動reference誤差に統一した。実装式は`e_z=z_ref-z_object`、`e_v=v_ref-v_object`、`a_I += Ki*e_z*dt`、`a_object=a_ref+Kp*e_z+Kd*e_v+a_I`、`Fz_target=m_object*(ramp*g+a_object)`である。
+- 既定値は`Kp=1.0`、`Kd=1.5`、`Ki=0.20`、P/D加速度上限`0.04 m/s2`、I加速度上限`+/-0.08 m/s2`とした。I項が上限にある方向の誤差は積分せず、反対方向の誤差だけを受け入れるconditional integrationをanti-windupに使う。
+- I項はLIFT、HOLD、TRANSPORTでresetしない。物体が目的地台座に接地したことを高さと速度で確認した時点でのみ0にし、積分も無効化する。次のLIFT開始で再有効化し、UNLOAD中に残留上向き加速度を出さない。
+- CSVの`lift_hold_recovery_force`を`lift_trajectory_integral_acceleration`へ置き換え、力[N]ではなくPIDが生成するI加速度[m/s2]を記録するようにした。observer Z外力は従来どおり別の低帯域・有界補正とし、Z PIDのI項とは混ぜない。
+
+### Ki比較とheadless MuJoCo回帰試験
+
+- 500 gで`Ki=0.15`を2回試し、どちらもHOLDと1.5 m運搬は完了したが、下降終端で平均接触面滑りが60.1/60.2 mmとなり60 mm安全閾値で停止した。
+- `Ki=0.10`では必要な定常I値に達するまでが遅く、HOLD成立時の滑りが`19--20 -> 27 mm`へ悪化し、下降中に61.0 mmで停止したため不採用とした。
+- `Ki=0.20`では500 gのHOLD成立時滑りが14.7 mm、全工程の最大滑りが54.1 mmへ減少し、載置とVERIFYまで完了した。
+
+| 物体質量 | 結果 | HOLD時I加速度 | HOLD->TRANSPORTのI差 | TRANSPORT中Z範囲 | 最大平均接触面滑り | 最終pose [m] |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 200 g | `COMPLETE` | 0.03725 m/s2 | +0.000028 m/s2 | 0.99728--1.00000 m | 21.4 mm | (1.5030, 0.9871, 0.9499) |
+| 350 g | `COMPLETE` | 0.00827 m/s2 | +0.000029 m/s2 | 0.98885--0.99999 m | 27.1 mm | (1.4921, 1.0012, 0.9499) |
+| 500 g | `COMPLETE` | 0.03522 m/s2 | +0.000027 m/s2 | 0.99730--1.00001 m | 56.5 mm | (1.4794, 0.9882, 0.9499) |
+
+- 3条件とも`lift_fault=0`で、DESCEND、UNLOAD、RELEASE、RETREAT、UNWIND、VERIFYを通過した。HOLD->TRANSPORTでI項にreset/段差がなく、最終CSV sampleでは接地後resetによりI項は3条件とも0だった。
+- 350 gのTRANSPORT中に一時的なZ=0.98885 mまでの低下があり、最終的には回復して完走した。重量に対する単調な傾向ではなく、接触の初期なじみによる試行間ばらつきとして引き続き監視する。
+- 最終500 g試験の最初の起動ではBee2の`flight_state`と`uav/cog/odom`が配信されず、制御開始前の`wait_for_data`で終了した。これを無効試験とし、controllerに加えて各Beeの`flight_state/ground_truth/uav/cog/odom/grasp_forces/grasp_contact_states`とobject poseの実データを確認したクリーン再起動で最終値を取得した。
