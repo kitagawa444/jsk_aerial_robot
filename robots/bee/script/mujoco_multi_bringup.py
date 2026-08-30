@@ -284,6 +284,7 @@ class MujocoMultiBringup(object):
 
         headless = rospy.get_param("~headless", False)
         render_fps = rospy.get_param("~render_fps", 10.0)
+        real_time_factor = rospy.get_param("~real_time_factor", 0.0)
         vsync = rospy.get_param("~vsync", False)
         render_shadows = rospy.get_param("~render_shadows", False)
         render_reflections = rospy.get_param("~render_reflections", False)
@@ -324,6 +325,7 @@ class MujocoMultiBringup(object):
             "mujoco_model:={}".format(scene_model_path),
             "robot_namespaces:={}".format(str(robot_namespaces)),
             "render_fps:={}".format(render_fps),
+            "real_time_factor:={}".format(real_time_factor),
             "vsync:={}".format("true" if vsync else "false"),
             "render_shadows:={}".format("true" if render_shadows else "false"),
             "render_reflections:={}".format("true" if render_reflections else "false"),

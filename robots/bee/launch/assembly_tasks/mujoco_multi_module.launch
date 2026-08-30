@@ -5,6 +5,8 @@
   <arg name="headless" default="true"/>
   <arg name="launch_rviz" default="true"/>
   <arg name="render_fps" default="10.0"/>
+  <!-- <= 0 keeps unlimited headless speed; use 1.0 for online MPC. -->
+  <arg name="real_time_factor" default="0.0"/>
   <arg name="vsync" default="false"/>
   <arg name="render_shadows" default="false"/>
   <arg name="render_reflections" default="false"/>
@@ -67,6 +69,7 @@
     <param name="headless" value="$(arg headless)"/>
     <param name="launch_rviz" value="$(arg launch_rviz)"/>
     <param name="render_fps" value="$(arg render_fps)"/>
+    <param name="real_time_factor" value="$(arg real_time_factor)"/>
     <param name="vsync" value="$(arg vsync)"/>
     <param name="render_shadows" value="$(arg render_shadows)"/>
     <param name="render_reflections" value="$(arg render_reflections)"/>

@@ -259,6 +259,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "~lift_abort_moment_threshold", 0.05)
         self.lift_progress_timeout = rospy.get_param(
             "~lift_progress_timeout", 5.0)
+        self.lift_progress_support_force_ratio = rospy.get_param(
+            "~lift_progress_support_force_ratio", 0.98)
         self.lift_minimum_object_rise = rospy.get_param(
             "~lift_minimum_object_rise", 0.003)
         self.lift_rise_confirmation_duration = rospy.get_param(
@@ -714,7 +716,8 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         self.apply_normal_force_targets()
 
     def update_lift_progress(
-            self, object_pose, odometry=None, object_twist=None):
+            self, object_pose, odometry=None, object_twist=None,
+            object_vertical_force=None):
         """Confirm lift progress and declare HOLD without changing control."""
         if (not self.lift_mode_active or self.lift_fault or
                 not self.lift_preload_ready()):
@@ -723,6 +726,17 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         if self.lift_command_start_time is None:
             if (self.target_z_velocity <= self.lift_velocity_threshold or
                     self.lift_force_ramp_ratio < 1.0 - 1.0e-6):
+                return
+            # The whole-body controller transfers weight through a filtered
+            # observer/admittance inner loop.  Start the five-second progress
+            # watchdog only after the contacts actually support the load;
+            # otherwise its force-transfer transient is incorrectly counted
+            # as failed lift time.  Legacy callers omit this measurement and
+            # retain their existing timing exactly.
+            if (object_vertical_force is not None and
+                    object_vertical_force <
+                    self.lift_progress_support_force_ratio *
+                    self.grasp_object_mass * self.gravity_acceleration):
                 return
             self.lift_command_start_time = now
             self.lift_start_object_z = object_pose.position.z
@@ -1782,6 +1796,18 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             "translation_z_limit_active",
             "translation_acceleration_x",
             "translation_acceleration_y",
+            "planner_external_acceleration_world_x",
+            "planner_external_acceleration_world_y",
+            "planner_external_acceleration_world_z",
+            "planner_external_angular_acceleration_world_x",
+            "planner_external_angular_acceleration_world_y",
+            "planner_external_angular_acceleration_world_z",
+            "planner_measured_acceleration_world_x",
+            "planner_measured_acceleration_world_y",
+            "planner_measured_acceleration_world_z",
+            "planner_measured_angular_acceleration_world_x",
+            "planner_measured_angular_acceleration_world_y",
+            "planner_measured_angular_acceleration_world_z",
             "control_mode", "task_phase", "lift_fault",
             "lift_hold_reached", "lift_vertical_force_target",
             "filtered_object_vertical_force",
@@ -1860,6 +1886,14 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
     def write_wrench_log(self, writer, object_pose, force_sites, local_states,
                          object_force, object_force_arm_moment,
                          object_local_moment_sum, object_moment):
+        planner_external_acceleration = getattr(
+            self, "planner_disturbance_linear_acceleration", (0.0,) * 3)
+        planner_external_angular_acceleration = getattr(
+            self, "planner_disturbance_angular_acceleration", (0.0,) * 3)
+        planner_measured_acceleration = getattr(
+            self, "planner_measured_object_acceleration", (0.0,) * 3)
+        planner_measured_angular_acceleration = getattr(
+            self, "planner_measured_object_angular_acceleration", (0.0,) * 3)
         row = {
             "sim_time": "{:.6f}".format(rospy.get_time()),
             "target_normal_force": "{:.6f}".format(
@@ -1883,6 +1917,33 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
                 self.translation_acceleration_command[0]),
             "translation_acceleration_y": "{:.6f}".format(
                 self.translation_acceleration_command[1]),
+            "planner_external_acceleration_world_x": "{:.8f}".format(
+                planner_external_acceleration[0]),
+            "planner_external_acceleration_world_y": "{:.8f}".format(
+                planner_external_acceleration[1]),
+            "planner_external_acceleration_world_z": "{:.8f}".format(
+                planner_external_acceleration[2]),
+            "planner_external_angular_acceleration_world_x":
+                "{:.8f}".format(
+                    planner_external_angular_acceleration[0]),
+            "planner_external_angular_acceleration_world_y":
+                "{:.8f}".format(
+                    planner_external_angular_acceleration[1]),
+            "planner_external_angular_acceleration_world_z":
+                "{:.8f}".format(
+                    planner_external_angular_acceleration[2]),
+            "planner_measured_acceleration_world_x": "{:.8f}".format(
+                planner_measured_acceleration[0]),
+            "planner_measured_acceleration_world_y": "{:.8f}".format(
+                planner_measured_acceleration[1]),
+            "planner_measured_acceleration_world_z": "{:.8f}".format(
+                planner_measured_acceleration[2]),
+            "planner_measured_angular_acceleration_world_x":
+                "{:.8f}".format(planner_measured_angular_acceleration[0]),
+            "planner_measured_angular_acceleration_world_y":
+                "{:.8f}".format(planner_measured_angular_acceleration[1]),
+            "planner_measured_angular_acceleration_world_z":
+                "{:.8f}".format(planner_measured_angular_acceleration[2]),
             "control_mode": (
                 "LIFT_HOLD" if self.lift_hold_reached else
                 "LIFT" if self.lift_mode_active else "PRELOAD"),

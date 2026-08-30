@@ -639,3 +639,102 @@ rosrun bee mujoco_triple_transport_place_demo.py
 - 3条件とも`lift_fault=0`で、DESCEND、UNLOAD、RELEASE、RETREAT、UNWIND、VERIFYを通過した。HOLD->TRANSPORTでI項にreset/段差がなく、最終CSV sampleでは接地後resetによりI項は3条件とも0だった。
 - 350 gのTRANSPORT中に一時的なZ=0.98885 mまでの低下があり、最終的には回復して完走した。重量に対する単調な傾向ではなく、接触の初期なじみによる試行間ばらつきとして引き続き監視する。
 - 最終500 g試験の最初の起動ではBee2の`flight_state`と`uav/cog/odom`が配信されず、制御開始前の`wait_for_data`で終了した。これを無効試験とし、controllerに加えて各Beeの`flight_state/ground_truth/uav/cog/odom/grasp_forces/grasp_contact_states`とobject poseの実データを確認したクリーン再起動で最終値を取得した。
+
+## 2026-08-27 MPC接触位置の動的モデル反映
+
+### 変更
+
+- 従来のwhole-body MPCは、初期把持時に計算した物体重心から各Beeの4球代表中心までの腕と、各Bee重心までの腕を全工程で固定していた。球が面上を滑ると、実際の力の作用線とMPCのモーメント予測が一致しなくなる構成だった。
+- 各再計画時に、現在の物体pose、Bee odometry、observerのCG odometryから両方の腕を物体座標で再計算するようにした。初期接触位置は滑り監視・既存の局所位置補正用の基準として固定したままであり、動力学に使う接触位置だけを現在値へ追従させる。
+- acadosモデルへ18次元のonline parameter（接触腕9成分、機体重心腕9成分）を追加し、全shooting nodeへ毎回設定する。solver生成・Cコードcompileは初期化時の1回だけで、接触位置更新による再生成はない。
+- CasADi backendもNLP parameterへ同じ18成分を追加した。SciPy backendはsolve開始時に更新されたnumpy幾何を使う。3 backendの外部APIを共通化し、接触腕と重心腕の片方だけを更新する操作や非有限値は拒否する。
+
+### 検証
+
+- planner単体テスト5件に成功した。追加テストでは、接触腕のZを10 mm変えた後に同一acados solver instanceで解けること、planner内部の幾何が更新されること、同じ非対称接触力に対する予測角加速度が変わることを確認した。
+- `python3 -m py_compile`、`git diff --check`、`catkin build bee --no-status`に成功した。catkinは依存21 packageすべて成功し、既存の`spinal/ApplyWrench` warningだけが残った。
+- real-time-factor 1.0、500 g物体のheadless MuJoCo試験では、離床、LIFT HOLD、TRANSPORTへの遷移に成功した。動的幾何更新中のacados solveは主に1.2--1.7 msで、物体はZ約1.002 mを維持しながらX=0.274 mまで運搬した。MPC例外、幾何更新エラー、infeasibleはなかった。
+- 同試験はその後Bee1 momentum observerが1.00 s staleとなり、既存の安全監視がFAILSAFE_HOLDを作動して終了した。動的接触モデル起因の停止ではないが、1.5 m運搬・載置までの完走確認は未達である。
+- real-time-factor 0の再試験は、simulation timeがwall timeより約7--8倍速く進み、observer/contact loopの実時間条件が崩れてLIFT HOLD滑り判定となったため、有効な性能評価には使わない。
+
+### 2026-08-28 再評価
+
+- 500 g、real-time-factor 1.0でクリーン起動し、3台の`attitude_controller`が`running`であることを確認して再試験した。planner単体テスト5件も再実行してすべて成功した。
+- 既定`observer_timeout=1.0 s`ではLIFT/HOLDに成功し、TRANSPORTでX=0.179 mまで進んだ後、前回と同じく`bee1 momentum observer is stale (1.00 s)`でFAILSAFE_HOLDとなった。停止直前までacados solveは主に1.2--1.7 ms、物体Z変動幅は1.50 mm、最大roll/pitchは0.062 deg以下であり、MPC失敗ではなかった。
+- 停止後に外部subscriberで測った3台の`estimated_external_wrench`は約100 Hzだった。別の再試験では3台observerと`/clock`をrosbagへ記録し、observerの最大simulation-time間隔はBee1 50 ms、Bee2 72 ms、Bee3 59 msだった。publisher停止ではなく、WSL上のPythonデモプロセスに約1秒のcallback遅延または単調時刻の不連続が生じ、1秒watchdogに触れている可能性が高い。
+- 制御性能を分離するため、コードの既定値は変更せず、実行時だけ`_observer_timeout:=2.0`として再試験した。この条件では前回の停止位置を越えたが、TRANSPORT 44.1 s、X=0.926 mで物体がHOLD目標より30.0 mm低下し、既存の落下安全判定で停止した。最終poseは`(0.9256, 0.9009, 0.9728) m`だった。
+- timeout 2秒試験のTRANSPORT中、物体のroll/pitchは最大0.056/0.071 deg、yaw変動幅は0.101 degで、回転安定性は良好だった。一方でYは`1.000 -> 0.901 m`、Zは`1.003 -> 0.973 m`へ移動した。3台すべての物体座標系接触腕Zは約16.5 mm増加し、球/機体が物体に対して上へ滑ったことを示す。
+- 動的接触位置はこの約16.5 mmの変化を各MPC再計画へ反映できており、solver再生成やinfeasibleは発生しなかった。しかし現在のOCPは接触位置そのものの許容範囲や滑り速度を制約せず、更新された位置を新しい有効接触として追従するだけである。したがってモデル整合性は改善するが、滑り防止にはならない。
+- 固定接触位置だった直前のacados試験`bee_transport_place_acados_retry4.csv`も、TRANSPORT終端で`x=0.932 m, z=0.9725 m`まで低下していた。今回の`x=0.926 m, z=0.9728 m`とほぼ同じであり、動的接触位置化だけでは支配的なZ滑りを改善していない。Y偏差は固定時9 mm、今回99 mmだが、各1試行のため動的化による悪化とはまだ断定しない。
+
+### 再評価後の判断
+
+- 動的接触位置パラメータ化は、実接触腕でモーメントと機体加速度を予測するために必要であり、実装自体は維持する。
+- ただし「現在位置をモデルへ入れる」だけでは把持維持条件にならない。次の主要課題は、初期接触位置からの面内変位/速度を状態機械の安全判定だけでなく、少なくとも接触可行領域としてOCPへ入れるか、物体位置追従を担う外側ループと接触力実現誤差を見直すことである。
+- WSL評価では1秒observer timeoutが実データ欠落なしでも再現性よく誤作動した。安全閾値を単純に恒久拡大する前に、callback ageをCSVへ記録し、ROS message stamp/simulation timeとwall monotonic ageを分離して監視する必要がある。
+
+## 2026-08-28 MPCモデル外乱の閉ループ化
+
+### 変更
+
+- 従来のwhole-body MPCにもmomentum observerによる内側の接触力補正はあったが、`planned_force - observed_force`は最適化後の各Bee加速度指令へ加算されるだけで、次のMPCが使う物体運動方程式には戻っていなかった。このためMPC自身は毎回同じ公称モデルを解き、持続する実現誤差を接触力配分へ織り込めなかった。
+- mocap object twistの差分から実測並進/角加速度を求め、直前に適用したMPC sampleの予測並進/角加速度との差をinnovationとする6軸外乱推定器を追加した。推定値は低域化・ノルム制限し、次回horizon全nodeで一定の加法外乱加速度として物体の並進/回転運動方程式へ渡す。
+- acadosのonline parameterを18から24次元へ拡張し、現在接触腕9、現在Bee-CG腕9、外乱並進3、外乱角3をsolver再生成なしで更新する。CasADi NLP parameterとSciPy numpy dynamicsにも同じ外乱を実装した。
+- 台座反力を把持外乱として学習しないよう、支持力ramp中は推定器をresetして速度履歴だけ同期する。既定値は時定数0.75 s、並進外乱上限0.10 m/s2、角外乱上限0.50 rad/s2とした。
+- 推定外乱をROSの`planner/external_linear_acceleration`、`planner/external_angular_acceleration`へpublishし、実測加速度と推定外乱の12成分を既存CSVへ追加した。legacy strategyでは追加列が0となり制御は変わらない。
+
+### 検証
+
+- acados単体テスト5件に成功した。現在接触位置と6軸外乱を同時更新しても同じsolver instanceを維持し、numpy dynamicsの加速度差が指定外乱と一致し、解が制約内であることを確認した。
+- CasADi/sqpmethodとSciPy backendも6軸外乱付き静止問題を制約内で解いた。Python構文checkと`catkin build bee --no-status`も成功し、catkinは依存21 packageすべて成功した。既存の`spinal/ApplyWrench` warningだけが残った。
+- 500 g、real-time-factor 1.0、`observer_timeout=2.0 s`でheadless MuJoCo試験を行った。最初の起動はBee2推定ノードがMPC開始前にEigen行列次元assertで終了したため無効とし、3台の制御ノードを確認したクリーン再起動の結果だけを評価した。
+- 有効試験では離床、HOLD、TRANSPORTに成功し、acados solveは主に1.1--2.4 msだった。推定外乱はMPC計画へ反映され、終盤の下向きZ外乱が上限`-0.10 m/s2`へ達すると、計画鉛直合力は公称mg=4.905 Nから約4.965 Nへ増加した。
+- 物体はX=1.014 mまで運搬した後、ZがHOLD目標から30.2 mm低下して安全停止した。外乱を持たない動的接触位置版の前回停止X=0.926 mより約88 mm先まで進んだが、1.5 m運搬・載置には未達である。
+- TRANSPORT中、物体Zは`1.0027 -> 0.9723 m`、Yは`1.000 -> 0.936 m`となった。3台の接触代表中心は物体に対して約17.9--18.1 mm上へ移動しており、支配的な問題は引き続き面上滑りである。推定外乱上限到達後も低下したため、今回の小さいモデル補正だけでは接触力実現不足を相殺しきれない。
+
+### 判断
+
+- 「実状態と公称モデルの差を次のMPCへ渡す」経路は実装できた。従来の後付けobserver補正とは異なり、MPC自身が外乱込みの物体加速度制約を満たすよう接触力を再配分する。
+- ただしmomentum observerの物体Z力合計は終盤も約5.08 Nと重量以上を示す一方、mocap物体は約5.2 mm/sで下降していた。observer力だけをそのままMPC外乱へ変換すると誤った支持判定になるため、今回のmocap運動残差を主にする構成は維持する。
+- 次の調整候補は外乱上限を段階的に上げることと、外乱推定とは別に接触面内相対速度/可行領域を把持維持条件へ入れることである。単純な上限拡大はBeeだけが上へ滑る可能性もあるため、現在のCSVで相対接触高さと同時評価する必要がある。
+
+## 2026-08-30 古典制御とMPCの比較、および論文方針
+
+### MPCが古典制御に及ばなかった理由
+
+- 現在`legacy`と呼んでいる制御は単一のPIDではない。物体の有限高さ軌道、`m(g+a_ref)` feed-forward、同一referenceに対する物体ZのP/I/D、低帯域observer力補正、3台共通の接触面滑り抑制、3台間の差動接触高さ制御、局所モーメント制御、物体roll/pitch/yaw制御を連続的に組み合わせた階層制御である。
+- 一方、現在のwhole-body MPCは各Beeの4球接触を1個の代表接触力へ縮約し、その力がそのまま実現されることを前提とする。ゴム球のばね圧縮、4球間の荷重偏り、静止摩擦から動摩擦への遷移、接触力の実現遅れはOCP状態に含まれない。MPC動作中は成功実績のあるlegacyのZ PID、共通slip、局所/物体モーメント制御を外し、計画力をBee加速度へ変換した後にobserver/admittance補正を加える構成だった。
+- 500 gの有効ログ`bee_unified_z_pid_final_500_clean.csv`と`bee_mpc_disturbance_500g.csv`を比較した。TRANSPORT中の共通Z加速度平均はlegacy/MPCとも約0.898 m/s2であり、平均支持指令不足が主因ではなかった。しかしlegacyの範囲は`0.898507--0.898646 m/s2`、標準偏差`1.54e-5 m/s2`だったのに対し、MPCは`0.876747--0.914664 m/s2`、標準偏差`6.37e-3 m/s2`だった。MPCの変動幅は約273倍、標準偏差は約414倍である。
+- 目標鉛直合力の変動幅もlegacyの0.000064 Nに対し、外乱補償付きMPCは0.119 Nだった。MPCは短いhorizonごとに物体Z加速度を主に`+/-0.02 m/s2`の制約境界付近で変化させ、平均力が十分でもゴム球を微小に除荷・再荷重して静止摩擦を崩したと判断する。
+- legacyではTRANSPORT中の物体Zが`0.99730--1.00001 m`に収まり、1.5 m運搬・載置まで完了した。MPCでは`1.00367 -> 0.97235 m`へ低下し、X=1.014 mで落下安全停止した。
+- MPC終盤のmomentum observer物体Z力は約5.08 Nで、500 g物体の重量4.905 Nを上回っていたが、mocap物体は約5.2 mm/sで下降していた。したがってobserverの力だけでは、柔軟接触で実際に物体へ伝達された支持力を判定できない。mocap運動残差をMPC外乱へ戻す実装は停止距離を延ばしたが、接触モデルの構造誤差を解消するには至らなかった。
+
+### 採用方針
+
+- 論文と今後の実機検証は、完走実績のある`legacy`制御を中心に進める。`~control_strategy`の既定値も引き続き`legacy`とする。whole-body MPC実装、動的接触位置、6軸モデル外乱、テストと診断は比較対象・将来拡張として残し、削除しない。
+- 把持へのMPC自体が不適切なのではない。MPCは物体軌道、目標物体wrench、摩擦・推力制約、3台への力配分に向く。一方、今回の柔軟な4球接触を5 HzのMPCだけで高速安定化するのはモデル誤差が大きい。将来再利用する場合は、MPCを上位の物体wrench計画へ限定し、legacyのZ PID、force servo、slip抑制を高速inner loopとして残す階層構成が妥当である。
+
+### 現在の制御構成の整理
+
+- 各Beeのmomentum observerは各機体のcontroller内で動作し、Bee重心における合成6軸外レンチとCG odometryをpublishする。中央のPythonデモノードは3台分を集約し、接触前baselineを除去して座標変換し、作用反作用と接触腕を用いて物体の合力・合モーメントを計算する。4球それぞれの力をobserverから分離しているわけではなく、force-siteとばね圧縮量は診断専用である。
+- 中央制御が生成する物体目標加速度・角加速度は、`F_object_des=m_object(a_object_des+g)`および剛体回転方程式を通じて目標物体wrenchを決めることと等価である。ただし3方向の法線押し付け力は物体上でほぼ相殺され、合成物体wrenchには現れない。したがって中央が決めている量は「目標物体wrench＋摩擦能力を作る内部把持力」である。
+- 論文上は、各機体での分散外レンチ推定、中央での物体wrench統合と内部力配分、各機体のローカル加速度・姿勢追従からなる階層型wrench-based cooperative controllerと整理する。完全分散制御ではなく、低レベル分散・物体レベル集中型である。
+- 論文の主張候補は、精密な個別接触力センサや4球接触モデルを使わず、momentum observer、mocap物体状態、受動ばね付きゴム球、共通/差動wrench feedbackによって、3台の空中ロボットによる爪なし摩擦把持、運搬、載置、解放を実現したことである。200/350/500 g回帰、Z積分・共通slip・姿勢モーメント制御のアブレーション、MPC比較を評価軸とする。
+
+### legacy実行方法
+
+MuJoCoはonline observer/controlの実時間条件を維持するため`real_time_factor:=1.0`で起動する。WSL上で確認された1秒watchdogの誤作動を避ける評価時設定として、デモだけ`observer_timeout:=2.0`を明示する。
+
+```bash
+roslaunch bee mujoco_multi_module.launch \
+  headless:=true launch_rviz:=false \
+  spawn_destination_pedestal:=true object_mass:=0.5 \
+  real_time_factor:=1.0
+```
+
+```bash
+rosrun bee mujoco_triple_transport_place_demo.py \
+  _control_strategy:=legacy \
+  _observer_timeout:=2.0 \
+  _wrench_log_path:=/tmp/bee_legacy_transport_500g.csv
+```

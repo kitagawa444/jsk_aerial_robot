@@ -39,6 +39,9 @@
   <run_depend>roscpp</run_depend>
   <run_depend>pluginlib</run_depend>
   <run_depend>diagnostic_msgs</run_depend>
+  <run_depend>python3-numpy</run_depend>
+  <run_depend>python3-scipy</run_depend>
+  <run_depend>acados</run_depend>
 
   <export>
     <aerial_robot_model plugin="${prefix}/plugins/robot_model_plugins.xml" />
