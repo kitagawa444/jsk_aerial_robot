@@ -56,22 +56,6 @@ void BeeController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   internal_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("internal_wrench", 1);
   wrench_comp_pid_pub_ = nh_.advertise<aerial_robot_msgs::PoseControlPid>("debug/wrench_comp/pid", 1);
   des_inter_wrench_pub_ = nh_.advertise<beetle::TaggedWrenches>("des_inter_wnrech", 1);
-  estimate_external_wrench_pub_ = nh_.advertise<geometry_msgs::WrenchStamped>("estimated_external_wrench", 1);
-
-  est_external_wrench_ = Eigen::VectorXd::Zero(6);
-  integrate_term_ = Eigen::VectorXd::Zero(6);
-  init_sum_momentum_ = Eigen::VectorXd::Zero(6);
-  prev_est_wrench_timestamp_ = 0;
-
-  {
-    ros::NodeHandle control_nh(nh_, "controller");
-    double momentum_observer_force_weight, momentum_observer_torque_weight;
-    control_nh.param("momentum_observer_force_weight", momentum_observer_force_weight, 5.0);
-    control_nh.param("momentum_observer_torque_weight", momentum_observer_torque_weight, 5.0);
-    momentum_observer_matrix_ = Eigen::MatrixXd::Zero(6, 6);
-    momentum_observer_matrix_.topLeftCorner(3, 3) = momentum_observer_force_weight * Eigen::Matrix3d::Identity();
-    momentum_observer_matrix_.bottomRightCorner(3, 3) = momentum_observer_torque_weight * Eigen::Matrix3d::Identity();
-  }
 
   int max_modules_num = bee_navigator_->getMaxModuleNum();
   for(int i = 0; i < max_modules_num; i++)
@@ -425,16 +409,11 @@ void BeeController::rosParamInit()
 
 void BeeController::externalWrenchEstimate()
 {
-  Eigen::VectorXd target_wrench_acc_cog = Eigen::VectorXd::Zero(6);
-  if(pid_controllers_.size() > YAW)
-    {
-      target_wrench_acc_cog(0) = pid_controllers_.at(X).result();
-      target_wrench_acc_cog(1) = pid_controllers_.at(Y).result();
-      target_wrench_acc_cog(2) = pid_controllers_.at(Z).result();
-      target_wrench_acc_cog(3) = pid_controllers_.at(ROLL).result();
-      target_wrench_acc_cog(4) = pid_controllers_.at(PITCH).result();
-      target_wrench_acc_cog(5) = pid_controllers_.at(YAW).result();
-    }
+  // Use the actual acceleration/wrench target handed to the allocator.  XY
+  // ACC_MODE is a direct feed-forward path and deliberately resets the XY PID
+  // controllers, so reconstructing the target from PID::result() makes the
+  // observer treat the commanded acceleration itself as an external force.
+  const Eigen::VectorXd target_wrench_acc_cog = getTargetWrenchAccCog();
 
   if(navigator_->getNaviState() != aerial_robot_navigation::HOVER_STATE &&
      navigator_->getNaviState() != aerial_robot_navigation::TAKEOFF_STATE &&
@@ -444,7 +423,7 @@ void BeeController::externalWrenchEstimate()
       integrate_term_ = Eigen::VectorXd::Zero(6);
       return;
     }
-  else if(target_wrench_acc_cog.norm() == 0)
+  else if(target_wrench_acc_cog.size() == 0)
     {
       prev_est_wrench_timestamp_ = 0;
       integrate_term_ = Eigen::VectorXd::Zero(6);
@@ -491,6 +470,8 @@ void BeeController::externalWrenchEstimate()
 
   geometry_msgs::WrenchStamped wrench_msg;
   wrench_msg.header.stamp.fromSec(estimator_->getImuLatestTimeStamp());
+  wrench_msg.header.frame_id = bee_navigator_->getMyName() +
+    std::to_string(bee_navigator_->getMyID()) + "/cog";
   wrench_msg.wrench.force.x = est_external_wrench_cog(0);
   wrench_msg.wrench.force.y = est_external_wrench_cog(1);
   wrench_msg.wrench.force.z = est_external_wrench_cog(2);
@@ -499,10 +480,16 @@ void BeeController::externalWrenchEstimate()
   wrench_msg.wrench.torque.z = est_external_wrench_cog(5);
   estimate_external_wrench_pub_.publish(wrench_msg);
 
-  beetle::TaggedWrench tagged_wrench;
-  tagged_wrench.index = bee_navigator_->getMyID();
-  tagged_wrench.wrench = wrench_msg;
-  tagged_external_wrench_pub_.publish(tagged_wrench);
+  // The base class starts the estimator thread before BeeController finishes
+  // advertising Bee-specific topics.  The primary estimate publisher is
+  // already ready; defer only the tagged copy until its publisher exists.
+  if(tagged_external_wrench_pub_)
+    {
+      beetle::TaggedWrench tagged_wrench;
+      tagged_wrench.index = bee_navigator_->getMyID();
+      tagged_wrench.wrench = wrench_msg;
+      tagged_external_wrench_pub_.publish(tagged_wrench);
+    }
 
   prev_est_wrench_timestamp_ = ros::Time::now().toSec();
 }

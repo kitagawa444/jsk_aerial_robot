@@ -19,6 +19,7 @@ BaseNavigator::BaseNavigator():
   low_voltage_flag_(false),
   high_voltage_flag_(false),
   prev_xy_control_mode_(ACC_CONTROL_MODE),
+  z_control_mode_(POS_CONTROL_MODE),
   xy_control_flag_(false),
   vel_based_waypoint_(false),
   gps_waypoint_(false),
@@ -223,21 +224,32 @@ void BaseNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr & ms
   /* z */
   if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::VEL_MODE)
     {
+      z_control_mode_ = VEL_CONTROL_MODE;
       setTargetVelZ(msg->target_vel_z);
+      setTargetAccZ(0);
       teleop_reset_time_ = teleop_reset_duration_ + ros::Time::now().toSec();
     }
   else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_MODE)
     {
+      z_control_mode_ = POS_CONTROL_MODE;
       setTargetPosZ(msg->target_pos_z);
       setTargetVelZ(0);
+      setTargetAccZ(0);
     }
   else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::POS_VEL_MODE)
     {
+      z_control_mode_ = POS_CONTROL_MODE;
       setTargetPosZ(msg->target_pos_z);
       setTargetVelZ(msg->target_vel_z);
+      setTargetAccZ(0);
 
       trajectory_mode_ = true;
       trajectory_reset_time_ = trajectory_reset_duration_ + ros::Time::now().toSec();
+    }
+  else if(msg->pos_z_nav_mode == aerial_robot_msgs::FlightNav::ACC_MODE)
+    {
+      z_control_mode_ = ACC_CONTROL_MODE;
+      setTargetAccZ(msg->target_acc_z);
     }
 
   /* xy control */
@@ -347,7 +359,7 @@ void BaseNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr & ms
         break;
       }
     }
-  if(msg->pos_xy_nav_mode != aerial_robot_msgs::FlightNav::ACC_MODE) setTargetZeroAcc();
+  if(msg->pos_xy_nav_mode != aerial_robot_msgs::FlightNav::ACC_MODE) setTargetZeroXyAcc();
 }
 
 void BaseNavigator::joyStickControl(const sensor_msgs::JoyConstPtr & joy_msg)
@@ -422,6 +434,8 @@ void BaseNavigator::joyStickControl(const sensor_msgs::JoyConstPtr & joy_msg)
       if(getNaviState() == LAND_STATE) return;
       if(!teleop_flag_) return; /* can not do the process if other processs are running */
 
+      setZControlMode(POS_CONTROL_MODE);
+      setTargetAccZ(0);
       setNaviState(LAND_STATE);
       //update
       ROS_INFO("Joy Control: Land state");
@@ -874,6 +888,8 @@ void BaseNavigator::update()
 
 void BaseNavigator::updateLandCommand()
 {
+  setZControlMode(POS_CONTROL_MODE);
+  setTargetAccZ(0);
   // update pos and vel for z
   tf::Vector3 curr_pos = estimator_->getPos(Frame::COG, estimate_mode_);
 
@@ -1099,6 +1115,7 @@ void BaseNavigator::rosParamInit()
 
   ros::NodeHandle nh(nh_, "navigation");
   getParam<int>(nh, "xy_control_mode", xy_control_mode_, 0);
+  z_control_mode_ = POS_CONTROL_MODE;
   getParam<double>(nh, "takeoff_height", takeoff_height_, 0.0);
 
   getParam<double>(nh, "land_descend_vel",land_descend_vel_, -0.3);
@@ -1159,4 +1176,3 @@ void BaseNavigator::rosParamInit()
   getParam<double>(bat_nh, "bat_resistance_voltage_rate", bat_resistance_voltage_rate_, 0.0); //Battery internal resistance_voltage_rate
   getParam<double>(bat_nh, "hovering_current", hovering_current_, 0.0); // current at hovering state
 }
-

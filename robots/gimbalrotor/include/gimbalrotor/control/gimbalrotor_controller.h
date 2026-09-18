@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <numeric>
 #include <aerial_robot_control/control/base/pose_linear_controller.h>
 #include <aerial_robot_control/control/fully_actuated_controller.h>
@@ -62,6 +63,9 @@ private:
   int gimbal_dof_;
   int rotor_coef_;
   bool underactuate_;
+  bool gravity_compensation_;
+  double gravity_compensation_acc_ = 0.0;
+  double gravity_compensation_transition_rate_;
   double target_roll_ = 0.0, target_pitch_ = 0.0;
 
   void sendCmd() override;

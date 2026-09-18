@@ -25,6 +25,7 @@ add_message_files(FILES
   TrajCoefficients.msg
   PredXU.msg
   FixRotor.msg
+  ForceList.msg
 )
 
 # Generate actions in the 'action' folder

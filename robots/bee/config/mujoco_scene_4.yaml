@@ -1,13 +1,40 @@
 scene_name: bee_scene_4
 source_model: ../mujoco/bee/robot.xml
 output_model: ../mujoco/bee_scene_4.xml
+# Four compliant-foot Bees + one free object exceed MuJoCo's nv=60 auto
+# threshold; dense avoids instability in the passive spring dynamics.
+jacobian: dense
 
 robots:
   - name: bee1
-    pos: [0.0, 0.0, 0.0]
+    pos: [1.11547, 1.49278, 0.0]
+    quat: [0.5, 0.0, 0.0, -0.8660254]
   - name: bee2
-    pos: [1.2, 0.0, 0.0]
+    pos: [-0.43094, 0.6, 0.0]
+    quat: [1.0, 0.0, 0.0, 0.0]
   - name: bee3
-    pos: [0.0, 1.2, 0.0]
+    pos: [1.11547, -0.29278, 0.0]
+    quat: [0.5, 0.0, 0.0, 0.8660254]
   - name: bee4
-    pos: [1.2, 1.2, 0.0]
+    pos: [1.6, -0.4, 0.0]
+    quat: [0.7071068, 0.0, 0.0, 0.7071068]
+
+objects:
+  - name: grasp_pedestal
+    type: cylinder
+    # size: [radius, height]
+    size: [0.09, 0.65]
+    pos: [0.6, 0.6, 0.325]
+    friction: [0.5, 2.0, 0.001]
+    rgba: [0.35, 0.38, 0.42, 1.0]
+  - name: grasp_prism
+    type: triangular_prism
+    # size: [equilateral triangle side, height along Z]
+    size: [0.80, 0.30]
+    mass: 0.20
+    freejoint_damping: 0.5
+    pos: [0.6, 0.6, 0.800]
+    friction: [0.5, 0.5, 0.001]
+    solref: [0.02, 1.0]
+    solimp: [0.9, 0.95, 0.01]
+    rgba: [0.92, 0.45, 0.08, 1.0]

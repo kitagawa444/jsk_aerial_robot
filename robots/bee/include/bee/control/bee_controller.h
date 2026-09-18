@@ -87,12 +87,8 @@ namespace aerial_robot_control
     void externalWrenchEstimate();
     void reset() override;
 
-    /* wrench estimation members */
-    ros::Publisher estimate_external_wrench_pub_;
-    Eigen::VectorXd est_external_wrench_;
-    Eigen::VectorXd integrate_term_;
-    Eigen::VectorXd init_sum_momentum_;
-    Eigen::MatrixXd momentum_observer_matrix_;
-    double prev_est_wrench_timestamp_;
+    /* Wrench-estimation state and publisher are owned by
+       PoseLinearController.  Keeping a second copy here races the base
+       estimator thread during BeeController initialization. */
   };
 };
