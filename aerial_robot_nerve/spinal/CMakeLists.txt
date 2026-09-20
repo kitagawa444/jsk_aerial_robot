@@ -44,6 +44,8 @@ add_message_files(
   FlightConfigCmd.msg
   Vector3Int16.msg
   TorqueAllocationMatrixInv.msg
+  WrenchAllocationMatrix.msg
+  DifferentialAllocationConfig.msg
   ESCTelemetry.msg
   ESCTelemetryArray.msg
   JointProfile.msg

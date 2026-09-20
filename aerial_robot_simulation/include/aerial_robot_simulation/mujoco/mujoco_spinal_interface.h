@@ -29,7 +29,15 @@ namespace hardware_interface
     std::string getName() const{return "";}
     int getMotorNum() {return motor_num_;}
     double getForce(int index){return force_.at(index);}
-    void setForce(int index, double force) {force_.at(index) = force;}
+    void setForce(int index, double target_force)
+    {
+      double& current_force = force_.at(index);
+      if(target_force < 1e-6)
+        current_force = target_force;
+      else
+        current_force = (1.0 - rotor_damping_rate_) * current_force +
+                        rotor_damping_rate_ * target_force;
+    }
 
   private:
     /* attitude estimator */
@@ -37,6 +45,7 @@ namespace hardware_interface
     ros::NodeHandle nh_;
 
     int motor_num_;
+    double rotor_damping_rate_;
     std::vector<double> force_;
     tf::Matrix3x3 baselink_rot_;
     tf::Vector3 baselink_angular_;

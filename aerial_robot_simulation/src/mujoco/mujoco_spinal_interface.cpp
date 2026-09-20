@@ -3,7 +3,7 @@
 namespace hardware_interface
 {
   MujocoSpinalInterface::MujocoSpinalInterface():
-    on_ground_(true)
+    on_ground_(true), rotor_damping_rate_(1.0)
   {
   }
 
@@ -12,6 +12,13 @@ namespace hardware_interface
     nh_ = nh;
     motor_num_ = motor_num;
     force_.resize(motor_num_);
+    ros::NodeHandle motor_nh(nh_, "motor_info");
+    motor_nh.param("rotor_damping_rate", rotor_damping_rate_, 1.0);
+    if(rotor_damping_rate_ <= 0.0 || rotor_damping_rate_ > 1.0)
+      {
+        ROS_ERROR("invalid MuJoCo rotor damping rate %f; use 1.0", rotor_damping_rate_);
+        rotor_damping_rate_ = 1.0;
+      }
     spinal_state_estimator_.init(&nh_);
     return true;
   }

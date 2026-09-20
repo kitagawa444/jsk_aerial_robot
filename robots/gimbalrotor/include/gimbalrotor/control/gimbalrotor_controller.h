@@ -12,6 +12,8 @@
 #include <std_msgs/Empty.h>
 #include <mutex>
 #include <gimbalrotor/model/gimbalrotor_robot_model.h>
+#include <spinal/WrenchAllocationMatrix.h>
+#include <spinal/DifferentialAllocationConfig.h>
 
 namespace aerial_robot_control
 {
@@ -48,6 +50,9 @@ private:
   ros::Publisher target_vectoring_force_pub_;
   ros::Publisher torque_allocation_matrix_inv_pub_;  // for spinal
   ros::Publisher gimbal_dof_pub_;                    // for spinal
+  ros::Publisher wrench_allocation_matrix_pub_;      // physical wrench map for differential allocation
+  ros::Publisher differential_allocation_config_pub_;
+  bool hover_thrust_reference_enabled_ = false;
 
   boost::shared_ptr<GimbalrotorRobotModel> gimbalrotor_robot_model_;
   std::vector<float> target_base_thrust_;
@@ -59,6 +64,7 @@ private:
   Eigen::VectorXd target_vectoring_f_rot_;
   Eigen::MatrixXd integrated_map_inv_trans_;
   Eigen::MatrixXd integrated_map_inv_rot_;
+  Eigen::MatrixXd physical_integrated_map_;
   double candidate_yaw_term_;
   int gimbal_dof_;
   int rotor_coef_;
@@ -66,14 +72,38 @@ private:
   bool gravity_compensation_;
   double gravity_compensation_acc_ = 0.0;
   double gravity_compensation_transition_rate_;
+  double wrench_allocation_matrix_pub_stamp_ = 0.0;
+  double wrench_allocation_matrix_pub_interval_ = 0.1;
+  int differential_allocation_mode_ = spinal::DifferentialAllocationConfig::STATIC;
+  double differential_allocation_damping_ = 0.03;
+  double differential_allocation_wrench_error_gain_ = 20.0;
+  double differential_allocation_wrench_rate_feedforward_gain_ = 1.0;
+  double differential_allocation_wrench_rate_filter_ = 0.15;
+  double differential_allocation_force_weight_ = 1.0;
+  double differential_allocation_torque_weight_ = 5.0;
+  double differential_allocation_thrust_rate_weight_ = 1.0;
+  double differential_allocation_servo_rate_weight_ = 5.0;
+  double differential_allocation_servo_center_gain_ = 0.2;
+  double differential_allocation_thrust_balance_gain_ = 0.1;
+  double differential_allocation_max_thrust_rate_ = 20.0;
+  double differential_allocation_max_servo_rate_ = 2.0;
+  double differential_allocation_max_servo_acceleration_ = 10.0;
+  double differential_allocation_min_servo_angle_ = -4.0;
+  double differential_allocation_max_servo_angle_ = 4.0;
+  bool differential_allocation_servo_angle_limit_enabled_ = true;
+  double differential_allocation_thrust_time_constant_ = 0.04;
+  double differential_allocation_servo_time_constant_ = 0.05;
   double target_roll_ = 0.0, target_pitch_ = 0.0;
 
   void sendCmd() override;
   void sendFourAxisCommand();
   void sendGimbalCommand();
   void sendTorqueAllocationMatrixInv();
+  void sendDifferentialAllocationData();
 
 protected:
+  static double calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot);
+
   bool gimbal_calc_in_fc_;
   bool i_term_rp_calc_in_pc_;
   ros::Publisher rpy_gain_pub_;             // for spinal

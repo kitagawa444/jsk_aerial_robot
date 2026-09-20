@@ -1,0 +1,21 @@
+<launch>
+  <!-- MuJoCo allocation A/B test; does not change the normal flight defaults.
+       acceleration_limit=1e9 makes only the added acceleration bound inactive.
+       The gimbal speed bound remains 8 rad/s. -->
+  <arg name="wrench_gain" default="40.0"/>
+  <arg name="acceleration_limit" default="500.0"/>
+  <include file="$(find bee)/launch/bringup.launch">
+    <arg name="simulation" value="true"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_rviz" value="false"/>
+    <arg name="sim_allocation_mode" value="dld"/>
+    <arg name="sim_rotor_damping_rate" value="0.02439"/>
+  </include>
+  <param name="/bee1/controller/differential_allocation/wrench_error_gain"
+         value="$(arg wrench_gain)" type="double"/>
+  <param name="/bee1/controller/differential_allocation/max_servo_acceleration"
+         value="$(arg acceleration_limit)" type="double"/>
+  <param name="/bee1/mujoco_ros_control/real_time_factor" value="1.0"/>
+</launch>

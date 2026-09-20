@@ -32,6 +32,9 @@
   <arg name="mujoco_render_reflections" default="false" />
   <arg name="mujoco_window_width" default="960" />
   <arg name="mujoco_window_height" default="720" />
+  <!-- Runtime A/B switches for actuator-allocation evaluation. -->
+  <arg name="sim_allocation_mode" default="dld" />
+  <arg name="sim_rotor_damping_rate" default="0.02439" />
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
@@ -48,6 +51,8 @@
 
    ###########  Motor Config  ###########
    <rosparam file="$(arg config_dir)/MotorInfo.yaml" command="load" />
+   <param name="motor_info/rotor_damping_rate" value="$(arg sim_rotor_damping_rate)"
+          if="$(arg simulation)"/>
 
    ###########  Servo Config  ###########
    <rosparam file="$(arg config_dir)/Servo.yaml" command="load"/>
@@ -58,6 +63,32 @@
    ###########  Control  ###########
    <rosparam file="$(arg config_dir)/BeeControl.yaml" command="load" if="$(eval not simulation)"/>
    <rosparam file="$(arg config_dir)/BeeControl_sim.yaml" command="load" if="$(eval simulation)"/>
+   <param name="controller/allocation_mode" value="$(arg sim_allocation_mode)"
+          if="$(arg simulation)"/>
+   <!-- The two simulator servo plants have different measured responses.
+        Keep Gazebo values in BeeControl_sim.yaml and override only MuJoCo. -->
+   <!-- Cartwheel test: no nullspace attraction toward zero gimbal angle. -->
+   <!-- Validated in MuJoCo's 0 to 40 deg body-Z rotation/hold test.
+        Keep Gazebo and hardware attitude gains unchanged. -->
+   <param name="controller/roll_pitch/p_gain" value="40.0"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <!-- Reduced CoG position error in two 0 to 40 deg cartwheel trials.
+        Keep XY damping/integral and Z gains unchanged. -->
+   <param name="controller/xy/p_gain" value="1.5"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <param name="controller/differential_allocation/hover_thrust_reference_enabled" value="true"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <param name="controller/differential_allocation/servo_center_gain" value="0.0"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <!-- Fixed-base MuJoCo step-response fit: tau = 19.59 ms. -->
+   <param name="controller/differential_allocation/servo_time_constant" value="0.0196"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <param name="controller/differential_allocation/max_servo_rate" value="8.0"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
+   <!-- Effectively disable the allocator-only acceleration bound;
+        retain the 8 rad/s rate bound. This is not a hardware limit. -->
+   <param name="controller/differential_allocation/max_servo_acceleration" value="1000000000.0"
+          if="$(eval arg('simulation') and arg('mujoco'))"/>
    ###########  Sensor Fusion  ###########
    <rosparam file="$(arg config_dir)/StateEstimation.yaml" command="load" />
    <rosparam file="$(arg config_dir)/Simulation.yaml" command="load" if="$(eval arg('simulation') and not arg('real_machine'))"/>

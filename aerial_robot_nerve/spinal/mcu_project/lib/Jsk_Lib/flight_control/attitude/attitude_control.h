@@ -15,10 +15,10 @@
 #ifndef SIMULATION
 #include "config.h"
 #include <ros.h>
-#include <sensor_msgs/JointState.h>
 #else
 #include <ros/ros.h>
 #endif
+#include <sensor_msgs/JointState.h>
 
 #include <math/AP_Math.h>
 #include <vector>
@@ -52,6 +52,8 @@
 #include <spinal/UavInfo.h>
 #include <spinal/PMatrixPseudoInverseWithInertia.h>
 #include <spinal/TorqueAllocationMatrixInv.h>
+#include <spinal/WrenchAllocationMatrix.h>
+#include <spinal/DifferentialAllocationConfig.h>
 #include <spinal/ServoControlCmd.h>
 
 #define IDLE_DUTY 0.5f
@@ -134,10 +136,14 @@ private:
   ros::Subscriber pwm_test_sub_;
   ros::Subscriber p_matrix_pseudo_inverse_inertia_sub_;
   ros::Subscriber torque_allocation_matrix_inv_sub_;
+  ros::Subscriber wrench_allocation_matrix_sub_;
+  ros::Subscriber differential_allocation_config_sub_;
+  ros::Subscriber joint_state_sub_;
   ros::Subscriber sim_vol_sub_;
   ros::Subscriber offset_rot_sub_;
   ros::Publisher anti_gyro_pub_;
   ros::Publisher gimbal_control_pub_;
+  ros::Publisher differential_allocation_debug_pub_;
   ros::ServiceServer att_control_srv_;
 
   bool setAttitudeControlCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res) { att_control_flag_ = req.data; return true;}
@@ -151,6 +157,8 @@ private:
   ros::Subscriber<spinal::PwmTest, AttitudeController> pwm_test_sub_;
   ros::Subscriber<spinal::PMatrixPseudoInverseWithInertia, AttitudeController> p_matrix_pseudo_inverse_inertia_sub_;
   ros::Subscriber<spinal::TorqueAllocationMatrixInv, AttitudeController> torque_allocation_matrix_inv_sub_;
+  ros::Subscriber<spinal::WrenchAllocationMatrix, AttitudeController> wrench_allocation_matrix_sub_;
+  ros::Subscriber<spinal::DifferentialAllocationConfig, AttitudeController> differential_allocation_config_sub_;
   ros::Subscriber<spinal::DesireCoord, AttitudeController> offset_rot_sub_;
   ros::ServiceServer<std_srvs::SetBool::Request, std_srvs::SetBool::Response, AttitudeController> att_control_srv_;
 
@@ -217,6 +225,82 @@ private:
   float target_pwm_[MAX_MOTOR_NUMBER];
   float target_gimbal_angles_[MAX_MOTOR_NUMBER];
   float prev_gimbal_angles_[MAX_MOTOR_NUMBER];
+
+  /* Differential allocation for one-DoF tilting rotors.  The allocation
+   * state is the commanded thrust and gimbal angle; measured actuator states
+   * can be incorporated later without changing the allocator interface. */
+  uint8_t differential_allocation_mode_;
+  bool wrench_allocation_matrix_received_;
+  bool differential_allocator_initialized_;
+  float wrench_allocation_matrix_[6][MAX_MOTOR_NUMBER];
+  float allocator_thrust_[MAX_MOTOR_NUMBER];
+  bool hover_thrust_reference_enabled_ = false;
+  bool hover_thrust_capture_allowed_ = false;
+  uint32_t hover_thrust_capture_stamp_ = 0;
+  float hover_thrust_reference_ = 0.0f;
+  float hover_thrust_sample_time_ = 0.0f;
+  float hover_thrust_sample_integral_ = 0.0f;
+  float hover_thrust_sample_start_ = 0.0f;
+  float allocator_gimbal_angle_[MAX_MOTOR_NUMBER];
+  float allocator_thrust_command_[MAX_MOTOR_NUMBER];
+  float allocator_gimbal_command_[MAX_MOTOR_NUMBER];
+  float allocator_thrust_rate_[MAX_MOTOR_NUMBER];
+  float allocator_gimbal_rate_[MAX_MOTOR_NUMBER];
+  float previous_desired_wrench_[6];
+  float filtered_desired_wrench_rate_[6];
+  /* Keep the fixed-size solver workspace out of the flight-control task
+   * stack.  In particular, the legacy F7 target only allocates 1 KiB to
+   * that task. */
+  float differential_desired_virtual_force_[MAX_MOTOR_NUMBER];
+  float differential_desired_wrench_[6];
+  float differential_current_virtual_force_[MAX_MOTOR_NUMBER];
+  float differential_current_wrench_[6];
+  float differential_jacobian_[6][MAX_MOTOR_NUMBER];
+  float differential_weighted_jacobian_[6][MAX_MOTOR_NUMBER];
+  float differential_weighted_wrench_rate_reference_[6];
+  float differential_inverse_rate_weight_[MAX_MOTOR_NUMBER];
+  float differential_normal_matrix_[6][6];
+  float differential_task_dual_[6];
+  float differential_actuator_rate_[MAX_MOTOR_NUMBER];
+  float differential_secondary_rate_[MAX_MOTOR_NUMBER];
+  float differential_rate_center_[MAX_MOTOR_NUMBER];
+  float differential_rate_half_range_[MAX_MOTOR_NUMBER];
+  uint8_t differential_lower_limit_reason_[MAX_MOTOR_NUMBER];
+  uint8_t differential_upper_limit_reason_[MAX_MOTOR_NUMBER];
+  float differential_secondary_wrench_rate_[6];
+  float differential_secondary_dual_[6];
+  float differential_solver_augmented_[6][7];
+  float differential_allocation_damping_;
+  float differential_allocation_wrench_error_gain_;
+  float differential_allocation_wrench_rate_feedforward_gain_;
+  float differential_allocation_wrench_rate_filter_;
+  float differential_allocation_force_weight_;
+  float differential_allocation_torque_weight_;
+  float differential_allocation_thrust_rate_weight_;
+  float differential_allocation_servo_rate_weight_;
+  float differential_allocation_servo_center_gain_;
+  float differential_allocation_thrust_balance_gain_;
+  float differential_allocation_max_thrust_rate_;
+  float differential_allocation_max_servo_rate_;
+  float differential_allocation_max_servo_acceleration_;
+  float differential_allocation_min_servo_angle_;
+  float differential_allocation_max_servo_angle_;
+  bool differential_allocation_servo_angle_limit_enabled_;
+  float differential_allocation_thrust_time_constant_;
+  float differential_allocation_servo_time_constant_;
+  float differential_uniform_scale_;
+  int differential_limiting_input_;
+  uint8_t differential_limiting_bound_reason_;
+#ifdef SIMULATION
+  uint32_t differential_allocation_debug_pub_last_time_;
+  uint32_t gimbal_state_last_time_;
+  bool gimbal_state_received_[MAX_MOTOR_NUMBER];
+  float measured_gimbal_angle_[MAX_MOTOR_NUMBER];
+  float differential_unscaled_normalized_rate_[MAX_MOTOR_NUMBER];
+  float differential_jacobian_min_singular_value_;
+  float differential_jacobian_max_singular_value_;
+  float differential_jacobian_condition_number_;
+#endif
   float min_duty_;
   float max_duty_;
   float min_thrust_; // max thrust is variant according to the voltage
@@ -236,7 +320,20 @@ private:
   void rpyGainCallback( const spinal::RollPitchYawTerms &gain_msg);
   void pMatrixInertiaCallback(const spinal::PMatrixPseudoInverseWithInertia& msg);
   void torqueAllocationMatrixInvCallback(const spinal::TorqueAllocationMatrixInv& msg);
+  void wrenchAllocationMatrixCallback(const spinal::WrenchAllocationMatrix& msg);
+  void differentialAllocationConfigCallback(const spinal::DifferentialAllocationConfig& msg);
+#ifdef SIMULATION
+  void jointStateCallback(const sensor_msgs::JointState& msg);
+#endif
   void offsetRotCallback(const spinal::DesireCoord& msg);
+
+  bool differentialAllocationUpdate(float dt, float maximum_thrust);
+  bool solveDifferentialAllocationSystem(const float matrix[6][6], const float rhs[6], float solution[6]);
+#ifdef SIMULATION
+  void publishDifferentialAllocationDebug(const float desired_wrench[6], const float current_wrench[6],
+                                          int physical_rotor_number);
+  void updateDifferentialAllocationConditionDebug();
+#endif
 
   void thrustGainMapping();
   void maxYawGainIndex();

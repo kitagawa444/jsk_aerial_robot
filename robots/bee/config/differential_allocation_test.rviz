@@ -1,0 +1,250 @@
+Panels:
+  - Class: rviz/Displays
+    Help Height: 70
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 635
+Preferences:
+  PromptSaveOnExit: true
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.5
+      Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Alpha: 1
+      Class: rviz/RobotModel
+      Collision Enabled: false
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        contact_point:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        fc:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        gimbal_link1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        gimbal_link2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        gimbal_link3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        gimbal_link4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        lidar_imu:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        root:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_arm4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_parent1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_parent2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_parent3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        rotor_parent4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        spring_foot_front:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        spring_foot_left:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        spring_foot_rear:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        spring_foot_right:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        thrust1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        thrust2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        thrust3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        thrust4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+      Name: Bee1
+      Robot Description: /bee1/robot_description
+      TF Prefix: bee1
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Class: rviz/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        bee1/base_link:
+          Value: true
+        bee1/cog:
+          Value: true
+        bee1/contact_point:
+          Value: true
+        bee1/fc:
+          Value: true
+        bee1/gimbal_link1:
+          Value: true
+        bee1/gimbal_link2:
+          Value: true
+        bee1/gimbal_link3:
+          Value: true
+        bee1/gimbal_link4:
+          Value: true
+        bee1/lidar_imu:
+          Value: true
+        bee1/root:
+          Value: true
+        bee1/rotor_arm1:
+          Value: true
+        bee1/rotor_arm2:
+          Value: true
+        bee1/rotor_arm3:
+          Value: true
+        bee1/rotor_arm4:
+          Value: true
+        bee1/rotor_parent1:
+          Value: true
+        bee1/rotor_parent2:
+          Value: true
+        bee1/rotor_parent3:
+          Value: true
+        bee1/rotor_parent4:
+          Value: true
+        bee1/thrust1:
+          Value: true
+        bee1/thrust2:
+          Value: true
+        bee1/thrust3:
+          Value: true
+        bee1/thrust4:
+          Value: true
+        world:
+          Value: true
+      Marker Alpha: 1
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        world:
+          bee1/root:
+            bee1/base_link:
+              bee1/fc:
+                {}
+              bee1/lidar_imu:
+                {}
+              bee1/rotor_arm1:
+                bee1/gimbal_link1:
+                  bee1/rotor_parent1:
+                    bee1/thrust1:
+                      {}
+              bee1/rotor_arm2:
+                bee1/gimbal_link2:
+                  bee1/rotor_parent2:
+                    bee1/thrust2:
+                      {}
+              bee1/rotor_arm3:
+                bee1/gimbal_link3:
+                  bee1/rotor_parent3:
+                    bee1/thrust3:
+                      {}
+              bee1/rotor_arm4:
+                bee1/gimbal_link4:
+                  bee1/rotor_parent4:
+                    bee1/thrust4:
+                      {}
+            bee1/cog:
+              {}
+            bee1/contact_point:
+              {}
+      Update Interval: 0

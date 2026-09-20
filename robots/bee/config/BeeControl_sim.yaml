@@ -10,6 +10,32 @@ controller:
   wrench_allocation_matrix_pub_interval: 0.1
   gimbal_calc_in_fc : true
   gimbal_angle_calc_in_fc : true
+  allocation_mode: dld
+
+  differential_allocation:
+    damping: 0.0
+    wrench_error_gain: 40.0
+    wrench_rate_feedforward_gain: 0.0
+    wrench_rate_filter: 0.15
+    force_weight: 1.0
+    torque_weight: 5.0
+    thrust_rate_weight: 1.0
+    servo_rate_weight: 2.0
+    servo_center_gain: 0.05
+    thrust_balance_gain: 0.02
+    max_thrust_rate: 120.0
+    max_servo_rate: 2.0
+    max_servo_acceleration: 200.0
+    min_servo_angle: -4.0
+    max_servo_angle: 4.0
+    # Bee uses multi-turn gimbals. Keep the values above only as a fallback for
+    # platforms with bounded joints; do not constrain Bee's differential path.
+    servo_angle_limit_enabled: false
+    # Motor-test force data gives about 0.04 s in the in-flight thrust range.
+    # Gazebo's 0.5 rad step reaches 63% in about 0.07 s. MuJoCo's faster
+    # identified values are overridden by bringup.launch.
+    thrust_time_constant: 0.04
+    servo_time_constant: 0.07
   # Compensate the Bee's own weight explicitly.  The Z integral term then only
   # has to absorb mass/thrust-model errors instead of building up to g.
   gravity_compensation: true
@@ -17,6 +43,7 @@ controller:
   gravity_compensation_transition_rate: 2.0
 
   xy:
+    # Gazebo default; MuJoCo overrides p_gain to 1.5 in bringup.launch.
     p_gain: 1.0
     i_gain: 0.05
     d_gain: 4.5
@@ -37,6 +64,7 @@ controller:
     force_landing_descending_rate: -0.5
 
   roll_pitch:
+    # Gazebo default; MuJoCo overrides p_gain to 40.0 in bringup.launch.
     p_gain: 30.0
     i_gain: 0.05
     d_gain: 5.0

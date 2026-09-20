@@ -12,6 +12,7 @@
 #include "flight_control/attitude/attitude_control.h"
 
 #ifdef SIMULATION
+#include <cstdlib>
 #include <sensor_msgs/JointState.h>
 AttitudeController::AttitudeController(): DELTA_T(0), prev_time_(-1), sim_voltage_(0)
 {
@@ -33,10 +34,14 @@ void AttitudeController::init(ros::NodeHandle* nh, StateEstimate* estimator)
   pwm_test_sub_ = nh_->subscribe("pwm_test", 1, &AttitudeController::pwmTestCallback, this);
   att_control_srv_ = nh_->advertiseService("set_attitude_control", &AttitudeController::setAttitudeControlCallback, this);
   torque_allocation_matrix_inv_sub_ = nh_->subscribe("torque_allocation_matrix_inv", 1, &AttitudeController::torqueAllocationMatrixInvCallback, this);
+  wrench_allocation_matrix_sub_ = nh_->subscribe("wrench_allocation_matrix", 1, &AttitudeController::wrenchAllocationMatrixCallback, this);
+  differential_allocation_config_sub_ = nh_->subscribe("differential_allocation_config", 1, &AttitudeController::differentialAllocationConfigCallback, this);
+  joint_state_sub_ = nh_->subscribe("joint_states", 1, &AttitudeController::jointStateCallback, this);
   sim_vol_sub_ = nh_->subscribe("set_sim_voltage", 1, &AttitudeController::setSimVolCallback, this);
   offset_rot_sub_ = nh_->subscribe("desire_coordinate", 1, &AttitudeController::offsetRotCallback, this);
   baseInit();
   gimbal_control_pub_ = nh_->advertise<sensor_msgs::JointState>("gimbals_ctrl", 1);
+  differential_allocation_debug_pub_ = nh_->advertise<std_msgs::Float32MultiArray>("debug/differential_allocation", 1);
 }
 
 #else
@@ -51,6 +56,8 @@ AttitudeController::AttitudeController():
   pwm_test_sub_("pwm_test", &AttitudeController::pwmTestCallback, this ),
   p_matrix_pseudo_inverse_inertia_sub_("p_matrix_pseudo_inverse_inertia", &AttitudeController::pMatrixInertiaCallback, this),
   torque_allocation_matrix_inv_sub_("torque_allocation_matrix_inv", &AttitudeController::torqueAllocationMatrixInvCallback, this),
+  wrench_allocation_matrix_sub_("wrench_allocation_matrix", &AttitudeController::wrenchAllocationMatrixCallback, this),
+  differential_allocation_config_sub_("differential_allocation_config", &AttitudeController::differentialAllocationConfigCallback, this),
   offset_rot_sub_("desire_coordinate", &AttitudeController::offsetRotCallback, this ),
   att_control_srv_("set_attitude_control", &AttitudeController::setAttitudeControlCallback, this),
   esc_telem_pub_("esc_telem", &esc_telem_msg_),
@@ -121,6 +128,8 @@ void AttitudeController::init(TIM_HandleTypeDef* htim1, TIM_HandleTypeDef* htim2
   nh_->subscribe(pwm_test_sub_);
   nh_->subscribe(p_matrix_pseudo_inverse_inertia_sub_);
   nh_->subscribe(torque_allocation_matrix_inv_sub_);
+  nh_->subscribe(wrench_allocation_matrix_sub_);
+  nh_->subscribe(differential_allocation_config_sub_);
   nh_->subscribe(offset_rot_sub_);
 
   nh_->advertiseService(att_control_srv_);
@@ -157,6 +166,51 @@ void AttitudeController::baseInit()
 
   control_term_pub_last_time_ = 0;
   control_feedback_state_pub_last_time_ = 0;
+
+  differential_allocation_mode_ = spinal::DifferentialAllocationConfig::STATIC;
+  wrench_allocation_matrix_received_ = false;
+  differential_allocator_initialized_ = false;
+  differential_allocation_damping_ = 0.03f;
+  differential_allocation_wrench_error_gain_ = 20.0f;
+  differential_allocation_wrench_rate_feedforward_gain_ = 1.0f;
+  differential_allocation_wrench_rate_filter_ = 0.15f;
+  differential_allocation_force_weight_ = 1.0f;
+  differential_allocation_torque_weight_ = 5.0f;
+  differential_allocation_thrust_rate_weight_ = 1.0f;
+  differential_allocation_servo_rate_weight_ = 5.0f;
+  differential_allocation_servo_center_gain_ = 0.2f;
+  differential_allocation_thrust_balance_gain_ = 0.1f;
+  differential_allocation_max_thrust_rate_ = 20.0f;
+  differential_allocation_max_servo_rate_ = 2.0f;
+  differential_allocation_max_servo_acceleration_ = 10.0f;
+  differential_allocation_min_servo_angle_ = -4.0f;
+  differential_allocation_max_servo_angle_ = 4.0f;
+  differential_allocation_servo_angle_limit_enabled_ = true;
+  differential_allocation_thrust_time_constant_ = 0.04f;
+  differential_allocation_servo_time_constant_ = 0.05f;
+  differential_uniform_scale_ = 1.0f;
+  differential_limiting_input_ = -1;
+  differential_limiting_bound_reason_ = 0;
+#ifdef SIMULATION
+  differential_allocation_debug_pub_last_time_ = 0;
+  gimbal_state_last_time_ = 0;
+  differential_jacobian_min_singular_value_ = 0.0f;
+  differential_jacobian_max_singular_value_ = 0.0f;
+  differential_jacobian_condition_number_ = 0.0f;
+  for(int rotor = 0; rotor < MAX_MOTOR_NUMBER; ++rotor)
+    {
+      gimbal_state_received_[rotor] = false;
+      measured_gimbal_angle_[rotor] = 0.0f;
+      differential_unscaled_normalized_rate_[rotor] = 0.0f;
+    }
+#endif
+  for(int row = 0; row < 6; ++row)
+    {
+      previous_desired_wrench_[row] = 0.0f;
+      filtered_desired_wrench_rate_[row] = 0.0f;
+      for(int col = 0; col < MAX_MOTOR_NUMBER; ++col)
+        wrench_allocation_matrix_[row][col] = 0.0f;
+    }
 
   // frame
   offset_rot_.identity();
@@ -460,6 +514,12 @@ void AttitudeController::reset(void)
       roll_pitch_term_[i] = 0;
       yaw_term_[i] = 0;
       extra_yaw_pi_term_[i] = 0;
+      allocator_thrust_[i] = 0.0f;
+      allocator_gimbal_angle_[i] = 0.0f;
+      allocator_thrust_command_[i] = 0.0f;
+      allocator_gimbal_command_[i] = 0.0f;
+      allocator_thrust_rate_[i] = 0.0f;
+      allocator_gimbal_rate_[i] = 0.0f;
 
       for (int j = 0; j < 3; j++)
         {
@@ -482,6 +542,12 @@ void AttitudeController::reset(void)
 
   max_yaw_term_index_ = -1;
   integrate_flag_ = false;
+  differential_allocator_initialized_ = false;
+  for(int i = 0; i < 6; ++i)
+    {
+      previous_desired_wrench_[i] = 0.0f;
+      filtered_desired_wrench_rate_[i] = 0.0f;
+    }
 
   /* failsafe */
   failsafe_ = false;
@@ -550,7 +616,9 @@ void AttitudeController::fourAxisCommandCallback( const spinal::FourAxisCommand 
   target_angle_[X] = cmd_msg.angles[0];
   target_angle_[Y] = cmd_msg.angles[1];
   int max_yaw_term_index = max_yaw_term_index_;
-  float max_yaw_thrust_d_gain = thrust_d_gain_[max_yaw_term_index][Z];
+  float max_yaw_thrust_d_gain = 0;
+  if(max_yaw_term_index != -1)
+    max_yaw_thrust_d_gain = thrust_d_gain_[max_yaw_term_index][Z];
   for(int i = 0; i < motor_number_; i++)
     {
       // base thrust is about the z control
@@ -559,6 +627,8 @@ void AttitudeController::fourAxisCommandCallback( const spinal::FourAxisCommand 
       // reconstruct the pi term for yaw (temporary measure for pwm saturation avoidance)
       if(max_yaw_term_index != -1)
         extra_yaw_pi_term_[i] = cmd_msg.angles[Z] * thrust_d_gain_[i][Z] / max_yaw_thrust_d_gain;
+      else
+        extra_yaw_pi_term_[i] = 0;
     }
 
 #ifndef SIMULATION
@@ -704,6 +774,111 @@ void AttitudeController::torqueAllocationMatrixInvCallback(const spinal::TorqueA
 #endif
 }
 
+void AttitudeController::wrenchAllocationMatrixCallback(const spinal::WrenchAllocationMatrix& msg)
+{
+  if(motor_number_ == 0) return;
+
+#ifdef SIMULATION
+  if(msg.force_rows.size() != motor_number_ || msg.torque_rows.size() != motor_number_)
+    {
+      ROS_ERROR("wrenchAllocationMatrixCallback: expected %d columns, received %ld force and %ld torque columns",
+                motor_number_, msg.force_rows.size(), msg.torque_rows.size());
+      return;
+    }
+#else
+  if(msg.force_rows_length != motor_number_ || msg.torque_rows_length != motor_number_)
+    {
+      nh_->logerror("wrenchAllocationMatrixCallback: allocation matrix size mismatch");
+      return;
+    }
+  if(mutex_ != NULL) osMutexWait(*mutex_, osWaitForever);
+#endif
+
+  for(int col = 0; col < motor_number_; ++col)
+    {
+      wrench_allocation_matrix_[0][col] = msg.force_rows[col].x * 0.001f;
+      wrench_allocation_matrix_[1][col] = msg.force_rows[col].y * 0.001f;
+      wrench_allocation_matrix_[2][col] = msg.force_rows[col].z * 0.001f;
+      wrench_allocation_matrix_[3][col] = msg.torque_rows[col].x * 0.001f;
+      wrench_allocation_matrix_[4][col] = msg.torque_rows[col].y * 0.001f;
+      wrench_allocation_matrix_[5][col] = msg.torque_rows[col].z * 0.001f;
+    }
+  wrench_allocation_matrix_received_ = true;
+
+#ifndef SIMULATION
+  if(mutex_ != NULL) osMutexRelease(*mutex_);
+#endif
+}
+
+void AttitudeController::differentialAllocationConfigCallback(const spinal::DifferentialAllocationConfig& msg)
+{
+#ifndef SIMULATION
+  if(mutex_ != NULL) osMutexWait(*mutex_, osWaitForever);
+#endif
+
+  uint8_t mode = msg.mode;
+  if(hover_thrust_reference_enabled_ != msg.hover_thrust_reference_enabled ||
+     differential_allocation_mode_ != msg.mode)
+    {
+      hover_thrust_reference_ = 0.0f;
+      hover_thrust_sample_time_ = 0.0f;
+      hover_thrust_sample_integral_ = 0.0f;
+    }
+  hover_thrust_reference_enabled_ = msg.hover_thrust_reference_enabled;
+  hover_thrust_capture_allowed_ = msg.hover_thrust_capture_allowed;
+  hover_thrust_capture_stamp_ = HAL_GetTick();
+  if(mode != spinal::DifferentialAllocationConfig::DIFFERENTIAL &&
+     mode != spinal::DifferentialAllocationConfig::DYNAMIC_LIMIT_DECOMPOSITION)
+    mode = spinal::DifferentialAllocationConfig::STATIC;
+  if(mode != differential_allocation_mode_)
+    differential_allocator_initialized_ = false;
+  differential_allocation_mode_ = mode;
+  differential_allocation_damping_ = fmaxf(0.0f, msg.damping);
+  differential_allocation_wrench_error_gain_ = fmaxf(0.0f, msg.wrench_error_gain);
+  differential_allocation_wrench_rate_feedforward_gain_ = fmaxf(0.0f, msg.wrench_rate_feedforward_gain);
+  differential_allocation_wrench_rate_filter_ = fminf(1.0f, fmaxf(0.0f, msg.wrench_rate_filter));
+  differential_allocation_force_weight_ = fmaxf(1e-6f, msg.force_weight);
+  differential_allocation_torque_weight_ = fmaxf(1e-6f, msg.torque_weight);
+  differential_allocation_thrust_rate_weight_ = fmaxf(1e-6f, msg.thrust_rate_weight);
+  differential_allocation_servo_rate_weight_ = fmaxf(1e-6f, msg.servo_rate_weight);
+  differential_allocation_servo_center_gain_ = fmaxf(0.0f, msg.servo_center_gain);
+  differential_allocation_thrust_balance_gain_ = fmaxf(0.0f, msg.thrust_balance_gain);
+  differential_allocation_max_thrust_rate_ = fmaxf(0.0f, msg.max_thrust_rate);
+  differential_allocation_max_servo_rate_ = fmaxf(0.0f, msg.max_servo_rate);
+  differential_allocation_max_servo_acceleration_ = fmaxf(0.0f, msg.max_servo_acceleration);
+  differential_allocation_min_servo_angle_ = fminf(msg.min_servo_angle, msg.max_servo_angle);
+  differential_allocation_max_servo_angle_ = fmaxf(msg.min_servo_angle, msg.max_servo_angle);
+  differential_allocation_servo_angle_limit_enabled_ = msg.servo_angle_limit_enabled;
+  differential_allocation_thrust_time_constant_ = fmaxf(1e-3f, msg.thrust_time_constant);
+  differential_allocation_servo_time_constant_ = fmaxf(1e-3f, msg.servo_time_constant);
+
+#ifndef SIMULATION
+  if(mutex_ != NULL) osMutexRelease(*mutex_);
+#endif
+}
+
+#ifdef SIMULATION
+void AttitudeController::jointStateCallback(const sensor_msgs::JointState& msg)
+{
+  bool received = false;
+  for(size_t joint = 0; joint < msg.name.size() && joint < msg.position.size(); ++joint)
+    {
+      const std::string& name = msg.name[joint];
+      if(name.compare(0, 6, "gimbal") != 0) continue;
+      const char* index_begin = name.c_str() + 6;
+      char* index_end = NULL;
+      const long one_based_index = strtol(index_begin, &index_end, 10);
+      if(index_end == index_begin || one_based_index <= 0 || one_based_index > MAX_MOTOR_NUMBER) continue;
+      const int rotor = static_cast<int>(one_based_index - 1);
+      if(!std::isfinite(msg.position[joint])) continue;
+      measured_gimbal_angle_[rotor] = static_cast<float>(msg.position[joint]);
+      gimbal_state_received_[rotor] = true;
+      received = true;
+    }
+  if(received) gimbal_state_last_time_ = HAL_GetTick();
+}
+#endif
+
 void AttitudeController::thrustGainMapping()
 {
   for(int i = 0; i < motor_number_; i++)
@@ -721,15 +896,15 @@ void AttitudeController::thrustGainMapping()
 
 void AttitudeController::maxYawGainIndex()
 {
-  float max_yaw_gain = 0;
+  float max_abs_yaw_gain = 0;
   max_yaw_term_index_ = -1;
   for(int i = 0; i < motor_number_; i++)
     {
-      /* only find the maximum (positive) value */
-      /* to avoid identical absolute value */
-      if(thrust_d_gain_[i][Z] > max_yaw_gain)
+      const float abs_yaw_gain = fabs(thrust_d_gain_[i][Z]);
+      /* Keep the original sign; only the magnitude determines the reference. */
+      if(abs_yaw_gain > max_abs_yaw_gain)
         {
-          max_yaw_gain = thrust_d_gain_[i][Z];
+          max_abs_yaw_gain = abs_yaw_gain;
           max_yaw_term_index_ = i;
         }
     }
@@ -897,6 +1072,625 @@ bool AttitudeController::activated()
   if(motor_number_ > 0 && uav_model_ >= spinal::UavInfo::DRONE && max_duty_ > min_duty_) return true;
   else return false;
 }
+
+bool AttitudeController::solveDifferentialAllocationSystem(const float matrix[6][6], const float rhs[6],
+                                                           float solution[6])
+{
+  for(int row = 0; row < 6; ++row)
+    {
+      for(int col = 0; col < 6; ++col) differential_solver_augmented_[row][col] = matrix[row][col];
+      differential_solver_augmented_[row][6] = rhs[row];
+    }
+
+  for(int pivot_col = 0; pivot_col < 6; ++pivot_col)
+    {
+      int pivot_row = pivot_col;
+      float pivot_abs = fabsf(differential_solver_augmented_[pivot_row][pivot_col]);
+      for(int row = pivot_col + 1; row < 6; ++row)
+        {
+          const float candidate_abs = fabsf(differential_solver_augmented_[row][pivot_col]);
+          if(candidate_abs > pivot_abs)
+            {
+              pivot_abs = candidate_abs;
+              pivot_row = row;
+            }
+        }
+      if(pivot_abs < 1e-9f || !std::isfinite(pivot_abs)) return false;
+
+      if(pivot_row != pivot_col)
+        for(int col = pivot_col; col < 7; ++col)
+          {
+            const float tmp = differential_solver_augmented_[pivot_col][col];
+            differential_solver_augmented_[pivot_col][col] = differential_solver_augmented_[pivot_row][col];
+            differential_solver_augmented_[pivot_row][col] = tmp;
+          }
+
+      const float pivot = differential_solver_augmented_[pivot_col][pivot_col];
+      for(int col = pivot_col; col < 7; ++col) differential_solver_augmented_[pivot_col][col] /= pivot;
+      for(int row = 0; row < 6; ++row)
+        {
+          if(row == pivot_col) continue;
+          const float factor = differential_solver_augmented_[row][pivot_col];
+          for(int col = pivot_col; col < 7; ++col)
+            differential_solver_augmented_[row][col] -= factor * differential_solver_augmented_[pivot_col][col];
+        }
+    }
+
+  for(int row = 0; row < 6; ++row)
+    {
+      solution[row] = differential_solver_augmented_[row][6];
+      if(!std::isfinite(solution[row])) return false;
+    }
+  return true;
+}
+
+bool AttitudeController::differentialAllocationUpdate(float dt, float maximum_thrust)
+{
+  if(gimbal_dof_ != 1 || rotor_coef_ != 2 || !wrench_allocation_matrix_received_) return false;
+  if(motor_number_ <= 0 || motor_number_ > MAX_MOTOR_NUMBER || motor_number_ % rotor_coef_ != 0) return false;
+
+  const int physical_rotor_number = motor_number_ / rotor_coef_;
+  const bool dynamic_limit_decomposition =
+      differential_allocation_mode_ ==
+      spinal::DifferentialAllocationConfig::DYNAMIC_LIMIT_DECOMPOSITION;
+  float minimum_thrust = 0.0f;
+#ifndef SIMULATION
+  minimum_thrust = fminf(fmaxf(min_thrust_ * rotor_devider_, 0.0f), maximum_thrust);
+#endif
+  for(int input = 0; input < motor_number_; ++input)
+    differential_desired_virtual_force_[input] = target_thrust_[input];
+
+  for(int row = 0; row < 6; ++row)
+    {
+      differential_desired_wrench_[row] = 0.0f;
+      for(int input = 0; input < motor_number_; ++input)
+        differential_desired_wrench_[row] +=
+            wrench_allocation_matrix_[row][input] * differential_desired_virtual_force_[input];
+    }
+
+  if(!differential_allocator_initialized_)
+    {
+      for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+        {
+          const float tangential_force = differential_desired_virtual_force_[2 * rotor];
+          const float axial_force = differential_desired_virtual_force_[2 * rotor + 1];
+          float angle = atan2f(-tangential_force, axial_force);
+          const float previous_angle = target_gimbal_angles_[rotor];
+          while(angle - previous_angle > M_PI) angle -= 2.0f * M_PI;
+          while(angle - previous_angle < -M_PI) angle += 2.0f * M_PI;
+          allocator_thrust_[rotor] = fminf(fmaxf(ap::pythagorous2(tangential_force, axial_force), 0.0f),
+                                           maximum_thrust);
+          allocator_gimbal_angle_[rotor] = angle;
+          if(differential_allocation_servo_angle_limit_enabled_)
+            allocator_gimbal_angle_[rotor] =
+                fminf(fmaxf(angle, differential_allocation_min_servo_angle_),
+                      differential_allocation_max_servo_angle_);
+#ifdef SIMULATION
+          if(dynamic_limit_decomposition && gimbal_state_received_[rotor] &&
+             HAL_GetTick() - gimbal_state_last_time_ < 200)
+            allocator_gimbal_angle_[rotor] = measured_gimbal_angle_[rotor];
+#endif
+          allocator_thrust_command_[rotor] = allocator_thrust_[rotor];
+          allocator_gimbal_command_[rotor] = allocator_gimbal_angle_[rotor];
+          allocator_thrust_rate_[rotor] = 0.0f;
+          allocator_gimbal_rate_[rotor] = 0.0f;
+          target_thrust_[rotor] = allocator_thrust_command_[rotor];
+          target_gimbal_angles_[rotor] = allocator_gimbal_command_[rotor];
+        }
+      for(int row = 0; row < 6; ++row)
+        {
+          previous_desired_wrench_[row] = differential_desired_wrench_[row];
+          filtered_desired_wrench_rate_[row] = 0.0f;
+        }
+      differential_allocator_initialized_ = true;
+      return true;
+    }
+
+  // A delayed sample must not be integrated into a large actuator step.
+  if(!std::isfinite(dt) || dt <= 1e-5f || dt > 0.05f)
+    {
+      for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+        {
+          target_thrust_[rotor] = dynamic_limit_decomposition ? allocator_thrust_command_[rotor]
+                                                               : allocator_thrust_[rotor];
+          target_gimbal_angles_[rotor] = dynamic_limit_decomposition ? allocator_gimbal_command_[rotor]
+                                                                      : allocator_gimbal_angle_[rotor];
+        }
+      return true;
+    }
+
+  if(dynamic_limit_decomposition)
+    {
+      const float thrust_response = fminf(1.0f, dt / differential_allocation_thrust_time_constant_);
+      const float servo_response = fminf(1.0f, dt / differential_allocation_servo_time_constant_);
+      for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+        {
+          allocator_thrust_[rotor] +=
+              thrust_response * (allocator_thrust_command_[rotor] - allocator_thrust_[rotor]);
+#ifdef SIMULATION
+          if(gimbal_state_received_[rotor] && HAL_GetTick() - gimbal_state_last_time_ < 200)
+            allocator_gimbal_angle_[rotor] = measured_gimbal_angle_[rotor];
+          else
+#endif
+            allocator_gimbal_angle_[rotor] +=
+                servo_response * (allocator_gimbal_command_[rotor] - allocator_gimbal_angle_[rotor]);
+        }
+    }
+
+  for(int input = 0; input < motor_number_; ++input)
+    differential_current_virtual_force_[input] = 0.0f;
+  for(int row = 0; row < 6; ++row)
+    {
+      differential_current_wrench_[row] = 0.0f;
+      for(int input = 0; input < motor_number_; ++input)
+        differential_jacobian_[row][input] = 0.0f;
+    }
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+    {
+      const float thrust = allocator_thrust_[rotor];
+      const float angle = allocator_gimbal_angle_[rotor];
+      const float sin_angle = sinf(angle);
+      const float cos_angle = cosf(angle);
+      differential_current_virtual_force_[2 * rotor] = -thrust * sin_angle;
+      differential_current_virtual_force_[2 * rotor + 1] = thrust * cos_angle;
+      for(int row = 0; row < 6; ++row)
+        {
+          differential_jacobian_[row][2 * rotor] =
+              wrench_allocation_matrix_[row][2 * rotor] * (-sin_angle) +
+              wrench_allocation_matrix_[row][2 * rotor + 1] * cos_angle;
+          differential_jacobian_[row][2 * rotor + 1] =
+              wrench_allocation_matrix_[row][2 * rotor] * (-thrust * cos_angle) +
+              wrench_allocation_matrix_[row][2 * rotor + 1] * (-thrust * sin_angle);
+        }
+    }
+  for(int row = 0; row < 6; ++row)
+    for(int input = 0; input < motor_number_; ++input)
+      differential_current_wrench_[row] +=
+          wrench_allocation_matrix_[row][input] * differential_current_virtual_force_[input];
+
+  for(int row = 0; row < 6; ++row)
+    {
+      const float raw_desired_rate =
+          (differential_desired_wrench_[row] - previous_desired_wrench_[row]) / dt;
+      filtered_desired_wrench_rate_[row] += differential_allocation_wrench_rate_filter_ *
+                                            (raw_desired_rate - filtered_desired_wrench_rate_[row]);
+      previous_desired_wrench_[row] = differential_desired_wrench_[row];
+      const float wrench_rate_reference =
+          differential_allocation_wrench_rate_feedforward_gain_ * filtered_desired_wrench_rate_[row] +
+          differential_allocation_wrench_error_gain_ *
+              (differential_desired_wrench_[row] - differential_current_wrench_[row]);
+      const float row_weight = row < 3 ? differential_allocation_force_weight_
+                                       : differential_allocation_torque_weight_;
+      differential_weighted_wrench_rate_reference_[row] = row_weight * wrench_rate_reference;
+      for(int input = 0; input < motor_number_; ++input)
+        differential_weighted_jacobian_[row][input] = row_weight * differential_jacobian_[row][input];
+    }
+
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+    {
+      if(dynamic_limit_decomposition)
+        {
+          const float thrust_lower = fmaxf(-differential_allocation_max_thrust_rate_,
+                                           (minimum_thrust - allocator_thrust_[rotor]) /
+                                               differential_allocation_thrust_time_constant_);
+          const float thrust_upper = fminf(differential_allocation_max_thrust_rate_,
+                                           (maximum_thrust - allocator_thrust_[rotor]) /
+                                               differential_allocation_thrust_time_constant_);
+          differential_lower_limit_reason_[2 * rotor] =
+              thrust_lower > -differential_allocation_max_thrust_rate_ ? 2 : 1;
+          differential_upper_limit_reason_[2 * rotor] =
+              thrust_upper < differential_allocation_max_thrust_rate_ ? 2 : 1;
+          float servo_lower = -differential_allocation_max_servo_rate_;
+          float servo_upper = differential_allocation_max_servo_rate_;
+          differential_lower_limit_reason_[2 * rotor + 1] = 1;
+          differential_upper_limit_reason_[2 * rotor + 1] = 1;
+          if(differential_allocation_servo_angle_limit_enabled_)
+            {
+              const float angle_lower =
+                  (differential_allocation_min_servo_angle_ -
+                   allocator_gimbal_angle_[rotor]) /
+                      differential_allocation_servo_time_constant_;
+              const float angle_upper =
+                  (differential_allocation_max_servo_angle_ -
+                   allocator_gimbal_angle_[rotor]) /
+                      differential_allocation_servo_time_constant_;
+              if(angle_lower > servo_lower)
+                {
+                  servo_lower = angle_lower;
+                  differential_lower_limit_reason_[2 * rotor + 1] = 2;
+                }
+              if(angle_upper < servo_upper)
+                {
+                  servo_upper = angle_upper;
+                  differential_upper_limit_reason_[2 * rotor + 1] = 2;
+                }
+            }
+          const float maximum_rate_change = differential_allocation_max_servo_acceleration_ * dt;
+          const float acceleration_lower = allocator_gimbal_rate_[rotor] - maximum_rate_change;
+          const float acceleration_upper = allocator_gimbal_rate_[rotor] + maximum_rate_change;
+          if(acceleration_lower > servo_lower)
+            {
+              servo_lower = acceleration_lower;
+              differential_lower_limit_reason_[2 * rotor + 1] = 3;
+            }
+          if(acceleration_upper < servo_upper)
+            {
+              servo_upper = acceleration_upper;
+              differential_upper_limit_reason_[2 * rotor + 1] = 3;
+            }
+          if(servo_lower > servo_upper)
+            {
+              // Close to an angle limit, respecting the limit has priority
+              // over the acceleration bound so that the command cannot wind
+              // farther into saturation.
+              if(allocator_gimbal_rate_[rotor] >= 0.0f)
+                servo_lower = servo_upper;
+              else
+                servo_upper = servo_lower;
+            }
+
+          differential_rate_center_[2 * rotor] = 0.5f * (thrust_upper + thrust_lower);
+          differential_rate_half_range_[2 * rotor] = 0.5f * fmaxf(0.0f, thrust_upper - thrust_lower);
+          differential_rate_center_[2 * rotor + 1] = 0.5f * (servo_upper + servo_lower);
+          differential_rate_half_range_[2 * rotor + 1] = 0.5f * fmaxf(0.0f, servo_upper - servo_lower);
+          differential_inverse_rate_weight_[2 * rotor] = 1.0f;
+          differential_inverse_rate_weight_[2 * rotor + 1] = 1.0f;
+        }
+      else
+        {
+          differential_inverse_rate_weight_[2 * rotor] =
+              1.0f / (differential_allocation_thrust_rate_weight_ * differential_allocation_thrust_rate_weight_);
+          differential_inverse_rate_weight_[2 * rotor + 1] =
+              1.0f / (differential_allocation_servo_rate_weight_ * differential_allocation_servo_rate_weight_);
+        }
+    }
+
+  if(dynamic_limit_decomposition)
+    for(int input = 0; input < motor_number_; ++input)
+      {
+        for(int row = 0; row < 6; ++row)
+          {
+            differential_weighted_wrench_rate_reference_[row] -=
+                differential_weighted_jacobian_[row][input] * differential_rate_center_[input];
+            differential_weighted_jacobian_[row][input] *= differential_rate_half_range_[input];
+          }
+      }
+
+  for(int row = 0; row < 6; ++row)
+    for(int col = 0; col < 6; ++col)
+      {
+        differential_normal_matrix_[row][col] = 0.0f;
+        for(int input = 0; input < motor_number_; ++input)
+          differential_normal_matrix_[row][col] +=
+              differential_weighted_jacobian_[row][input] * differential_inverse_rate_weight_[input] *
+              differential_weighted_jacobian_[col][input];
+        if(row == col)
+          differential_normal_matrix_[row][col] +=
+              differential_allocation_damping_ * differential_allocation_damping_;
+      }
+#ifdef SIMULATION
+  if(dynamic_limit_decomposition) updateDifferentialAllocationConditionDebug();
+#endif
+
+  if(!solveDifferentialAllocationSystem(differential_normal_matrix_,
+                                        differential_weighted_wrench_rate_reference_,
+                                        differential_task_dual_))
+    {
+#ifdef SIMULATION
+      ROS_WARN_THROTTLE(1.0, "differential allocation solve failed; hold the last actuator command");
+#else
+      nh_->logwarn("differential allocation solve failed");
+#endif
+      for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+        {
+          target_thrust_[rotor] = dynamic_limit_decomposition ? allocator_thrust_command_[rotor]
+                                                               : allocator_thrust_[rotor];
+          target_gimbal_angles_[rotor] = dynamic_limit_decomposition ? allocator_gimbal_command_[rotor]
+                                                                      : allocator_gimbal_angle_[rotor];
+        }
+      return true;
+    }
+
+  for(int input = 0; input < motor_number_; ++input)
+    {
+      differential_actuator_rate_[input] = 0.0f;
+      for(int row = 0; row < 6; ++row)
+        differential_actuator_rate_[input] +=
+            differential_inverse_rate_weight_[input] * differential_weighted_jacobian_[row][input] *
+            differential_task_dual_[row];
+    }
+
+  // Use redundancy only for centering the gimbals and balancing rotor thrust.
+  float average_thrust = 0.0f;
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) average_thrust += allocator_thrust_[rotor];
+  average_thrust /= physical_rotor_number;
+  if(hover_thrust_reference_enabled_ && hover_thrust_reference_ <= 0.0f)
+    {
+      const bool capture = hover_thrust_capture_allowed_ &&
+          HAL_GetTick() - hover_thrust_capture_stamp_ < 500 &&
+          std::isfinite(average_thrust) && average_thrust > 0.1f;
+      if(!capture || (hover_thrust_sample_time_ > 0.0f &&
+                     fabsf(average_thrust - hover_thrust_sample_start_) > 0.05f * hover_thrust_sample_start_))
+        {
+          hover_thrust_sample_time_ = 0.0f;
+          hover_thrust_sample_integral_ = 0.0f;
+        }
+      if(capture)
+        {
+          if(hover_thrust_sample_time_ == 0.0f) hover_thrust_sample_start_ = average_thrust;
+          hover_thrust_sample_time_ += dt;
+          hover_thrust_sample_integral_ += average_thrust * dt;
+          if(hover_thrust_sample_time_ >= 2.0f)
+            hover_thrust_reference_ = hover_thrust_sample_integral_ / hover_thrust_sample_time_;
+        }
+    }
+  const float thrust_reference = hover_thrust_reference_enabled_ ? hover_thrust_reference_ : average_thrust;
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+    {
+      differential_secondary_rate_[2 * rotor] = -differential_allocation_thrust_balance_gain_ *
+                                                 (allocator_thrust_[rotor] - thrust_reference);
+      // No guessed reference during takeoff or before stable hover capture.
+      if(hover_thrust_reference_enabled_ && hover_thrust_reference_ <= 0.0f)
+        differential_secondary_rate_[2 * rotor] = 0.0f;
+      differential_secondary_rate_[2 * rotor + 1] = -differential_allocation_servo_center_gain_ *
+                                                     allocator_gimbal_angle_[rotor];
+      if(dynamic_limit_decomposition)
+        {
+          const float thrust_range = differential_rate_half_range_[2 * rotor];
+          const float servo_range = differential_rate_half_range_[2 * rotor + 1];
+          differential_secondary_rate_[2 * rotor] =
+              thrust_range > 1e-6f ? differential_secondary_rate_[2 * rotor] / thrust_range : 0.0f;
+          differential_secondary_rate_[2 * rotor + 1] =
+              servo_range > 1e-6f ? differential_secondary_rate_[2 * rotor + 1] / servo_range : 0.0f;
+        }
+    }
+
+  for(int row = 0; row < 6; ++row)
+    {
+      differential_secondary_wrench_rate_[row] = 0.0f;
+      for(int input = 0; input < motor_number_; ++input)
+        differential_secondary_wrench_rate_[row] +=
+            differential_weighted_jacobian_[row][input] * differential_secondary_rate_[input];
+    }
+  if(solveDifferentialAllocationSystem(differential_normal_matrix_,
+                                       differential_secondary_wrench_rate_,
+                                       differential_secondary_dual_))
+    for(int input = 0; input < motor_number_; ++input)
+      {
+        float task_space_component = 0.0f;
+        for(int row = 0; row < 6; ++row)
+          task_space_component += differential_inverse_rate_weight_[input] *
+                                  differential_weighted_jacobian_[row][input] *
+                                  differential_secondary_dual_[row];
+        differential_actuator_rate_[input] += differential_secondary_rate_[input] - task_space_component;
+      }
+
+  differential_uniform_scale_ = 1.0f;
+  if(dynamic_limit_decomposition)
+    {
+      float maximum_normalized_rate = 1.0f;
+      differential_limiting_input_ = -1;
+      differential_limiting_bound_reason_ = 0;
+      for(int input = 0; input < motor_number_; ++input)
+        {
+#ifdef SIMULATION
+          differential_unscaled_normalized_rate_[input] = differential_actuator_rate_[input];
+#endif
+          const float absolute_normalized_rate = fabsf(differential_actuator_rate_[input]);
+          if(absolute_normalized_rate > maximum_normalized_rate)
+            {
+              maximum_normalized_rate = absolute_normalized_rate;
+              differential_limiting_input_ = input;
+              differential_limiting_bound_reason_ =
+                  differential_actuator_rate_[input] < 0.0f ?
+                      differential_lower_limit_reason_[input] :
+                      differential_upper_limit_reason_[input];
+            }
+        }
+      differential_uniform_scale_ = 1.0f / maximum_normalized_rate;
+      for(int input = 0; input < motor_number_; ++input)
+        differential_actuator_rate_[input] =
+            differential_rate_center_[input] + differential_rate_half_range_[input] *
+                                                   differential_uniform_scale_ *
+                                                   differential_actuator_rate_[input];
+    }
+
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor)
+    {
+      float thrust_rate = differential_actuator_rate_[2 * rotor];
+      float gimbal_rate = differential_actuator_rate_[2 * rotor + 1];
+      if(!std::isfinite(thrust_rate) || !std::isfinite(gimbal_rate))
+        {
+          thrust_rate = 0.0f;
+          gimbal_rate = 0.0f;
+        }
+      if(!dynamic_limit_decomposition)
+        {
+          thrust_rate = fminf(fmaxf(thrust_rate, -differential_allocation_max_thrust_rate_),
+                              differential_allocation_max_thrust_rate_);
+          thrust_rate = fminf(thrust_rate, (maximum_thrust - allocator_thrust_[rotor]) / dt);
+          thrust_rate = fmaxf(thrust_rate, -allocator_thrust_[rotor] / dt);
+
+          const float maximum_rate_change = differential_allocation_max_servo_acceleration_ * dt;
+          gimbal_rate = fminf(gimbal_rate, allocator_gimbal_rate_[rotor] + maximum_rate_change);
+          gimbal_rate = fmaxf(gimbal_rate, allocator_gimbal_rate_[rotor] - maximum_rate_change);
+          gimbal_rate = fminf(fmaxf(gimbal_rate, -differential_allocation_max_servo_rate_),
+                             differential_allocation_max_servo_rate_);
+          if(differential_allocation_servo_angle_limit_enabled_)
+            {
+              gimbal_rate = fminf(gimbal_rate,
+                                  (differential_allocation_max_servo_angle_ - allocator_gimbal_angle_[rotor]) / dt);
+              gimbal_rate = fmaxf(gimbal_rate,
+                                  (differential_allocation_min_servo_angle_ - allocator_gimbal_angle_[rotor]) / dt);
+            }
+        }
+
+      allocator_thrust_rate_[rotor] = thrust_rate;
+      allocator_gimbal_rate_[rotor] = gimbal_rate;
+      if(dynamic_limit_decomposition)
+        {
+          allocator_thrust_command_[rotor] =
+              fminf(fmaxf(allocator_thrust_[rotor] +
+                              differential_allocation_thrust_time_constant_ * thrust_rate,
+                          minimum_thrust),
+                    maximum_thrust);
+          allocator_gimbal_command_[rotor] =
+              allocator_gimbal_angle_[rotor] +
+              differential_allocation_servo_time_constant_ * gimbal_rate;
+          if(differential_allocation_servo_angle_limit_enabled_)
+            allocator_gimbal_command_[rotor] =
+                fminf(fmaxf(allocator_gimbal_command_[rotor],
+                            differential_allocation_min_servo_angle_),
+                      differential_allocation_max_servo_angle_);
+          target_thrust_[rotor] = allocator_thrust_command_[rotor];
+          target_gimbal_angles_[rotor] = allocator_gimbal_command_[rotor];
+        }
+      else
+        {
+          allocator_thrust_[rotor] =
+              fminf(fmaxf(allocator_thrust_[rotor] + dt * thrust_rate, 0.0f), maximum_thrust);
+          allocator_gimbal_angle_[rotor] =
+              allocator_gimbal_angle_[rotor] + dt * gimbal_rate;
+          if(differential_allocation_servo_angle_limit_enabled_)
+            allocator_gimbal_angle_[rotor] =
+                fminf(fmaxf(allocator_gimbal_angle_[rotor],
+                            differential_allocation_min_servo_angle_),
+                      differential_allocation_max_servo_angle_);
+          allocator_thrust_command_[rotor] = allocator_thrust_[rotor];
+          allocator_gimbal_command_[rotor] = allocator_gimbal_angle_[rotor];
+          target_thrust_[rotor] = allocator_thrust_[rotor];
+          target_gimbal_angles_[rotor] = allocator_gimbal_angle_[rotor];
+        }
+    }
+
+#ifdef SIMULATION
+  publishDifferentialAllocationDebug(differential_desired_wrench_, differential_current_wrench_,
+                                     physical_rotor_number);
+#endif
+  return true;
+}
+
+#ifdef SIMULATION
+void AttitudeController::updateDifferentialAllocationConditionDebug()
+{
+  // The normal matrix is J_normalized * J_normalized^T plus lambda^2 I.
+  // A fixed-size Jacobi eigensolver keeps this diagnostic independent of
+  // Eigen and out of the embedded build. Singular values are the square roots
+  // of the undamped Gram-matrix eigenvalues.
+  float gram[6][6];
+  const float damping_squared =
+      differential_allocation_damping_ * differential_allocation_damping_;
+  for(int row = 0; row < 6; ++row)
+    for(int col = 0; col < 6; ++col)
+      gram[row][col] = differential_normal_matrix_[row][col] -
+                       (row == col ? damping_squared : 0.0f);
+
+  for(int iteration = 0; iteration < 48; ++iteration)
+    {
+      int pivot_row = 0;
+      int pivot_col = 1;
+      float largest_off_diagonal = fabsf(gram[pivot_row][pivot_col]);
+      for(int row = 0; row < 6; ++row)
+        for(int col = row + 1; col < 6; ++col)
+          if(fabsf(gram[row][col]) > largest_off_diagonal)
+            {
+              largest_off_diagonal = fabsf(gram[row][col]);
+              pivot_row = row;
+              pivot_col = col;
+            }
+      if(largest_off_diagonal < 1e-8f) break;
+
+      const float angle = 0.5f * atan2f(2.0f * gram[pivot_row][pivot_col],
+                                        gram[pivot_col][pivot_col] -
+                                        gram[pivot_row][pivot_row]);
+      const float cosine = cosf(angle);
+      const float sine = sinf(angle);
+      const float diagonal_row = gram[pivot_row][pivot_row];
+      const float diagonal_col = gram[pivot_col][pivot_col];
+      const float off_diagonal = gram[pivot_row][pivot_col];
+
+      for(int index = 0; index < 6; ++index)
+        {
+          if(index == pivot_row || index == pivot_col) continue;
+          const float row_value = gram[index][pivot_row];
+          const float col_value = gram[index][pivot_col];
+          gram[index][pivot_row] = cosine * row_value - sine * col_value;
+          gram[pivot_row][index] = gram[index][pivot_row];
+          gram[index][pivot_col] = sine * row_value + cosine * col_value;
+          gram[pivot_col][index] = gram[index][pivot_col];
+        }
+      gram[pivot_row][pivot_row] =
+          cosine * cosine * diagonal_row - 2.0f * sine * cosine * off_diagonal +
+          sine * sine * diagonal_col;
+      gram[pivot_col][pivot_col] =
+          sine * sine * diagonal_row + 2.0f * sine * cosine * off_diagonal +
+          cosine * cosine * diagonal_col;
+      gram[pivot_row][pivot_col] = 0.0f;
+      gram[pivot_col][pivot_row] = 0.0f;
+    }
+
+  float minimum_eigenvalue = fmaxf(0.0f, gram[0][0]);
+  float maximum_eigenvalue = minimum_eigenvalue;
+  for(int index = 1; index < 6; ++index)
+    {
+      const float eigenvalue = fmaxf(0.0f, gram[index][index]);
+      minimum_eigenvalue = fminf(minimum_eigenvalue, eigenvalue);
+      maximum_eigenvalue = fmaxf(maximum_eigenvalue, eigenvalue);
+    }
+  differential_jacobian_min_singular_value_ = sqrtf(minimum_eigenvalue);
+  differential_jacobian_max_singular_value_ = sqrtf(maximum_eigenvalue);
+  differential_jacobian_condition_number_ =
+      differential_jacobian_min_singular_value_ > 1e-6f ?
+          differential_jacobian_max_singular_value_ /
+              differential_jacobian_min_singular_value_ : 1e9f;
+}
+
+void AttitudeController::publishDifferentialAllocationDebug(const float desired_wrench[6],
+                                                            const float current_wrench[6],
+                                                            int physical_rotor_number)
+{
+  if(HAL_GetTick() - differential_allocation_debug_pub_last_time_ < 100) return;
+  differential_allocation_debug_pub_last_time_ = HAL_GetTick();
+  std_msgs::Float32MultiArray msg;
+  // desired wrench[6], realized wrench[6], thrust, gimbal angle,
+  // thrust rate, and gimbal rate for every physical rotor.
+  for(int row = 0; row < 6; ++row) msg.data.push_back(desired_wrench[row]);
+  for(int row = 0; row < 6; ++row) msg.data.push_back(current_wrench[row]);
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_thrust_[rotor]);
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_gimbal_angle_[rotor]);
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_thrust_rate_[rotor]);
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_gimbal_rate_[rotor]);
+  // Appended fields preserve the original layout: commanded thrust/angle,
+  // allocator mode, and DLD's common normalized-rate scale factor.
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_thrust_command_[rotor]);
+  for(int rotor = 0; rotor < physical_rotor_number; ++rotor) msg.data.push_back(allocator_gimbal_command_[rotor]);
+  msg.data.push_back(static_cast<float>(differential_allocation_mode_));
+  msg.data.push_back(differential_uniform_scale_);
+  // DLD diagnostics appended after the legacy 38 entries:
+  // unscaled normalized rate[2*N], physical lower rate[2*N], physical upper
+  // rate[2*N], limiting input (-1 means no scaling), sigma_min, sigma_max,
+  // limiting-bound reason, sigma_min, sigma_max, and condition number. Even
+  // inputs are thrust; odd inputs are gimbal rate. Reason: 0=none, 1=rate,
+  // 2=thrust/angle position, 3=servo acceleration.
+  for(int input = 0; input < 2 * physical_rotor_number; ++input)
+    msg.data.push_back(differential_unscaled_normalized_rate_[input]);
+  for(int input = 0; input < 2 * physical_rotor_number; ++input)
+    msg.data.push_back(differential_rate_center_[input] - differential_rate_half_range_[input]);
+  for(int input = 0; input < 2 * physical_rotor_number; ++input)
+    msg.data.push_back(differential_rate_center_[input] + differential_rate_half_range_[input]);
+  msg.data.push_back(static_cast<float>(differential_limiting_input_));
+  msg.data.push_back(static_cast<float>(differential_limiting_bound_reason_));
+  msg.data.push_back(differential_jacobian_min_singular_value_);
+  msg.data.push_back(differential_jacobian_max_singular_value_);
+  msg.data.push_back(differential_jacobian_condition_number_);
+  // Appended diagnostics: [67] fixed hover reference (N, zero=uncaptured),
+  // [68] stable sample duration (s), [69] fixed-reference mode enabled.
+  msg.data.push_back(hover_thrust_reference_);
+  msg.data.push_back(hover_thrust_sample_time_);
+  msg.data.push_back(hover_thrust_reference_enabled_ ? 1.0f : 0.0f);
+  differential_allocation_debug_pub_.publish(msg);
+}
+#endif
 
 void AttitudeController::pwmConversion()
 {
@@ -1101,63 +1895,100 @@ void AttitudeController::pwmConversion()
   for(int i = 0; i < motor_number_; i++)
     target_thrust_[i] = roll_pitch_term_[i] + (1 + base_thrust_decreasing_rate) * base_thrust_term_[i] + (1 + yaw_decreasing_rate) * yaw_term_[i];
 
+  // Static allocation is used while the vehicle is supported by the ground.
+  if(!start_control_flag_ || !integrate_flag_)
+    {
+      hover_thrust_reference_ = 0.0f;
+      hover_thrust_sample_time_ = 0.0f;
+      hover_thrust_sample_integral_ = 0.0f;
+    }
+  // Reinitialize from the measured actuator state whenever differential
+  // allocation is enabled again so that takeoff/landing transitions are
+  // bumpless rather than resuming an old actuator-rate state.
+  if(!integrate_flag_ &&
+     differential_allocation_mode_ != spinal::DifferentialAllocationConfig::STATIC)
+    differential_allocator_initialized_ = false;
+
+  // DLD handles actuator limits itself. Give it the unreduced wrench, not
+  // the legacy static allocator's base-thrust/yaw saturation correction.
+  // Keep the legacy command available if DLD cannot run on this cycle.
+  const bool use_unreduced_dld_command =
+      start_control_flag_ && integrate_flag_ &&
+      differential_allocation_mode_ == spinal::DifferentialAllocationConfig::DYNAMIC_LIMIT_DECOMPOSITION;
+  if(use_unreduced_dld_command)
+    for(int i = 0; i < motor_number_; i++)
+      target_thrust_[i] = roll_pitch_term_[i] + base_thrust_term_[i] + yaw_term_[i];
+
+  const bool differential_allocation_active =
+      start_control_flag_ && integrate_flag_ &&
+      differential_allocation_mode_ != spinal::DifferentialAllocationConfig::STATIC &&
+      differentialAllocationUpdate(DELTA_T, thrust_limit * rotor_devider_);
+
+  if(use_unreduced_dld_command && !differential_allocation_active)
+    for(int i = 0; i < motor_number_; i++)
+      target_thrust_[i] = roll_pitch_term_[i] + (1 + base_thrust_decreasing_rate) * base_thrust_term_[i] +
+                          (1 + yaw_decreasing_rate) * yaw_term_[i];
+
   /* convert to target pwm and calculate target gimbal angles */
   /* TODO: adjust not only for gimbalrotor but also for fixed rotor */
   for(int i = 0; i < motor_number_ / (rotor_coef_); i++)
     {
       if(start_control_flag_)
         {
-          switch(gimbal_dof_)
+          if(!differential_allocation_active)
             {
-            case 2:
-              {
-                ap::Vector3f f_i;
-                f_i.x = target_thrust_[i*3];
-                f_i.y = target_thrust_[i*3+1];
-                f_i.z = target_thrust_[i*3+2];
+              switch(gimbal_dof_)
+                {
+                case 2:
+                  {
+                    ap::Vector3f f_i;
+                    f_i.x = target_thrust_[i*3];
+                    f_i.y = target_thrust_[i*3+1];
+                    f_i.z = target_thrust_[i*3+2];
 
-                float gimbal_candidate_roll = atan2f(-f_i.y, f_i.z);
-                float gimbal_candidate_pitch = atan2f(f_i.x, -f_i.y * sin(gimbal_candidate_roll) + f_i.z * cos(gimbal_candidate_roll));
-                target_thrust_[i] = ap::pythagorous3(f_i.x,f_i.y,f_i.z);
+                    float gimbal_candidate_roll = atan2f(-f_i.y, f_i.z);
+                    float gimbal_candidate_pitch = atan2f(f_i.x, -f_i.y * sin(gimbal_candidate_roll) + f_i.z * cos(gimbal_candidate_roll));
+                    target_thrust_[i] = ap::pythagorous3(f_i.x,f_i.y,f_i.z);
 
-                /* simple lpf */
-                if(std::isfinite(gimbal_candidate_roll) && std::isfinite(gimbal_candidate_pitch)){
-                  target_gimbal_angles_[2*i] =(target_gimbal_angles_[2*i]+ gimbal_candidate_roll)/2;
-                  target_gimbal_angles_[2*i+1] =(target_gimbal_angles_[2*i+1]+ gimbal_candidate_pitch)/2;
+                    /* simple lpf */
+                    if(std::isfinite(gimbal_candidate_roll) && std::isfinite(gimbal_candidate_pitch)){
+                      target_gimbal_angles_[2*i] =(target_gimbal_angles_[2*i]+ gimbal_candidate_roll)/2;
+                      target_gimbal_angles_[2*i+1] =(target_gimbal_angles_[2*i+1]+ gimbal_candidate_pitch)/2;
 
-                }
-                break;
-              }
-            case 1:
-              {
-                ap::Vector3f f_i;
-                f_i.x = target_thrust_[i*2];
-                f_i.z = target_thrust_[i*2+1];
-                float gimbal_candidate = atan2f(-f_i.x, f_i.z);
-                target_thrust_[i] = ap::pythagorous2(f_i.x,f_i.z);
-
-                if (std::isfinite(gimbal_candidate)) {
-                  prev_gimbal_angles_[i] = target_gimbal_angles_[i];
-
-                  float delta = gimbal_candidate - prev_gimbal_angles_[i];
-                  if (delta > M_PI) {
-                    gimbal_candidate -= 2.0f * M_PI;
-                  } else if (delta < -M_PI) {
-                    gimbal_candidate += 2.0f * M_PI;
+                    }
+                    break;
                   }
+                case 1:
+                  {
+                    ap::Vector3f f_i;
+                    f_i.x = target_thrust_[i*2];
+                    f_i.z = target_thrust_[i*2+1];
+                    float gimbal_candidate = atan2f(-f_i.x, f_i.z);
+                    target_thrust_[i] = ap::pythagorous2(f_i.x,f_i.z);
 
-                  if (gimbal_candidate > 4.0f) {
-                    gimbal_candidate -= 2.0f * M_PI; // Wrap down
-                  } else if (gimbal_candidate < -4.0f) {
-                    gimbal_candidate += 2.0f * M_PI; // Wrap up
+                    if (std::isfinite(gimbal_candidate)) {
+                      prev_gimbal_angles_[i] = target_gimbal_angles_[i];
+
+                      float delta = gimbal_candidate - prev_gimbal_angles_[i];
+                      if (delta > M_PI) {
+                        gimbal_candidate -= 2.0f * M_PI;
+                      } else if (delta < -M_PI) {
+                        gimbal_candidate += 2.0f * M_PI;
+                      }
+
+                      if (gimbal_candidate > 4.0f) {
+                        gimbal_candidate -= 2.0f * M_PI; // Wrap down
+                      } else if (gimbal_candidate < -4.0f) {
+                        gimbal_candidate += 2.0f * M_PI; // Wrap up
+                      }
+
+                      target_gimbal_angles_[i] = gimbal_candidate;
+                    }
+                    break;
                   }
-
-                  target_gimbal_angles_[i] = gimbal_candidate;
+                default:
+                  break;
                 }
-                break;
-              }
-            default:
-              break;
             }
 
           target_pwm_[i] = convert(target_thrust_[i]);

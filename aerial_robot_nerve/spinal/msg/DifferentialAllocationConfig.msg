@@ -1,0 +1,25 @@
+uint8 STATIC=0
+uint8 DIFFERENTIAL=1
+uint8 DYNAMIC_LIMIT_DECOMPOSITION=2
+
+uint8 mode
+float32 damping
+float32 wrench_error_gain
+float32 wrench_rate_feedforward_gain
+float32 wrench_rate_filter
+float32 force_weight
+float32 torque_weight
+float32 thrust_rate_weight
+float32 servo_rate_weight
+float32 servo_center_gain
+float32 thrust_balance_gain
+float32 max_thrust_rate
+float32 max_servo_rate
+float32 max_servo_acceleration
+float32 min_servo_angle
+float32 max_servo_angle
+bool servo_angle_limit_enabled
+float32 thrust_time_constant
+float32 servo_time_constant
+bool hover_thrust_reference_enabled
+bool hover_thrust_capture_allowed

@@ -1,9 +1,38 @@
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 
+#include <cmath>
+
 using namespace std;
 
 namespace aerial_robot_control
 {
+double GimbalrotorController::calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot)
+{
+  if (integrated_map_inv_rot.cols() <= Z)
+    return 0.0;
+
+  constexpr double rosserial_scale = 1000.0;
+  double max_abs_yaw_scale = 0.0;
+  double signed_yaw_scale = 0.0;
+  for (Eigen::Index i = 0; i < integrated_map_inv_rot.rows(); ++i)
+  {
+    const double yaw_scale = integrated_map_inv_rot(i, Z);
+    const double scaled_yaw_scale = yaw_scale * rosserial_scale;
+    if (!std::isfinite(yaw_scale) || std::abs(scaled_yaw_scale) > INT16_MAX)
+      continue;
+
+    /* Match the int16 quantization and row ordering seen by FC exactly. */
+    const double quantized_yaw_scale = static_cast<int16_t>(scaled_yaw_scale) / rosserial_scale;
+    const double abs_yaw_scale = std::abs(quantized_yaw_scale);
+    if (abs_yaw_scale > max_abs_yaw_scale)
+    {
+      max_abs_yaw_scale = abs_yaw_scale;
+      signed_yaw_scale = quantized_yaw_scale;
+    }
+  }
+  return signed_yaw_scale;
+}
+
 GimbalrotorController::GimbalrotorController() : PoseLinearController()
 {
 }
@@ -34,6 +63,12 @@ void GimbalrotorController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   torque_allocation_matrix_inv_pub_ =
       nh_.advertise<spinal::TorqueAllocationMatrixInv>("torque_allocation_matrix_inv", 1);
   gimbal_dof_pub_ = nh_.advertise<std_msgs::UInt8>("gimbal_dof", 1);
+  wrench_allocation_matrix_pub_ =
+      nh_.advertise<spinal::WrenchAllocationMatrix>("wrench_allocation_matrix", 1);
+  differential_allocation_config_pub_ =
+      nh_.advertise<spinal::DifferentialAllocationConfig>("differential_allocation_config", 1, true);
+  nh_.param("controller/differential_allocation/hover_thrust_reference_enabled",
+            hover_thrust_reference_enabled_, false);
   send_att_gains_cmd_sub_ = nh_.subscribe("send_att_gain_cmd", 1, &GimbalrotorController::sendAttGainCmdCallback, this);
 }
 
@@ -57,8 +92,68 @@ void GimbalrotorController::rosParamInit()
   getParam<double>(control_nh, "gravity_compensation_transition_rate", gravity_compensation_transition_rate_, 2.0);
   gravity_compensation_transition_rate_ = std::max(0.0, gravity_compensation_transition_rate_);
 
+  getParam<double>(control_nh, "wrench_allocation_matrix_pub_interval", wrench_allocation_matrix_pub_interval_, 0.1);
+  std::string allocation_mode;
+  getParam<std::string>(control_nh, "allocation_mode", allocation_mode, "static");
+  if (allocation_mode == "differential")
+    differential_allocation_mode_ = spinal::DifferentialAllocationConfig::DIFFERENTIAL;
+  else if (allocation_mode == "dld")
+    differential_allocation_mode_ = spinal::DifferentialAllocationConfig::DYNAMIC_LIMIT_DECOMPOSITION;
+  else
+  {
+    differential_allocation_mode_ = spinal::DifferentialAllocationConfig::STATIC;
+    if (allocation_mode != "static")
+      ROS_WARN("[GimbalrotorController] unknown allocation_mode '%s'; use static", allocation_mode.c_str());
+  }
+
+  ros::NodeHandle differential_nh(control_nh, "differential_allocation");
+  getParam<double>(differential_nh, "damping", differential_allocation_damping_, 0.03);
+  getParam<double>(differential_nh, "wrench_error_gain", differential_allocation_wrench_error_gain_, 20.0);
+  getParam<double>(differential_nh, "wrench_rate_feedforward_gain",
+                   differential_allocation_wrench_rate_feedforward_gain_, 1.0);
+  getParam<double>(differential_nh, "wrench_rate_filter", differential_allocation_wrench_rate_filter_, 0.15);
+  getParam<double>(differential_nh, "force_weight", differential_allocation_force_weight_, 1.0);
+  getParam<double>(differential_nh, "torque_weight", differential_allocation_torque_weight_, 5.0);
+  getParam<double>(differential_nh, "thrust_rate_weight", differential_allocation_thrust_rate_weight_, 1.0);
+  getParam<double>(differential_nh, "servo_rate_weight", differential_allocation_servo_rate_weight_, 5.0);
+  getParam<double>(differential_nh, "servo_center_gain", differential_allocation_servo_center_gain_, 0.2);
+  getParam<double>(differential_nh, "thrust_balance_gain", differential_allocation_thrust_balance_gain_, 0.1);
+  getParam<double>(differential_nh, "max_thrust_rate", differential_allocation_max_thrust_rate_, 20.0);
+  getParam<double>(differential_nh, "max_servo_rate", differential_allocation_max_servo_rate_, 2.0);
+  getParam<double>(differential_nh, "max_servo_acceleration",
+                   differential_allocation_max_servo_acceleration_, 10.0);
+  getParam<double>(differential_nh, "min_servo_angle", differential_allocation_min_servo_angle_, -4.0);
+  getParam<double>(differential_nh, "max_servo_angle", differential_allocation_max_servo_angle_, 4.0);
+  getParam<bool>(differential_nh, "servo_angle_limit_enabled",
+                 differential_allocation_servo_angle_limit_enabled_, true);
+  getParam<double>(differential_nh, "thrust_time_constant",
+                   differential_allocation_thrust_time_constant_, 0.04);
+  getParam<double>(differential_nh, "servo_time_constant",
+                   differential_allocation_servo_time_constant_, 0.05);
+
+  differential_allocation_damping_ = std::max(0.0, differential_allocation_damping_);
+  differential_allocation_wrench_rate_filter_ =
+      std::min(1.0, std::max(0.0, differential_allocation_wrench_rate_filter_));
+  differential_allocation_thrust_rate_weight_ = std::max(1e-6, differential_allocation_thrust_rate_weight_);
+  differential_allocation_servo_rate_weight_ = std::max(1e-6, differential_allocation_servo_rate_weight_);
+  differential_allocation_force_weight_ = std::max(1e-6, differential_allocation_force_weight_);
+  differential_allocation_torque_weight_ = std::max(1e-6, differential_allocation_torque_weight_);
+  differential_allocation_max_thrust_rate_ = std::max(0.0, differential_allocation_max_thrust_rate_);
+  differential_allocation_max_servo_rate_ = std::max(0.0, differential_allocation_max_servo_rate_);
+  differential_allocation_max_servo_acceleration_ =
+      std::max(0.0, differential_allocation_max_servo_acceleration_);
+  differential_allocation_thrust_time_constant_ =
+      std::max(1e-3, differential_allocation_thrust_time_constant_);
+  differential_allocation_servo_time_constant_ =
+      std::max(1e-3, differential_allocation_servo_time_constant_);
+
   if (gravity_compensation_)
     ROS_INFO("[GimbalrotorController] world-frame gravity feed-forward is enabled");
+  if (differential_allocation_mode_ == spinal::DifferentialAllocationConfig::DIFFERENTIAL)
+    ROS_INFO("[GimbalrotorController] differential allocation is requested");
+  else if (differential_allocation_mode_ ==
+           spinal::DifferentialAllocationConfig::DYNAMIC_LIMIT_DECOMPOSITION)
+    ROS_INFO("[GimbalrotorController] dynamic-limit decomposition allocation is requested");
 }
 
 bool GimbalrotorController::update()
@@ -225,6 +320,12 @@ void GimbalrotorController::controlCore()
     last_col += 3;
   }
 
+  // Preserve the force/torque map before normalizing it by mass and inertia.
+  // The flight controller uses this physical map to recover the requested
+  // wrench from its final virtual-force command and to form the differential
+  // allocation Jacobian.
+  const Eigen::MatrixXd physical_full_q_mat = full_q_mat;
+
   full_q_mat.topRows(3) = mass_inv * full_q_mat.topRows(3);
   full_q_mat.bottomRows(3) = inertia_inv * full_q_mat.bottomRows(3);
 
@@ -267,6 +368,7 @@ void GimbalrotorController::controlCore()
     return;
   }
   integrated_map = full_q_mat * integrated_rot;
+  physical_integrated_map_ = physical_full_q_mat * integrated_rot;
 
   /* extract controlled axis  */
   if (underactuate_)
@@ -318,7 +420,6 @@ void GimbalrotorController::controlCore()
   }
 
   /*  calculate target base thrust (considering only translational components)*/
-  double max_yaw_scale = 0;  // for reconstruct yaw control term in spinal
   for (int i = 0; i < motor_num_; i++)
   {
     Eigen::VectorXd f_i;
@@ -337,11 +438,15 @@ void GimbalrotorController::controlCore()
       target_base_thrust_.at(rotor_coef_ * i + 1) = f_i[1];
       target_base_thrust_.at(rotor_coef_ * i + 2) = f_i[2];
     }
-    if (integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW)) > max_yaw_scale)
-      max_yaw_scale = integrated_map_inv(i, (underactuate_ ? YAW - 2 : YAW));  // underactuated: yaw col is shifted
-
     last_col += rotor_coef_;
   }
+
+  /*
+   * FC reconstructs the yaw PI term using the signed yaw gain with the largest
+   * magnitude across all virtual rotors.  Keeping the sign lets the scale stay
+   * well-conditioned when the strongest gains become negative after inversion.
+   */
+  const double max_yaw_scale = calculateMaxYawScale(integrated_map_inv_rot_);
   candidate_yaw_term_ = pid_controllers_.at(YAW).result() * max_yaw_scale;
 
   /* calculate target full thrusts and gimbal angles (considering full components)*/
@@ -379,6 +484,7 @@ void GimbalrotorController::sendCmd()
   if (gimbal_calc_in_fc_)
   {
     sendTorqueAllocationMatrixInv();
+    sendDifferentialAllocationData();
   }
   else
   {
@@ -474,6 +580,70 @@ void GimbalrotorController::sendTorqueAllocationMatrixInv()
     torque_allocation_matrix_inv_msg.rows.at(i).z = torque_allocation_matrix_inv(i, 2) * 1000;
   }
   torque_allocation_matrix_inv_pub_.publish(torque_allocation_matrix_inv_msg);
+}
+
+void GimbalrotorController::sendDifferentialAllocationData()
+{
+  const double now = ros::Time::now().toSec();
+  if (now - wrench_allocation_matrix_pub_stamp_ < wrench_allocation_matrix_pub_interval_)
+    return;
+  wrench_allocation_matrix_pub_stamp_ = now;
+
+  if (physical_integrated_map_.rows() != 6 || physical_integrated_map_.cols() != motor_num_ * rotor_coef_)
+  {
+    ROS_WARN_THROTTLE(1.0, "[GimbalrotorController] physical wrench allocation matrix is not ready");
+    return;
+  }
+
+  auto scaledInt16 = [](double value) -> int16_t
+  {
+    const double scaled = std::round(value * 1000.0);
+    return static_cast<int16_t>(std::max<double>(INT16_MIN, std::min<double>(INT16_MAX, scaled)));
+  };
+
+  spinal::WrenchAllocationMatrix matrix_msg;
+  matrix_msg.force_rows.resize(physical_integrated_map_.cols());
+  matrix_msg.torque_rows.resize(physical_integrated_map_.cols());
+  for (int col = 0; col < physical_integrated_map_.cols(); ++col)
+  {
+    matrix_msg.force_rows.at(col).x = scaledInt16(physical_integrated_map_(0, col));
+    matrix_msg.force_rows.at(col).y = scaledInt16(physical_integrated_map_(1, col));
+    matrix_msg.force_rows.at(col).z = scaledInt16(physical_integrated_map_(2, col));
+    matrix_msg.torque_rows.at(col).x = scaledInt16(physical_integrated_map_(3, col));
+    matrix_msg.torque_rows.at(col).y = scaledInt16(physical_integrated_map_(4, col));
+    matrix_msg.torque_rows.at(col).z = scaledInt16(physical_integrated_map_(5, col));
+  }
+  wrench_allocation_matrix_pub_.publish(matrix_msg);
+
+  spinal::DifferentialAllocationConfig config_msg;
+  config_msg.mode = differential_allocation_mode_;
+  config_msg.damping = differential_allocation_damping_;
+  config_msg.wrench_error_gain = differential_allocation_wrench_error_gain_;
+  config_msg.wrench_rate_feedforward_gain = differential_allocation_wrench_rate_feedforward_gain_;
+  config_msg.wrench_rate_filter = differential_allocation_wrench_rate_filter_;
+  config_msg.force_weight = differential_allocation_force_weight_;
+  config_msg.torque_weight = differential_allocation_torque_weight_;
+  config_msg.thrust_rate_weight = differential_allocation_thrust_rate_weight_;
+  config_msg.servo_rate_weight = differential_allocation_servo_rate_weight_;
+  config_msg.servo_center_gain = differential_allocation_servo_center_gain_;
+  config_msg.thrust_balance_gain = differential_allocation_thrust_balance_gain_;
+  config_msg.max_thrust_rate = differential_allocation_max_thrust_rate_;
+  config_msg.max_servo_rate = differential_allocation_max_servo_rate_;
+  config_msg.max_servo_acceleration = differential_allocation_max_servo_acceleration_;
+  config_msg.min_servo_angle = differential_allocation_min_servo_angle_;
+  config_msg.max_servo_angle = differential_allocation_max_servo_angle_;
+  config_msg.servo_angle_limit_enabled = differential_allocation_servo_angle_limit_enabled_;
+  config_msg.thrust_time_constant = differential_allocation_thrust_time_constant_;
+  config_msg.servo_time_constant = differential_allocation_servo_time_constant_;
+  config_msg.hover_thrust_reference_enabled = hover_thrust_reference_enabled_;
+  double hover_roll, hover_pitch, hover_yaw;
+  estimator_->getOrientation(Frame::BASELINK, estimate_mode_).getRPY(hover_roll, hover_pitch, hover_yaw);
+  const tf::Vector3 hover_velocity = estimator_->getVel(Frame::COG, estimate_mode_);
+  config_msg.hover_thrust_capture_allowed =
+      navigator_->getNaviState() == aerial_robot_navigation::HOVER_STATE &&
+      std::abs(hover_roll) < 0.0872665 && std::abs(hover_pitch) < 0.0872665 &&
+      hover_velocity.length() < 0.1;
+  differential_allocation_config_pub_.publish(config_msg);
 }
 
 void GimbalrotorController::setAttitudeGains()

@@ -5,6 +5,27 @@ controller:
   wrench_allocation_matrix_pub_interval: 0.1
   gimbal_calc_in_fc : true
   gimbal_angle_calc_in_fc : true
+  # Keep the hardware default unchanged until the actuator-rate limits have
+  # been identified on the real servos and motors.
+  allocation_mode: static
+
+  differential_allocation:
+    damping: 0.03
+    wrench_error_gain: 20.0
+    wrench_rate_feedforward_gain: 1.0
+    wrench_rate_filter: 0.15
+    force_weight: 1.0
+    torque_weight: 5.0
+    thrust_rate_weight: 1.0
+    servo_rate_weight: 5.0
+    servo_center_gain: 0.2
+    thrust_balance_gain: 0.1
+    max_thrust_rate: 40.0
+    max_servo_rate: 4.0
+    max_servo_acceleration: 30.0
+    min_servo_angle: -4.0
+    max_servo_angle: 4.0
+    servo_angle_limit_enabled: false
 
   xy:
     p_gain: 3.5

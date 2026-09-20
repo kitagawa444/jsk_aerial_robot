@@ -738,3 +738,247 @@ rosrun bee mujoco_triple_transport_place_demo.py \
   _observer_timeout:=2.0 \
   _wrench_log_path:=/tmp/bee_legacy_transport_500g.csv
 ```
+
+## 2026-09-03 アクチュエータ動特性を含むDLD/NDA配分
+
+### 実装
+
+- 従来の静的疑似逆行列配分とADIを残したまま、`controller/allocation_mode: dld`で選べる動的制約正規化モードを追加した。PCは物理単位の6軸wrench配分行列とDLD設定をflight controllerへ送信し、flight controller側で100 Hzの差動配分を行う。実機用`BeeControl.yaml`の既定は変更せず`static`のままとした。
+- 各ロータ推力とサーボ角について、現在値・時定数・位置上下限・速度上限・サーボ加速度上限から、その周期に実現可能な速度区間`[qdot_min, qdot_max]`を求める。`qdot=center+half_range*qdot_normalized`として各入力を`[-1, 1]`へ正規化し、中心移動分をwrench速度右辺から差し引いて疑似逆を解く。いずれかの正規化入力が範囲を超えた場合は全入力を同じ係数で縮小し、独立clipによるwrench方向の変化を避ける。
+- 推力均等化とサーボ中立化はJacobianのnull spaceへ入れた。最終速度から一次遅れを逆算して推力・角度指令を生成し、内部では推力の一次遅れ推定と`joint_states`で得る実サーボ角を次周期の状態に使う。debug配列には実現状態、逆算指令、配分mode、一様縮小係数を追加した。
+- `bee/motor_test`の飛行推力域データから推力時定数を暫定`0.04 s`とした。Gazeboの0.5 radサーボstepは63%到達が約`0.07 s`、MuJoCoは約`0.012 s`だったため、Gazebo値を共通設定に置き、MuJoCoだけlaunchでoverrideする。MuJoCoのロータにもGazeboと同じ一次遅れを追加し、瞬時推力だった差をなくした。
+- 地上接触中の角速度・wrench誤差を自由飛行用DLDへ入れると離床時に破綻したため、STARTから離床までは従来の静的配分を使い、roll/pitch積分が有効になる離床時点で実アクチュエータ状態からDLDを初期化する。着陸等で積分が無効になった場合もDLD状態を破棄し、再開時に古い速度状態を引き継がない。
+
+### 採用しなかった調整
+
+- `wrench_error_gain=10`は内側wrench追従が遅く、MuJoCoで離床後約14秒から発散した。`40`では通常飛行が安定したため採用した。
+- PCの40 Hz階段状目標wrenchを数値微分したfeed-forwardは大きな瞬間値を作り、一様縮小係数を過度に下げた。現時点では`wrench_rate_feedforward_gain=0`とし、wrench誤差feedbackを主にした。将来使う場合は連続目標または専用filterが必要である。
+- MuJoCoとGazeboに同じサーボ時定数`0.012 s`を使うとGazeboで実サーボが指令に追従せず不安定化した。simulatorごとのstep応答値へ分離した。
+
+### シミュレーション結果
+
+| simulator | 試験 | 結果 |
+| --- | --- | --- |
+| Gazebo | 離陸後約24秒hover | `COMPLETE`。Zは主に0.80--0.90 m、roll/pitchは概ね数十mrad以内。DLDは離床時に有効化 |
+| Gazebo | baselink roll `0 -> 0.3 -> 0 rad` | `COMPLETE`。約2秒で0.3 radへ追従し、0 radへ復帰。切替時の最小一様縮小係数は約0.03だが回復 |
+| MuJoCo | 離陸後30秒hover | `COMPLETE`。最終Z約0.830 m、roll/pitch約1 mrad以内、一様縮小係数はほぼ1.0 |
+| MuJoCo | roll宙返り、0.7 rad刻み | `FAIL`。0から2.8 radまでは追従したが、倒立通過後に縮小係数が0.35から0.05へ低下し高度制御を喪失、安全停止 |
+
+- DLDは通常飛行と小振幅姿勢変更では機能し、従来問題だった起動時破綻も地上/飛行切替で解消した。一方、roll宙返りは姿勢目標だけを刻んでも成立していない。倒立近傍で鉛直wrenchと角運動を同時に実現できるアクチュエータ余裕がなくなるため、次に扱う場合は姿勢だけでなく、角速度・角加速度・推力余裕・ジンバル経路を含む実行可能trajectoryを事前生成する必要がある。
+- `catkin build aerial_robot_simulation --no-status`は依存18 packageを含めて成功した。既存の`aerial_robot_msgs/ApplyWrench` message生成warningだけが残った。
+
+### 3条件roll宙返り比較とDLD制約診断
+
+- Beeではジンバルをmulti-turnとして使うため、DLD設定へ`servo_angle_limit_enabled`を追加してBeeでは無効にした。URDFのジンバルjointを`continuous`、MuJoCo jointを`limited="false"`へ変更し、DLDの`+/-4 rad`状態制約もBeeでは適用しない。推力/サーボ速度およびサーボ角加速度の動的制約は維持する。
+- `bringup.launch`へ`sim_allocation_mode`と`sim_rotor_damping_rate`を追加し、同一binaryを再buildせず、静的配分/DLDおよびモーター一次遅れの有無を切り替えられるようにした。
+- `debug/differential_allocation`へ、縮小前の8入力正規化速度、各入力の物理速度上下限、一様縮小を決めた入力番号と制約種別、正規化・重み付きJacobianの最小/最大特異値と条件数を追加した。入力は`[thrust1, gimbal1, ..., thrust4, gimbal4]`、制約種別は1=速度、2=角度状態、3=サーボ角加速度である。
+- 自動試験`differential_allocation_flip_test.py`を追加した。72 deg刻み、各15 sでroll目標を0から360 degへ進め、終端姿勢誤差、連続roll、高度、pitch、DLD診断をCSVへ保存する。Quaternion入力には、わずかなyaw目標が非ゼロのとき内部roll目標を0へ戻す既存特殊処理があるため、連続回転試験では同じSO(3)目標を`final_target_baselink_rpy`から与えた。
+
+#### headless MuJoCo
+
+| 配分 | モーター時定数 | 結果 | 最終連続roll | Z範囲 | 最大pitch | 最大終端誤差 |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| static | なし（`rotor_damping_rate=1.0`） | `COMPLETE` | 360.1 deg | 0.442--0.908 m | 41.9 deg | 5.8 deg |
+| static | 0.04 s | `COMPLETE` | 360.1 deg | 0.380--0.923 m | 37.2 deg | 1.5 deg |
+| DLD | 0.04 s | `FAIL`、144 deg目標中に安全停止 | -204.7 deg | 0.096--0.823 m | 84.1 deg | -- |
+
+- staticはモーター一次遅れの有無によらず360 degを完走した。したがってDLD試験の破綻は、モーター時定数をモデルへ入れたこと自体では説明できない。
+- DLDは一様縮小係数が最小0.00823まで低下した。制約発火188 sampleはすべて奇数入力、すなわちジンバルで、最多はinput 3=`gimbal2`の87 sample、次いでinput 1=`gimbal1`の45、input 5=`gimbal3`の41、input 7=`gimbal4`の15だった。173 sampleは角速度上限、15 sampleは角加速度上限で、角度状態上限の発火は0だった。
+- 最小特異値は2.561--48.937、最大条件数は80.52だった。姿勢破綻直前も最小特異値3.695、条件数52.06であり、Jacobianがrankを完全に失ったことが直接原因ではない。主因はwrench誤差feedbackが要求するジンバル速度が上限を超え、一様縮小が推力変化まで同時に小さくして鉛直支持を失う現在の制約処理である。
+
+#### headless Gazebo
+
+| 配分 | モーター時定数 | 結果 | 最終連続roll | Z範囲 | 最大pitch | 最大終端誤差 |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| static | なし（`rotor_damping_rate=1.0`） | `FAIL`、288 deg目標中に安全停止 | 744.5 deg | 0.122--0.834 m | 69.0 deg | -- |
+| static | 0.04 s | `COMPLETE` | 360.8 deg | 0.177--1.056 m | 36.2 deg | 2.1 deg |
+| DLD | 0.04 s | `FAIL`、72 deg目標中に安全停止 | 258.3 deg | 0.556--0.833 m | 69.5 deg | -- |
+
+- Gazeboではモーター一次遅れなしstaticが4段目で過回転した一方、0.04 sを入れたstaticは完走した。Gazeboの瞬時モーターモデルでは高姿勢角のstatic指令が過敏になり、一次遅れが安定化に寄与した。
+- DLDの一様縮小係数は最小0.01178で、制約発火139 sampleはすべてジンバル入力だった。129 sampleは角加速度上限、10 sampleは角速度上限である。最小特異値0.544、最大条件数337.36とMuJoCoより悪条件だが、角度状態上限は発火していない。
+- Gazeboでは制御開始前または離陸直後に`aerial_robot_base_node`がSIGSEGVとなる無効試行があった。全ジンバルcontroller起動後に5 s待って開始すると有効試行を取得できた。この起動不安定性は宙返り/DLD性能とは別の残存課題である。
+
+### 判断
+
+- 現時点でroll宙返りに使用できるのは、モーター時定数0.04 sを含む従来static配分である。MuJoCo、Gazeboの両方で完走した。
+- 現DLDは小振幅飛行では動くが、大姿勢rollではジンバル速度/加速度制約による一様縮小が全6軸を同時に弱めるため、staticより性能が低い。次の修正候補は、制約時にも鉛直合力を最優先で維持する階層配分、またはジンバル制約内の姿勢・角速度trajectoryを上位で生成することである。
+
+## 2026-09-08 wrenchゲインと独自サーボ角加速度制約の6条件比較
+
+- 名称の訂正：コードの`dld`は論文『Allocation for Omnidirectional Aerial Robots: Incorporating Power Dynamics』のADA/NDAを意図したBee向け実装であり、DLDという論文手法ではない。PDAのプロペラパワー限界曲線は未実装。一様縮小自体は論文VII-B式13にも含まれるため、前節の「一様縮小が原因」という記述は確定診断ではなく仮説として扱う。
+- MuJoCo headless、real_time_factor=1、モーター推力時定数0.04 s、サーボ時定数0.012 s、サーボ角速度上限8 rad/sを固定。ゲイン10/20/40と、独自サーボ角加速度上限500 rad/s2の有無を比較した。「なし」は上限を1e9 rad/s2として非拘束にしたもので、角速度上限・推力制約は維持している。
+- 全条件で新規プロセスから離陸し、HOVER後にroll=72/144/216/288/360 degを各15秒、最後に5秒保持する同一試験を使用した。低ゲインではHOVER前に発散するため、試験CSVを離陸中から記録するよう拡張した。最終目標は純roll回転であり、yaw45/roll90の十字姿勢保持は本試験に含まれない。
+
+| wrenchゲイン | 角加速度制約あり | 角加速度制約なし |
+| ---: | --- | --- |
+| 10 | HOVER未達。配分有効化から約4.45秒でabs(pitch)>20 deg | HOVER未達。同約5.59秒 |
+| 20 | HOVER未達。同約6.69秒 | HOVER未達。同約6.85秒 |
+| 40 | 72 deg保持後、144 deg目標中に安全停止 | 2試行とも360 deg完走、最終roll=360.19/360.18 deg |
+
+- ゲイン40・制約なしの回転中Z範囲は0.76297--0.84607 mと0.76282--0.84623 m、最大pitchは両試行約0.4 deg、最大終端誤差は1.0/0.3 deg。配分debugの全記録で一様縮小係数は1.0だった。
+- ゲイン40・制約ありの最小縮小係数は0.01055。ただしpitchが初めて5 degを超えた時点（試験t=49.881 s）でも係数は1.0、力モデル誤差は3.04 Nだった。係数が初めて0.5未満になったのはt=51.263 s。したがって強い飽和より先に姿勢ずれが生じている。制約を使った正規化は縮小なしでも配分結果を変える。
+- ゲイン10/20も、力モデル誤差1 Nおよびトルクモデル誤差0.1 Nmを超える時点の縮小係数は1.0だった。小ゲインによる追従不足が疑われ、ゲインを下げれば改善するという仮説は支持されなかった。
+- 今回、ゲイン40を保って独自角加速度制約のみ非拘束にすると2回連続成功した。現在の不安定化にはこの制約処理が関与するという比較証拠が得られた。ただし、前回指令速度を使う区間中心の更新、実サーボ速度とのずれ、一次遅れ近似の誤差のどれが支配的かは未確定である。実機での加速度制約撤廃の妥当性まで確認した結果ではない。
+
+### 記録・再実行
+
+- CSVとlaunch/testログ：`/tmp/bee_gain_sweep_20260908/`。ゲイン40・制約ありの`try1`はbase nodeのEigen初期化assertでDLDデータがなく、無効試行。表には`k40_accon_try1_repeat`の有効試行を使った。他の低ゲイン失敗は制御データを伴う発散である。
+- CSVへphase、debug受信通番/時刻、odom stamp、実サーボ速度、角度指令を追加した。debugは元から約10 Hz、CSVは離陸中20 Hz・回転中50 Hzなので、制約の発火集計ではdebug通番で重複を除く。10 Hz未満の現象の前後関係はこの記録だけでは断定しない。最初の`k10_accon_try1`のみ、名前なしgimbals_ctrlの対応付け修正前のため追加command列がNaNだが、従来debug_32..35に指令角は記録されている。
+- 再実行用`differential_allocation_gain_test.launch`を追加した。通常のBeeControl設定・FCアルゴリズムの既定値は本試験では変更していない。
+
+```bash
+roslaunch bee differential_allocation_gain_test.launch \
+  wrench_gain:=40 acceleration_limit:=1000000000
+```
+
+```bash
+rosrun bee differential_allocation_flip_test.py \
+  _start_delay:=5.0 _step_angle:=1.2566370614359172 \
+  _step_duration:=15.0 _output:=/tmp/bee_gain40_acc_off.csv
+```
+
+- launchのparameter展開、Python構文、`git diff --check`を確認した。終了後、今回起動したROS/MuJoCoプロセスを停止した。未コミット。
+
+## 2026-09-08 MuJoCoサーボ応答の再計測
+
+- 外した制約は角加速度上限500 rad/s2であり、角速度上限8 rad/sは維持していた。両者は配分器の制約。MuJoCoのgimbalは`position kp=40`、joint damping=0.8、慣性を持ち、モデル内にこれらの速度・加速度上限を直接設定しているわけではない。
+- ROS backendと同じMuJoCo 2.3.7ライブラリを用い、現行`robots/bee/mujoco/bee/robot.xml`を読み込んだ。メモリ内だけでfreejointを除去して機体を固定した同定治具とし、元XMLは変更していない。刻み1 ms、1秒整定後、4サーボそれぞれに+0.1/+0.5/-0.5 radのstepを与えた。ロータ推力0/4.5 Nの24条件。ROS通信・飛行制御は通さず、アクチュエータ入力からjoint実状態への応答を測定した。
+- 24条件で、初期値と整定値で正規化した63.2%到達時間は約19.63 ms、95%到達時間は55.16 ms。0--200 msの一次遅れleast-squares fitはtau=19.59 ms。正規化角度のRMSEはtau=12 msで7.01%、fit値では1.14%。前に記録した12 msという値は現行モデルの固定機体応答と整合せず、確定した同定値として扱わない。
+- 0.1 rad stepの最大角速度は4.21 rad/s、指令直後の角加速度は約3444 rad/s2。0.5 radでは21.05 rad/s、約17222 rad/s2。これはMuJoCoモデルの応答であり実機サーボの性能ではない。配分器の8 rad/s・500 rad/s2は、このplantが持つhard limitを測ってそのまま反映したものではない。
+- 成功した自由飛行2試行の回転中CSVも確認した。`|実角速度|>0.1 rad/s`で`command-angle ≈ tau*velocity`を当てはめた見かけのtauは28.4--29.6 ms、最大実角速度は約1.54--1.64 rad/sだった。ただしCSVは50 Hzで別topicの最新値を結合しているため、通信遅延・非同期性・機体との連成を含む。これを純粋なサーボ時定数として設定してはならない。
+- 再計測からは、設定tau=0.012 sが現行固定機体応答を速く見積もっていること、角加速度制約が実サーボ応答から厳密に同定されたものではないことが確認できた。制約撤廃の成功と合わせて、今後はplant同定と通信を含む追従モデルを分けて確認する。制御設定は今回変更していない。
+- 同定コード：`/tmp/bee_servo_response_bench.cpp`、測定データ：`/tmp/bee_servo_response_bench.csv`。CSV冒頭にMuJoCoのresource warningが入るため、解析時には10列のCSV行だけを使用した。
+
+## 2026-09-08 同定値を反映したMuJoCo飛行試験
+
+- `robots/bee/launch/bringup.launch`のMuJoCo専用overrideを変更。servo_time_constantを0.012から0.0196 sへ、max_servo_accelerationを500から1e9 rad/s2へ変更し、独自の角加速度制約を無効相当にした。角速度上限8 rad/s、wrench_error_gain=40、motor tau=0.04 sは維持。Gazebo・実機設定は変更していない。実機の角加速度制限を撤廃してよいという意味ではない。
+- 通常のbringupをheadless、real_time_factor=1で新規起動し、ROS parameterに上記設定が入ったことを確認。離陸後、純粋なrollを72度ずつ15秒間隔で360度まで指令、その後25秒保持。1試行でCOMPLETE。最終roll360.1度、回転・保持中z=0.767--0.843 m、最大pitch0.2度、各段階の最大整定姿勢誤差0.3度、最小DLD scale=1.0000。最後25秒のz範囲は0.841381--0.841785 mだった。XY保持精度はこのCSVでは評価していない。
+- 以前失敗した144度区間も通過した。ただし今回の試験は純roll回転であり、yaw45度・roll90度の十字姿勢や実機への有効性は未検証。角加速度制約撤廃とtau変更の2点を含むため、この1試行だけでtau変更単独の改善量を断定しない。先のtau0.012・角加速度制約無効の成功2試行と合わせて判断する。
+- 起動：`roslaunch bee bringup.launch simulation:=true real_machine:=false mujoco:=true headless:=true launch_rviz:=false`。試験：`rosrun bee differential_allocation_flip_test.py _start_delay:=5 _step_angle:=1.2566370614359172 _step_duration:=15 _final_hold:=25 _output:=/tmp/bee_tau0196_flight.csv`。A/B用`differential_allocation_gain_test.launch`は引き続きacceleration_limitデフォルト500を明示overrideするため、同じ無効設定で使うなら`acceleration_limit:=1000000000`が必要。
+- データ：`/tmp/bee_tau0196_flight.csv`、`/tmp/bee_tau0196_flight.test.log`、`/tmp/bee_tau0196_flight.launch.log`。試験終了後、今回起動したROS/MuJoCoを停止。未コミット。
+
+## 2026-09-08 final base link指令による十字姿勢の保持試験
+
+- 制御設定は直前のMuJoCo設定（servo tau=0.0196 s、角加速度制約1e9、速度上限8 rad/s、gain40）のまま。新規headless起動し、通常離陸後に`/bee1/final_target_baselink_rpy`へVector3Stampedでroll=pi/2、pitch=0、yaw=pi/4を一度送信した。rootの直接操作は行わず、既存navigatorの姿勢補間を通した。
+- 60秒観測した1試行で成功。10秒後の実姿勢はroll90.32度、pitch0.07度、yaw47.20度。最後30秒の目標姿勢に対するSO(3)誤差最大0.4853度、z=0.803303--0.803684 m。遷移を含めたz=0.796285--0.821810 m、最小配分縮小係数1.0。yaw45度・roll90度を指令した姿勢は今回保持できた。繰り返し再現性、Gazebo、実機、XY精度は未評価。
+- 手動指令（離陸・hover後）：`rostopic pub -1 /bee1/final_target_baselink_rpy geometry_msgs/Vector3Stamped '{vector: {x: 1.57079632679, y: 0.0, z: 0.78539816339}}'`。
+- 試験コード`/tmp/bee_cross_pose_test.py`、CSV`/tmp/bee_cross_pose.csv`、ログ`/tmp/bee_cross_pose.test.log`と`/tmp/bee_cross_pose.launch.log`。CSVのtarget_rollはpi/2、target_yaw列は既存形式にないため本節のpi/4を使って解析する。今回起動したROS/MuJoCoは試験後停止。未コミット。
+
+## 2026-09-08 機体Z軸まわりの大車輪試験（失敗）
+
+- ユーザーの指定はworld Z軸回転ではなく、roll90度の機体自身のZ軸まわりの回転。目標を`R_ref = Rx(pi/2) Rz(theta)`としてQuaternionで生成し、RPYへ変換して`final_target_baselink_rpy`へ送信。theta=0から360度まで45度刻み、各15秒、最後は40秒の計画。制御設定は前試験と同じ。MuJoCo headlessで1試行。
+- theta0（RPY90,0,0）の保持は成功、最後3秒の最大SO(3)誤差0.190度。しかしtheta45（RPY90,-45,0）で失敗。指令後約4秒で実RPY89.1,-40.9,5.1度、約6秒で88.9,-45.0,43.5度、その後yawが回り続けた。約10秒でSO(3)誤差102.75度となり安全停止。90度以降の目標は送っていない。
+- theta45区間の高度0.7815--0.8016 m、原点からのXY距離最大0.0902 m。高度維持より姿勢のyaw回転が問題として現れた。最小配分scale0.7071、途中でinput6（4番目のロータ推力）、reason2（推力の状態境界）による縮小を観測。一方、yawが大きく回っている区間でもscale1に戻っており、縮小係数だけを根本原因とは断定できない。先のworld yaw45保持成功は、この機体軸回転の成功を意味しない。
+- 純roll試験のpitch上限1.2 radは今回の正常軌道にも抵触するため使わず、高度0.15--2 m、XY距離2 m、指令10秒後以降のSO(3)誤差60度で安全判定した。停止理由はSO(3)誤差。追従判定は各段階の最後3秒の誤差5度以下。
+- スクリプト`/tmp/bee_bodyz_wheel_test.py`、診断CSV`/tmp/bee_bodyz_wheel.csv`、目標・実QuaternionとXYZ・誤差のCSV`/tmp/bee_bodyz_wheel_pose.csv`、ログ`/tmp/bee_bodyz_wheel.test.log`、`/tmp/bee_bodyz_wheel.launch.log`。試験後ROS/MuJoCo停止。制御コード・設定変更なし。原因の切り分けは未完了。
+
+## 2026-09-08 origin/fix/bee/yawcontrol反映と大車輪再試験
+
+- ユーザー指示により`origin/fix/bee/yawcontrol`の3コミット（0b86230e、65563459、bd12014b）の差分を現在の未コミットDLD実装上へ反映。merge/cherry-pick/commitはしていない。既存の変更は維持し、ヘッダの追加位置だけ現在の構造に合わせた。
+- PC側のyaw倍率選択を全仮想ロータ行の符号付き最大絶対値へ修正し、FCとint16量子化・同値時の順序を合わせた。FC側も符号付き最大絶対値選択と無効indexのガードを反映。RollPitchYawTermの7項目をint32化。上流の5件のyaw倍率単体テストも追加。
+- `catkin build bee aerial_robot_simulation -j 4 -p 2`成功（既存依存含む21パッケージ、warningあり・failureなし）。gimbalrotor_yaw_scale_testをビルドして5/5成功。`git diff --check`成功。ROSメッセージ変更を含むため実機利用には対応する通信コード生成・FCビルドの整合が別途必要であり、今回はMuJoCoのみ検証。
+- 旧MuJoCo/RVizを停止して再起動。ゲイン40、servo tau0.0196 s、角加速度制約無効相当、速度上限8 rad/sは維持。同じ`Rx(pi/2)Rz(theta)`をfinal_target_baselink_rpyへ送信する45度刻み試験。
+- 開始姿勢roll90度の最後3秒誤差最大0.226度。機体Z軸45度の最初の区間で再びyawが回転し、約10秒後にSO(3)誤差104.43度、z0.790 mで自動HALT。最小DLD scale0.6901。約4秒後の推力[1.66,9.42,8.66,0.01] N、約8秒後[2.88,6.50,11.76,2.63] Nであり、修正前の推力偏りと失敗を解消しなかった。この1試行でyaw修正全般の効果がないとは言えないが、今回の大車輪失敗の十分な対策ではない。前段の飽和処理によるyaw削減仮説は未検証のまま。
+- ビルドログ`/tmp/bee_yawfix_build.log`、テストビルド`/tmp/bee_yawfix_unittest_build.log`、飛行CSV`/tmp/bee_yawfix_wheel.csv`と`/tmp/bee_yawfix_wheel_pose.csv`、実行ログ`/tmp/bee_yawfix_wheel.test.log`、起動ログ`/tmp/bee_yawfix_wheel.launch.log`。再試験の指令は終了し機体HALT済み、RViz/MuJoCoは表示用に起動したまま。修正は未コミットで保持。
+
+## 2026-09-08 DLD前段の既存飽和補正をバイパス
+
+- ユーザー承認により、DLD飛行中だけtarget_thrustをroll_pitch+base_thrust+yawの削減前の値として渡すよう変更した。既存処理で計算したbase_thrust/yaw削減係数はDLD入力に適用しない。DLD内部の推力・速度制約は維持。STATIC、他の差動モード、地上待機は従来どおり。DLDがfalseを返した周期は削減済み指令を再構築しstatic fallbackに使う。
+- yawcontrol修正を保持し、ゲイン40、servo tau0.0196、角速度8、角加速度制約無効相当も維持。21パッケージのビルド成功（warningあり）、git diff --check成功。
+- 同じMuJoCo機体Z軸45度刻み試験を1回実施。開始姿勢の最後3秒最大SO(3)誤差0.145度。以前失敗したtheta45は最後3秒最大1.821度・終端1.320度、theta90も最大0.747度・終端0.688度で通過した。前段補正バイパスによる改善を観測したが、一試行であり反復再現性は未評価。
+- theta135への移行で崩れ、約5.666秒後にXY距離2 m超でHALT（x=-1.275,y=1.618,z=0.249 m、SO(3)誤差109.28度）。theta135区間の最小scale0.05694。theta45/90の最小scaleは0.7143/0.9852。一周は未達。135度失敗の根本原因は未確定であり、Euler表現の切り替わりだけを原因と断定しない。
+- `/tmp/bee_dld_unsat_build.log`、`/tmp/bee_dld_unsat.test.log`、`/tmp/bee_dld_unsat.csv`、`/tmp/bee_dld_unsat_pose.csv`に結果を保存。試験指令終了・HALT済み、RVizとMuJoCoは表示用に起動したまま。変更は未コミット。実機は未検証。
+
+## 2026-09-08 ジンバル中心化nullspace無効試験
+
+- ユーザー指示によりMuJoCo専用bringup overrideでservo_center_gainを0.05から0へ変更。推力平均への補正gain0.02、DLD前段飽和バイパス、yawcontrol修正、その他のゲイン・時定数は維持。基準回転数への補正はまだ実装していない。Gazebo・実機設定は変更なし。
+- 新規MuJoCo/RVizを起動し、有効parameterでservo_center_gain=0と他の値を確認。同じ機体Z軸45度刻みの大車輪試験を1回実施。roll90度開始姿勢は保持成功（最後3秒最大誤差0.182度）。しかし最初のtheta45で約9.146秒後、高度0.146 mに低下し安全停止、姿勢誤差149.63度。前回の中心化ありではtheta90まで通過できたので、今回の単独無効化では改善せず、到達範囲が悪化した。反復再現性と原因は未評価。
+- ログ`/tmp/bee_nocenter.test.log`、`/tmp/bee_nocenter.launch.log`、診断CSV`/tmp/bee_nocenter.csv`、姿勢CSV`/tmp/bee_nocenter_pose.csv`。設定変更のみで再ビルド不要、git diff --check成功。指令終了・HALT済み。RViz/MuJoCoは起動したまま。中心化無効設定を未コミットで保持しており、安定設定として推奨するものではない。
+
+## 2026-09-08 nullspaceゲイン3条件比較
+
+- ユーザー指示により中心化/推力平均化ゲインを3条件で比較。各条件は新規MuJoCo起動、機体Z軸45度刻み・各15秒、同一安全停止条件。DLD前段飽和バイパス・yaw修正・その他の設定は維持。各1試行で反復再現性は未確認。
+- (center=0, balance=0.2): theta45を通過（最後3秒最大姿勢誤差1.937度）、theta90開始約7.433秒で高度0.141 m、誤差110.10度となり停止。
+- (center=0, balance=1.0): theta45開始約7.382秒で高度0.149 m、誤差132.26度となり停止。単純な高ゲイン化では改善しなかった。
+- (center=0.05, balance=0.2): theta45/90を通過（最後3秒最大誤差2.473/2.846度）、theta135開始約7.072秒で停止（高度0.226 m、誤差158.30度）。従来のcenter0.05/balance0.02と到達段階は同じで、一周はできなかった。
+- データディレクトリ`/tmp/bee_nullspace_sweep_3tsh_f1e`。各条件のlaunch/testログ、診断CSV、pose.csvを保存。再現用`/tmp/bee_nullspace_sweep.launch`、`/tmp/bee_nullspace_sweep.py`。ゲインは一時launchでoverrideし、リポジトリの既定値（MuJoCo center0、balance0.02）は変更していない。成功設定として採用できる条件は得られなかった。各試験のMuJoCoは終了、既存RVizウィンドウとroscoreは残した。未コミット。
+
+## 2026-09-08 水平hover推力を固定nullspace基準として保存
+
+- ユーザー指示により`dot f_sub = -k_f (f_i - f_hover)`を追加。f_hoverは4ロータのモデル推定推力（指令に一次遅れを適用）の共通平均を、安定区間2秒にわたり時間平均したもの。力センサ実測値ではない。保存後は回転中に更新しない。
+- PCからHOVER状態・BASELINK roll/pitch各5度未満・COG速度0.1 m/s未満を送信。FCでは通知が500 ms未満で新鮮、平均推力0.1 N超、区間開始値からの変化5%以内が連続2秒となったとき保存。条件逸脱時はサンプルを取り直す。基準未保存時の推力nullspace項は0とし、移動平均方式へ勝手にfallbackしない。地上待機/制御停止時、配分モードまたは有効設定の変更時に基準をクリアする。
+- `controller/differential_allocation/hover_thrust_reference_enabled`を追加。汎用既定falseで旧方式を保持、Bee MuJoCoのbringupではtrue。中心化0・推力補正gain0.02等は変更なし。Gazebo・実機ではまだ有効化していない。DifferentialAllocationConfigへ有効フラグと採取許可を追加したため、実機ではrosserial生成物・FCとPCを揃えた再ビルドが必要。
+- debug/differential_allocationに末尾追加: index67=f_hover N（0は未保存）、68=採取秒数、69=有効フラグ。既存index0--66は維持。
+- 依存含む21パッケージのビルド成功、debug追加後の再ビルドも成功。git diff --check成功。MuJoCo1試行でf_hover=4.516391 Nを2.001秒の区間から保存し、その後roll90指令の15秒間、基準不変をassertで確認。今回大車輪は未評価。姿勢試験終了後HALTし、試験MuJoCoを停止。未コミット。
+- `/tmp/bee_hoverref_check.py`、`/tmp/bee_hoverref.test.log`、`/tmp/bee_hoverref.launch.log`、`/tmp/bee_hoverref_build.log`、`/tmp/bee_hoverref_verify_build.log`に確認記録。
+
+## 2026-09-08 固定hover推力でRViz付き大車輪試験
+
+- ユーザー指示でMuJoCo headlessとBee1用RVizを起動。テストにwait_hover_referenceオプションを追加し、基準取得を待ってから回転するようにした。center0、balance0.02、その他の設定は維持。
+- 1試行、固定hover基準4.516370 Nを確認後、roll90開始姿勢を保持（最後3秒最大誤差0.133度）。機体Z軸45度も通過（終端誤差1.241度、最後3秒最大1.850度）。機体Z軸90度への移行約6.460秒後に高度0.132 m、姿勢誤差159.14度となり安全HALT。一周は未達。以前のcenter0/balance0.02/移動平均基準では45度で失敗したが、各1試行なので改善の再現性は未評価。
+- `/tmp/bee_hoverref_wheel.test.log`、`/tmp/bee_hoverref_wheel.launch.log`、`/tmp/bee_hoverref_wheel.csv`、`/tmp/bee_hoverref_wheel_pose.csv`に保存。既存診断CSVはindex66までの形式のため、固定基準の取得値はtest.logに記録。指令は終了、HALT済み。RViz/MuJoCoは起動したまま。追加の制御設定変更なし。
+
+## 2026-09-08 減衰0設定と再現用試験スクリプト保存
+
+- ユーザー指定でBeeControl_sim.yamlのdampingを0へ変更。PCとFCの最小1e-6 clampを最小0へ変更し、実際に減衰なしを許可した。simulation共通YAMLのためGazeboにも適用される。特異な正規行列に対するsolver失敗時の既存指令保持処理は残る。飛行性能未検証。
+- `robots/bee/script/differential_allocation_cartwheel_test.py`と`config/differential_allocation_test.rviz`を保存。試験は離陸、固定hover基準の取得待ち、roll90、機体Z軸45度刻み各15秒で一周、最後40秒保持。従来の安全停止を維持。成功時はhover継続、失敗時はHALT。試験はMuJoCo用で、任意の実機で実行してよいものではない。
+- Python構文・git diff --check成功、21パッケージのビルド成功（warningあり）。ビルドログ`/tmp/bee_zero_damping_build.log`。前回の試験MuJoCo/RVizは再起動用に停止、roscoreは維持。未コミット。
+
+## 2026-09-08 減衰0・固定hover基準で大車輪成功
+
+- ユーザーの成功報告を受け、係数を変えず新規MuJoCo+RVizで再試験。停止済みシミュレータに対して残っていた旧テストだけ終了し、データを別名保存した。
+- damping0、wrench gain40、force/torque重み1/5、中心化0、推力基準補正0.02、servo tau0.0196 s、速度上限8 rad/s、角加速度制約無効相当、DLD前段飽和バイパス・yaw修正を維持。hover基準4.516419 Nを取得。
+- 機体Z軸0→360度を45度刻みで全段階通過。各15秒、最後360度指令は40秒観測。WHEEL result=True。終端姿勢誤差は45度1.658、90度0.699、135度0.607、180度1.278、225度1.281、270度0.695、315度0.567、360度0.559度。各段階最後3秒の最大誤差は全体で3.153度。1試行の成功であり一般的な安定性保証ではない。減衰0への変更後の成功は観測できたが、nullspace漏れ単独が原因だったとの断定はしない。
+- `/tmp/bee_damping0_repeat.test.log`、`/tmp/bee_damping0_repeat.csv`、`/tmp/bee_damping0_repeat_pose.csv`、`/tmp/bee_damping0_repeat.launch.log`に記録。試験スクリプト終了後も機体は最終姿勢で制御継続、RViz/MuJoCoは起動したまま。設定変更なし、未コミット。
+
+## 2026-09-08 大車輪の指令刻み・更新間隔を変更
+
+- ユーザー指示により試験スクリプトの既定を45度/15秒から10度/20秒へ変更。step_degrees、step_duration、final_hold（既定40秒）をROS private parameterとして設定可能にした。360度に割り切れない刻みも最後は360度へclampする。非有限値・不正範囲は飛行指令前に拒否する。
+- CSVのtheta_degとphaseおよびログも設定した角度へ追従。制御ゲイン・50 Hzの監視周期・安全判定は維持。開始姿勢の20秒を含め、回転・保持区間は既定で760秒（離陸・hover基準取得時間は別）。
+- 目標変化量を小さくし待ち時間を延ばす変更であり、navigator内の姿勢補間速度そのものは変更していない。瞬間角速度の低下は未確認。実行中のノードには反映されず次回起動から適用。Python構文・git diff --check成功、今回飛行試験は実施していない。未コミット。
+
+## 2026-09-08 10度刻み・20秒間隔のheadless大車輪成功
+
+- ユーザー指示でROS/MuJoCoを新規起動、RVizなし。real_time_factor1を起動前に設定し、2秒の壁時計観測でsim/wall比約0.94を確認。先のtakeoff timeoutとは異なり今回は離陸成功、固定hover推力4.516323 Nを取得した。係数変更なし。
+- `differential_allocation_cartwheel_test.py _step_degrees:=10 _step_duration:=20`、最終40秒。0--360度の全段階を通過しWHEEL result=True。最終姿勢誤差0.792度、各段階最後3秒の最大誤差は全体で2.124度。高度0.783540--0.825580 m、XY原点距離最大0.134953 m。
+- 45度/15秒の成功ログと比較。保存Quaternionを正規化し、ground_truthのodom_stampで差分を取り、重複stampを除去、dt0.002--0.2秒、初期roll90移行を除いた機体Z回転区間を評価。推定角速度ノルムの最大/95 percentileは前回1.02976/0.25672 rad/s、今回0.44177/0.10153 rad/s。ログ差分推定であり直接gyro計測ではない。20秒の待機を含むのでpercentileの改善には静止区間の割合も影響する。刻みと待ち時間を同時変更した各1試行であり単独因果は未分離。
+- データ`/tmp/bee_fine_headless.csv`、`/tmp/bee_fine_headless_pose.csv`、`/tmp/bee_fine_headless.test.log`、`/tmp/bee_fine_headless.launch.log`。試験終了後、今回のMuJoCoとroscoreを停止。未コミット。
+
+## 2026-09-10 保持中のふらつきに対するゲイン比較（短区間）
+
+- ユーザー指示でゲインの影響を比較。試験スクリプトにend_degrees（既定360、0超360以下）を追加し、今回は0--40度を10度刻み・各20秒、最後40度を40秒保持するスクリーニングを実施。一周成功可否の試験ではない。各回新規headless MuJoCo、real_time_factor1。固定hover推力基準、減衰0、中心化0、時定数・制約・姿勢PIDは同じ。実効parameterも各試行で保存。
+- 条件は(wrench_error_gain, thrust_balance_gain): 基準1=(40,0.02)、(30,0.02)、(60,0.02)、(40,0.1)、基準2=(40,0.02)。全5試行で離陸・hover基準取得・40度保持まで成功、起動不良なし。ゲイン変更は一時launch overrideのみで、既定値は変更していない。
+- 30度は指令10--20秒、40度は指令10--40秒の区間を比較。Quaternionの平均姿勢からの角度変動RMS（ゆっくりしたドリフトも含む）は、基準1:0.641/0.625度、gain30:0.439/0.603度、gain60:0.638/0.595度、balance0.1:0.376/1.075度、基準2:0.403/0.579度（30度/40度）。40度の目標姿勢誤差RMSは順に1.092、1.093、1.061、1.220、1.064度。
+- これらの保持評価区間で配分縮小係数は全て1。従って保持中の揺れを常時の速度制約縮小だけで説明できない。wrench gain30--60の40度での差は基準2試行のばらつき程度で、ゲイン単独が支配的とは確認できない。推力補助gain0.1は30度で小さくなったが40度で悪化。固定姿勢での推力配分の移動・モデル/通信・姿勢ループ等は別途切り分けが必要。
+- 基準2回、各変更条件1回の限定的な結果であり統計的優劣や全姿勢での安定性は主張しない。姿勢PIDゲイン・時定数・回転速度を変えた比較は今回していない。
+- 全ログ・CSV・parameter snapshot: `/tmp/bee_gain_screen_20260910_giwh2__u`。再現launch `/tmp/bee_gain_screen.launch`、実行 `/tmp/bee_gain_screen.py`、解析 `/tmp/bee_gain_screen_analyze.py`。試験MuJoCoとroscore停止。設定既定値は維持、未コミット。
+
+## 2026-09-10 roll/pitch Pゲイン増加の比較・MuJoCo P40採用
+
+- ユーザー指示でroll_pitch Pのみ30/40/50を比較。D5、I0.05、yaw・XYZ・DLD設定は固定。headlessで新規起動、10度刻み20秒間隔、機体Z軸0--40度、最後40秒保持の短区間試験。
+- 40度保持の指令10--40秒での目標姿勢誤差RMS/平均姿勢からの変動RMS: P30=1.067/0.575度、P40=0.732/0.457度、P50=0.931/0.752度。30度では順に0.615/0.461、0.737/0.549、0.593/0.435度であり全姿勢で単調改善するわけではない。各1試行、全て40度保持まで成功。
+- P40の追加試行でhover reference capture timeoutが1回発生、回転指令まで至らず。原因は未確定であり失敗記録として保持。起動完了待ちを最初と揃えて再試行したところ全区間成功、40度で誤差RMS0.708度・変動RMS0.415度、30度で0.417/0.329度。40度保持の改善を2回観測。速い姿勢変動の指標である推定角速度RMSはP30約0.007、P40約0.008--0.009 rad/sで減少していないため、全帯域の揺れ解消とは主張しない。
+- MuJoCo専用bringup overrideにroll_pitch/p_gain=40を採用、D5を維持。BeeControl_sim.yamlのP30はGazebo用として保持し、MuJoCo overrideのコメントを追加。実機・Gazeboゲインは変更なし。新設定で大車輪一周は未検証、短区間の暫定調整。roslaunch parameter展開とgit diff --checkを確認。
+- データ`/tmp/bee_rp_screen_20260910_ypd_986b`、P40再確認`/tmp/bee_rp_screen_20260910_dbf7jfin`、capture timeout記録`/tmp/bee_rp40_repeat.test.log`・`.launch.log`。再現`/tmp/bee_rp_screen.launch`・`.py`、解析`/tmp/bee_gain_screen_analyze.py`。試験ROS/MuJoCo停止、未コミット。
+
+## 2026-09-10 XYZ PID比較・MuJoCo XY P1.5採用
+
+- ユーザー指示でXYZを調整。roll_pitch P40/D5、DLD・I項・出力制限は固定。新規headless MuJoCo、real_time_factor=1、body-Z 0--40度、10度刻み20秒、最後40秒保持。360度一周は今回未試験。
+- cartwheelスクリプトのpose CSVにdebug/pose/pidのXYZ位置誤差・目標位置、uav/cog/odomの重心位置・速度を追加。制御器はFrame::COGを使用することをコードで確認。pid_age/cog_ageはROS時刻での受信後経過時間（最大約66ms）でありセンサ同期時刻ではない。未受信はNaN。従来のroot ground_truth位置と混同しない。
+- 比較指標は10--40度の全回転区間（各5000サンプル）と40度指令後10--40秒の保持（1500サンプル）。XYZ誤差はPID内部の実誤差、XYは二軸ノルムのRMS。
+
+| 条件 | 回転中XY誤差RMS mm | 40度保持XY誤差RMS mm | 回転中Z誤差RMS mm | 保持Z誤差RMS mm |
+| --- | --- | --- | --- | --- |
+| 基準1: XY P1/D4.5、Z P5/D2.5 | 13.120 | 4.094 | 0.313 | 0.083 |
+| 基準2 | 13.710 | 3.920 | 0.310 | 0.076 |
+| XY P1.5、他は基準 | 8.257 | 2.753 | 0.311 | 0.084 |
+| XY P1.5再確認 | 8.389 | 2.840 | 0.307 | 0.090 |
+| Z P7、他は基準 | 13.160 | 3.832 | 0.406 | 0.071 |
+| Z D3.5、他は基準 | 13.273 | 3.383 | 0.259 | 0.081 |
+
+- 上記6試行は離陸・基準推力取得・全姿勢保持成功。XY P1.5は平均比較で回転中XY誤差約38%、保持約30%減少。XY速度RMSも基準0.00412--0.00431 m/sに対し0.00387--0.00407、保持0.00098に対し0.00089--0.00092。保持姿勢誤差RMSは基準0.730/0.773度に対し0.697/0.783度で、姿勢そのものの一貫した改善とは主張しない。
+- XY D6は2試行ともhover reference capture timeout、回転未開始。墜落とは異なり、基準取得条件/期限を満たさなかったという結果。原因の詳細は未確定。今回は不採用。
+- Z P7は回転中Z誤差が悪化。Z D3.5は小さく改善したが保持中はほぼ同じで、絶対量も小さく1試行のみ。Zは元のP5/D2.5を維持。rootの高さ変化だけでZ振動と判断しない。
+- 起動時に制御ノードのEigen invalid matrix product assertionが3回（初回基準、XY P1.5初回、基準2初回）発生。ゲイン比較に含めず停止・新規再起動。起動問題自体は今回未修正。
+- 採用変更はbringup.launchのMuJoCo専用controller/xy/p_gain=1.5のみ。共通YAMLのP1はGazebo用に保持しコメント追加。実機・Gazebo・Z・DLD設定は不変。roslaunch --dump-paramsでXY P1.5/D4.5、Z P5/D2.5、RP P40/D5を確認。git diff --check通過。
+- 全データ/実効controller parameter snapshot: `/tmp/bee_xyz_screen_20260910_gc0djksl`、再確認`/tmp/bee_xyz_screen_20260910_vhttdjn9`。中断した初回起動エラー`/tmp/bee_xyz_screen_20260910_is_0q2ok`。再現launch `/tmp/bee_xyz_screen.launch`、実行 `/tmp/bee_xyz_screen.py`（BEE_XYZ_RECHECK=1でXY二条件）、解析`/tmp/bee_xyz_analyze.py`。/tmpは一時データのため主要結果を本ログに保存。試験ROS/MuJoCoは全停止。未コミット。

@@ -33,5 +33,5 @@ motor_info:
                 polynominal0: -9.8927491830 # x1
 
         # for simualtion
-        rotor_damping_rate: 0.1 # = 0.001 / (0.01 + 0.001); 0.01: time constant; 0.001: dt
+        rotor_damping_rate: 0.02439 # = 0.001 / (0.040 + 0.001): measured thrust time constant
         rotor_force_noise: 0.01 # [N] but good performance in gazebo
