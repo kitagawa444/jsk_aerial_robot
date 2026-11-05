@@ -3,6 +3,8 @@
   ###########  launch config  ###########
   <arg name="real_machine" default="True" />
   <arg name="simulation" default="False" />
+  <!-- Opt-in hardware profile for the net-Z-ACC grasp controller. -->
+  <arg name="grasp_gravity_compensation" default="false" />
   <arg name="control_mode" default="0" />
   <arg name="estimate_mode"  default= "1" />
   <arg name="sim_estimate_mode"  default= "2" />
@@ -58,6 +60,8 @@
    ###########  Control  ###########
    <rosparam file="$(arg config_dir)/BeeControl.yaml" command="load" if="$(eval not simulation)"/>
    <rosparam file="$(arg config_dir)/BeeControl_sim.yaml" command="load" if="$(eval simulation)"/>
+   <param name="controller/gravity_compensation" value="true"
+          if="$(eval arg('grasp_gravity_compensation') and not arg('simulation'))"/>
    ###########  Sensor Fusion  ###########
    <rosparam file="$(arg config_dir)/StateEstimation.yaml" command="load" />
    <rosparam file="$(arg config_dir)/Simulation.yaml" command="load" if="$(eval arg('simulation') and not arg('real_machine'))"/>

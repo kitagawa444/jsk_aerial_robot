@@ -32,29 +32,59 @@ class MujocoMultiBringup(object):
         spawn_yaw = rospy.get_param("~spawn_yaw", 0.0)
         grid_cols = rospy.get_param("~grid_cols", 0)
 
+        object_shape = str(rospy.get_param(
+            "~object_shape", "triangular_prism")).lower()
+        box_shape = object_shape in ("box", "rectangular_prism")
+        pentagon_shape = object_shape == "pentagonal_prism"
+        grasp_robot_count = 5 if pentagon_shape else (4 if box_shape else 3)
         if (rospy.get_param("~grasp_staging_layout", True) and
-                rospy.get_param("~spawn_object", True) and robot_count >= 3):
+                rospy.get_param("~spawn_object", True) and
+                robot_count >= grasp_robot_count):
             object_x = rospy.get_param("~object_x", 0.0)
             object_y = rospy.get_param("~object_y", 1.0)
             object_yaw = rospy.get_param("~object_yaw", 0.0)
-            triangle_side = rospy.get_param("~object_triangle_side", 0.60)
             staging_clearance = rospy.get_param("~grasp_staging_clearance", 0.80)
-            if triangle_side <= 0.0:
-                raise RuntimeError("object_triangle_side must be positive")
             if staging_clearance <= 0.0:
                 raise RuntimeError("grasp_staging_clearance must be positive")
 
-            # For the mesh orientation used by the scene composer, the three
-            # outward side-face normals are 60, 180 and 300 degrees. Spawn
-            # the first three Bees on those normals. After base_link rolls
-            # +pi/2, the physical feet point along body +Y, so body +Y is
-            # aligned with the inward face normal.
-            staging_radius = (triangle_side / (2.0 * math.sqrt(3.0)) +
-                              staging_clearance)
+            if box_shape:
+                size_x = rospy.get_param("~object_size_x", 0.60)
+                size_y = rospy.get_param("~object_size_y", 0.60)
+                if size_x <= 0.0 or size_y <= 0.0:
+                    raise RuntimeError("object box dimensions must be positive")
+                base_angles = (0.0, math.pi / 2.0, math.pi,
+                               3.0 * math.pi / 2.0)
+                face_radii = (size_x / 2.0, size_y / 2.0,
+                              size_x / 2.0, size_y / 2.0)
+            elif pentagon_shape:
+                pentagon_side = rospy.get_param(
+                    "~object_pentagon_side", 0.60)
+                if pentagon_side <= 0.0:
+                    raise RuntimeError("object_pentagon_side must be positive")
+                base_angles = tuple(
+                    math.pi / 5.0 + 2.0 * math.pi * index / 5.0
+                    for index in range(5))
+                face_radius = pentagon_side / (
+                    2.0 * math.tan(math.pi / 5.0))
+                face_radii = (face_radius,) * 5
+            else:
+                triangle_side = rospy.get_param(
+                    "~object_triangle_side", 0.60)
+                if triangle_side <= 0.0:
+                    raise RuntimeError("object_triangle_side must be positive")
+                # Mesh outward side-face normals are 60, 180 and 300 deg.
+                base_angles = (math.pi / 3.0, math.pi,
+                               5.0 * math.pi / 3.0)
+                face_radius = triangle_side / (2.0 * math.sqrt(3.0))
+                face_radii = (face_radius,) * 3
+
+            # After base_link rolls +pi/2, the physical feet point along body
+            # +Y, so body +Y is aligned with the inward face normal.
             robots = []
-            for index, base_angle in enumerate(
-                    (math.pi / 3.0, math.pi, 5.0 * math.pi / 3.0)):
+            for index, (base_angle, face_radius) in enumerate(
+                    zip(base_angles, face_radii)):
                 normal_angle = object_yaw + base_angle
+                staging_radius = face_radius + staging_clearance
                 robots.append({
                     "name": "bee{}".format(index + 1),
                     "pos": [
@@ -65,12 +95,12 @@ class MujocoMultiBringup(object):
                     "yaw": normal_angle + math.pi / 2.0,
                 })
 
-            # Additional robots remain outside the three-Bee grasp formation.
-            for index in range(3, robot_count):
+            # Additional robots remain outside the grasp formation.
+            for index in range(grasp_robot_count, robot_count):
                 robots.append({
                     "name": "bee{}".format(index + 1),
                     "pos": [object_x + 1.0 +
-                            spacing_x * (index - 3),
+                            spacing_x * (index - grasp_robot_count),
                             object_y - 1.0, spawn_z],
                     "yaw": object_yaw + math.pi / 2.0,
                 })
@@ -109,34 +139,72 @@ class MujocoMultiBringup(object):
         if not rospy.get_param("~spawn_object", True):
             return []
 
+        object_shape = str(rospy.get_param(
+            "~object_shape", "triangular_prism")).lower()
+        if object_shape == "rectangular_prism":
+            object_shape = "box"
+        if object_shape not in (
+                "triangular_prism", "pentagonal_prism", "box"):
+            raise RuntimeError("unsupported object_shape '{}'".format(
+                object_shape))
         height = rospy.get_param("~object_height", 0.60)
-        outer_side = rospy.get_param("~object_triangle_side", 0.60)
-        inner_side = rospy.get_param(
-            "~object_inner_triangle_side", 0.4186262221)
         density = rospy.get_param(
             "~object_density", 1000.0 / 96.0)
         mass_override = rospy.get_param("~object_mass", -1.0)
-        if height <= 0.0 or outer_side <= 0.0:
+        if height <= 0.0:
             raise RuntimeError("object dimensions must be positive")
-        if inner_side < 0.0 or inner_side >= outer_side:
-            raise RuntimeError(
-                "object inner side must be non-negative and smaller than "
-                "the outer side")
         if density <= 0.0:
             raise RuntimeError("object_density must be positive")
-        volume = (math.sqrt(3.0) / 4.0 *
-                  (outer_side ** 2 - inner_side ** 2) * height)
+        if object_shape == "box":
+            size_x = rospy.get_param("~object_size_x", 0.60)
+            size_y = rospy.get_param("~object_size_y", 0.60)
+            if size_x <= 0.0 or size_y <= 0.0:
+                raise RuntimeError("object box dimensions must be positive")
+            volume = size_x * size_y * height
+        elif object_shape == "pentagonal_prism":
+            outer_side = rospy.get_param("~object_pentagon_side", 0.60)
+            inner_side = 0.0
+            if outer_side <= 0.0:
+                raise RuntimeError("object dimensions must be positive")
+            volume = (
+                5.0 * outer_side ** 2 /
+                (4.0 * math.tan(math.pi / 5.0)) * height)
+        else:
+            outer_side = rospy.get_param("~object_triangle_side", 0.60)
+            inner_side = rospy.get_param(
+                "~object_inner_triangle_side", 0.4186262221)
+            if outer_side <= 0.0:
+                raise RuntimeError("object dimensions must be positive")
+            if inner_side < 0.0 or inner_side >= outer_side:
+                raise RuntimeError(
+                    "object inner side must be non-negative and smaller than "
+                    "the outer side")
+            volume = (math.sqrt(3.0) / 4.0 *
+                      (outer_side ** 2 - inner_side ** 2) * height)
         density_mass = density * volume
         object_mass = mass_override if mass_override > 0.0 else density_mass
         # Controllers use this resolved value for gravity feed-forward.  Keep
         # the public parameter numeric even when launch selected density mode.
         rospy.set_param("~object_mass", object_mass)
-        rospy.loginfo(
-            "grasp triangular_prism: outer %.3f m, inner %.3f m, "
-            "height %.3f m, "
-            "density %.3f kg/m^3, volume %.6f m^3, mass %.4f kg%s",
-            outer_side, inner_side, height, density, volume,
-            object_mass, " (override)" if mass_override > 0.0 else "")
+        if object_shape == "box":
+            rospy.loginfo(
+                "grasp box: %.3f x %.3f x %.3f m, density %.3f kg/m^3, "
+                "volume %.6f m^3, mass %.4f kg%s",
+                size_x, size_y, height, density, volume, object_mass,
+                " (override)" if mass_override > 0.0 else "")
+        elif object_shape == "pentagonal_prism":
+            rospy.loginfo(
+                "grasp pentagonal_prism: side %.3f m, height %.3f m, "
+                "density %.3f kg/m^3, volume %.6f m^3, mass %.4f kg%s",
+                outer_side, height, density, volume, object_mass,
+                " (override)" if mass_override > 0.0 else "")
+        else:
+            rospy.loginfo(
+                "grasp triangular_prism: outer %.3f m, inner %.3f m, "
+                "height %.3f m, density %.3f kg/m^3, volume %.6f m^3, "
+                "mass %.4f kg%s", outer_side, inner_side, height, density,
+                volume, object_mass,
+                " (override)" if mass_override > 0.0 else "")
         ground_clearance = rospy.get_param("~object_ground_clearance", 0.0)
         yaw = rospy.get_param("~object_yaw", 0.0)
         object_x = rospy.get_param("~object_x", 0.0)
@@ -195,14 +263,15 @@ class MujocoMultiBringup(object):
 
         grasp_object = {
             "name": "grasp_prism",
-            "type": "triangular_prism",
+            "type": object_shape,
             "pos": [
                 object_x,
                 object_y,
                 pedestal_height + ground_clearance + height / 2.0,
             ],
             "euler": [0.0, 0.0, yaw],
-            "size": [outer_side, height],
+            "size": ([size_x, size_y, height] if object_shape == "box" else
+                     [outer_side, height]),
             "freejoint_damping": rospy.get_param("~object_freejoint_damping", 0.5),
             "friction": [
                 sliding_friction,
@@ -213,7 +282,8 @@ class MujocoMultiBringup(object):
             "solimp": [0.9, 0.95, 0.01],
             "rgba": [0.92, 0.45, 0.08, 1.0],
         }
-        grasp_object["inner_triangle_side"] = inner_side
+        if object_shape == "triangular_prism":
+            grasp_object["inner_triangle_side"] = inner_side
         objects.append(grasp_object)
         if mass_override > 0.0:
             objects[-1]["mass"] = object_mass
@@ -277,6 +347,80 @@ class MujocoMultiBringup(object):
         self.launches.append(launch)
         return launch
 
+    def wait_for_robot_parameters(self, robot_namespaces):
+        """Wait until every nested Bee bringup has populated its namespace.
+
+        ROSLaunchParent.start() returns before all of the included launch
+        files have finished loading their parameters.  Starting the shared
+        backend before that point makes it permanently select
+        DefaultRobotHWSim for whichever namespace is late.
+        """
+        expected_plugin = "mujoco_ros_control/AerialRobotHWSim"
+        required_suffixes = (
+            "robot_description",
+            "servo_controller",
+            "motor_info",
+        )
+        timeout = rospy.get_param("~param_load_timeout", 30.0)
+        deadline = time.monotonic() + timeout
+        last_pending = None
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            pending = []
+            for robot_ns in robot_namespaces:
+                root = "/{}".format(robot_ns)
+                plugin_param = root + "/simulation/robot_hw_sim_plugin_name"
+                if not rospy.has_param(plugin_param):
+                    pending.append("{}:plugin missing".format(robot_ns))
+                else:
+                    plugin = rospy.get_param(plugin_param)
+                    if plugin != expected_plugin:
+                        pending.append(
+                            "{}:plugin={}".format(robot_ns, plugin))
+                for suffix in required_suffixes:
+                    if not rospy.has_param(root + "/" + suffix):
+                        pending.append(
+                            "{}:{} missing".format(robot_ns, suffix))
+            if not pending:
+                rospy.loginfo(
+                    "all MuJoCo robot parameters are ready: %s",
+                    ",".join(robot_namespaces))
+                return
+            pending_state = tuple(pending)
+            if pending_state != last_pending:
+                rospy.loginfo(
+                    "waiting for MuJoCo robot parameters: %s",
+                    "; ".join(pending))
+                last_pending = pending_state
+            time.sleep(0.05)
+        raise RuntimeError(
+            "timed out waiting for MuJoCo robot parameters after {:.1f} s: "
+            "{}".format(timeout, "; ".join(last_pending or ("unknown",))))
+
+    def wait_for_controller_managers(self, robot_namespaces):
+        """Wait until the shared backend has created every manager service."""
+        timeout = rospy.get_param("~backend_ready_timeout", 30.0)
+        deadline = time.monotonic() + timeout
+        pending = set(robot_namespaces)
+        while (not rospy.is_shutdown() and pending and
+               time.monotonic() < deadline):
+            for robot_ns in list(pending):
+                service = "/{}/controller_manager/list_controllers".format(
+                    robot_ns)
+                try:
+                    rospy.wait_for_service(service, timeout=0.05)
+                    pending.remove(robot_ns)
+                except rospy.ROSException:
+                    pass
+            if pending:
+                time.sleep(0.05)
+        if pending:
+            raise RuntimeError(
+                "timed out waiting for MuJoCo controller managers after "
+                "{:.1f} s: {}".format(timeout, ",".join(sorted(pending))))
+        rospy.loginfo(
+            "all MuJoCo controller managers are ready: %s",
+            ",".join(robot_namespaces))
+
     def start(self):
         robot_count = rospy.get_param("~robot_count", 4)
         if robot_count <= 0:
@@ -315,9 +459,12 @@ class MujocoMultiBringup(object):
             ]
             self.start_launch(bringup_launch, bringup_args)
 
-        # The top-level launch enables /use_sim_time before this node starts,
-        # but the MuJoCo backend is not publishing /clock yet.
-        time.sleep(rospy.get_param("~param_load_delay", 1.0))
+        # ROSLaunchParent.start() is asynchronous.  A fixed sleep races with
+        # parameter loading, especially with four robots under WSL load.
+        minimum_param_delay = rospy.get_param("~param_load_delay", 0.0)
+        if minimum_param_delay > 0.0:
+            time.sleep(minimum_param_delay)
+        self.wait_for_robot_parameters(robot_namespaces)
 
         mujoco_launch = roslaunch.rlutil.resolve_launch_arguments(["mujoco_ros_control", "mujoco_multi.launch"])[0]
         mujoco_args = [
@@ -334,7 +481,10 @@ class MujocoMultiBringup(object):
         ]
         self.start_launch(mujoco_launch, mujoco_args)
 
-        time.sleep(rospy.get_param("~backend_start_delay", 1.0))
+        minimum_backend_delay = rospy.get_param("~backend_start_delay", 0.0)
+        if minimum_backend_delay > 0.0:
+            time.sleep(minimum_backend_delay)
+        self.wait_for_controller_managers(robot_namespaces)
 
         controller_launch = roslaunch.rlutil.resolve_launch_arguments(["aerial_robot_simulation", "mujoco.launch"])[0]
         for robot in robots:

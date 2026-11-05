@@ -31,8 +31,13 @@ class MujocoSceneVisualizer(object):
         self.object_x = rospy.get_param("~object_x", 0.0)
         self.object_y = rospy.get_param("~object_y", 1.0)
         self.object_yaw = rospy.get_param("~object_yaw", 0.0)
+        self.object_shape = str(rospy.get_param(
+            "~object_shape", "triangular_prism")).lower()
         self.object_height = rospy.get_param("~object_height", 0.60)
+        self.object_size_x = rospy.get_param("~object_size_x", 0.60)
+        self.object_size_y = rospy.get_param("~object_size_y", 0.60)
         self.triangle_side = rospy.get_param("~object_triangle_side", 0.60)
+        self.pentagon_side = rospy.get_param("~object_pentagon_side", 0.60)
         self.inner_triangle_side = rospy.get_param(
             "~object_inner_triangle_side", 0.4186262221)
         self.ground_clearance = rospy.get_param("~object_ground_clearance", 0.002)
@@ -219,6 +224,73 @@ class MujocoSceneVisualizer(object):
                 marker.points.append(self.point(vertices[index]))
         return marker
 
+    def box_marker(self, stamp, pose):
+        marker = Marker()
+        marker.header.frame_id = "world"
+        marker.header.stamp = stamp
+        marker.ns = "grasp_scene"
+        marker.id = 1
+        marker.type = Marker.CUBE
+        marker.action = Marker.ADD
+        marker.pose = pose
+        marker.scale.x = self.object_size_x
+        marker.scale.y = self.object_size_y
+        marker.scale.z = self.object_height
+        self.set_color(marker, 0.92, 0.45, 0.08)
+        return marker
+
+    def pentagonal_prism_marker(self, stamp, pose):
+        edge_count = 5
+        radius = self.pentagon_side / (
+            2.0 * math.sin(math.pi / edge_count))
+        z_min = -self.object_height / 2.0
+        z_max = self.object_height / 2.0
+        planar = [
+            (radius * math.cos(2.0 * math.pi * index / edge_count),
+             radius * math.sin(2.0 * math.pi * index / edge_count))
+            for index in range(edge_count)
+        ]
+        vertices = ([(x, y, z_min) for x, y in planar] +
+                    [(x, y, z_max) for x, y in planar])
+        faces = []
+        for edge_index in range(edge_count):
+            next_index = (edge_index + 1) % edge_count
+            faces.extend((
+                (edge_index, next_index, next_index + edge_count),
+                (edge_index, next_index + edge_count,
+                 edge_index + edge_count),
+            ))
+        for index in range(1, edge_count - 1):
+            faces.extend((
+                (0, index + 1, index),
+                (edge_count, edge_count + index,
+                 edge_count + index + 1),
+            ))
+
+        marker = Marker()
+        marker.header.frame_id = "world"
+        marker.header.stamp = stamp
+        marker.ns = "grasp_scene"
+        marker.id = 1
+        marker.type = Marker.TRIANGLE_LIST
+        marker.action = Marker.ADD
+        marker.pose = pose
+        marker.scale.x = 1.0
+        marker.scale.y = 1.0
+        marker.scale.z = 1.0
+        self.set_color(marker, 0.92, 0.45, 0.08)
+        for face in faces:
+            for index in face:
+                marker.points.append(self.point(vertices[index]))
+        return marker
+
+    def object_marker(self, stamp, pose):
+        if self.object_shape in ("box", "rectangular_prism"):
+            return self.box_marker(stamp, pose)
+        if self.object_shape == "pentagonal_prism":
+            return self.pentagonal_prism_marker(stamp, pose)
+        return self.prism_marker(stamp, pose)
+
     def publish_landing_foot_transforms(self, stamp, foot_compressions):
         transforms = []
         # The passive MuJoCo landing-foot joints are intentionally excluded
@@ -258,7 +330,7 @@ class MujocoSceneVisualizer(object):
         if self.spawn_destination_pedestal:
             message.markers.append(self.destination_pedestal_marker(stamp))
         if self.spawn_object:
-            message.markers.append(self.prism_marker(stamp, object_pose))
+            message.markers.append(self.object_marker(stamp, object_pose))
         if not rospy.is_shutdown():
             self.publisher.publish(message)
 

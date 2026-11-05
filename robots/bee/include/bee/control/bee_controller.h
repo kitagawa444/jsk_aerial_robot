@@ -1,6 +1,7 @@
 // -*- mode: c++ -*-
 
 #pragma once
+#include <atomic>
 #include <bee/model/bee_robot_model.h>
 #include <bee/bee_navigation.h>
 #include <beetle/TaggedWrench.h>
@@ -34,6 +35,7 @@ namespace aerial_robot_control
                     ) override;
     void setFfInterWrench(int id, Eigen::VectorXd des_int_wrench){ff_inter_wrench_list_[id] = des_int_wrench;}
   private:
+    std::atomic<bool> bee_controller_initialized_;
     boost::shared_ptr<BeeRobotModel> bee_robot_model_;
     boost::shared_ptr<aerial_robot_navigation::BeeNavigator> bee_navigator_;
     
@@ -81,6 +83,7 @@ namespace aerial_robot_control
     ros::Publisher wrench_comp_pid_pub_;
     ros::Publisher des_inter_wrench_pub_;
     void controlCore() override;
+    bool update() override;
     
     virtual void ffInterWrenchCallback(const beetle::TaggedWrench & msg);
     void rosParamInit();

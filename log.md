@@ -738,3 +738,39 @@ rosrun bee mujoco_triple_transport_place_demo.py \
   _observer_timeout:=2.0 \
   _wrench_log_path:=/tmp/bee_legacy_transport_500g.csv
 ```
+
+## 2026-09-02 機体数・形状・重量を変えたlegacy制御試験
+
+### 追加した構成
+
+- 既存の3台・三角柱に加え、4台・直方体および5台・正五角柱を同じlegacy階層制御で扱えるようにした。各Beeは対応する側面法線上に配置し、物体中心から側面までの距離を形状から計算する。
+- MuJoCo scene composerへ正五角柱の凸mesh、体積、質量、正確な正多角柱慣性を追加した。五角柱の既定寸法は一辺0.60 m、高さ0.50 m、質量0.80 kgである。
+- 5台用launchとtransport/placeデモを追加した。5台の法線力・Z差動加速度を個別topic/CSVへ出し、既存の最小ノルム配分、物体roll/pitch/yaw制御、支持移行、解放手順をそのまま一般化した。
+- 4台以上の同時起動では、shared backend開始直後に`aerial_robot_base_node`がEigen行列積assertで落ちる試行があった。各Beeのcontroller初期化完了フラグを追加し、さらにbackend開始前の既定猶予をparameter準備3秒、backend準備1秒とした。この猶予を使った4台・5台試験では起動失敗はなかった。
+
+### headless MuJoCo試験結果
+
+全条件で目的地を初期位置からX方向へ0.40 m移し、把持、台座支持から摩擦支持への移行、約50 mm離床、運搬、下降、荷重移行、解放、退避、VERIFYまで実行した。`real_time_factor=1.0`、摩擦係数0.5、legacy制御を使用した。
+
+| 機体・物体 | 質量 | 結果 | 最終XY誤差 | LIFT中最大上昇 | 把持中最大abs(roll/pitch/yaw) | LIFT時間 | TRANSPORT時間 |
+| --- | ---: | --- | ---: | ---: | --- | ---: | ---: |
+| 3台・三角柱（一辺0.60 m、高さ0.60 m） | 0.20 kg | `COMPLETE` | 1.76 mm | 50.05 mm | 0.142 / 0.209 / 1.426 deg | 59.57 s | 25.60 s |
+| 4台・直方体（0.60 x 0.60 x 0.50 m） | 0.50 kg | `COMPLETE` | 2.77 mm | 47.55 mm | 0.133 / 0.095 / 1.354 deg | 21.55 s | 24.96 s |
+| 5台・正五角柱（一辺0.60 m、高さ0.50 m） | 0.80 kg | `COMPLETE` | 2.53 mm | 49.01 mm | 0.032 / 0.152 / 1.101 deg | 14.30 s | 24.69 s |
+
+- 最終poseは順に`(0.398606, 1.001072, 0.949916)`、`(0.397778, 1.001650, 0.899867)`、`(0.397504, 1.000419, 0.899861) m`だった。全条件で解放後も目的地台座上に残った。
+- 定常法線力は3台条件で約3.86 N/台、4台条件で約5.87 N/台、5台条件で5.85--5.88 N/台だった。0.80 kg五角柱の台座支持荷重7.85 Nも連続的に把持側へ移せた。
+- 3台・200 gだけLIFT収束が長い。物体上昇後の共通Z/slipループがHOLD判定へ収束するまで約60秒を要したためであり、運搬時間や最終精度は他条件と同程度だった。機体数または重量に対して性能が単調に悪化する結果ではなかった。
+- 評価ログは`/tmp/bee_transport_place.csv`、`/tmp/bee_four_box_transport_place.csv`、`/tmp/bee_five_pentagon_transport_place.csv`に保存した。
+
+## 2026-09-20 develop/beeへ復帰・実機用3台把持入口
+
+- DAコミットad851f0aを専用branchへpushした後、ユーザー指示でdevelop/beeへ復帰。切替時にlog.mdのみ競合したため、`grasp log before returning from differential-allocation to develop/bee`という名前でlog.mdだけstashし、上記9/2の把持記録を復元。stashはバックアップとして保持。他の未コミット把持差分は維持。DAコミットはこのbranchへ取り込んでいない。
+- `real_grasp_demo.py`を追加。従来の3台キーボードobserver/ACC古典制御を継承し、接近・押し付け・キー操作による持ち上げとHOLD後のXYZ/yaw操作を対象にした。自動運搬/設置、4/5台、MPCの実機化は対象外。
+- 実機はbaselink/CoG estimator odometryとCoG外レンチ、物体mocap PoseStampedを利用。namespace/物体topicを設定可能にし、ground_truth、接触force-site/touch、外力注入の購読/出力を作らない。物体姿勢の原点は幾何中心、座標は共通worldを要求し、TFやマーカー原点補正は上流で行う。物体質量は実測object_massを支持制御にも反映。
+- 実機用control YAMLは重力補償が既定OFFのため、Z ACCで積分項を切り離すと機体重量の支持が消える。bringupへ明示opt-inの`grasp_gravity_compensation`を追加し、実機実行前にもparameterを確認。通常起動の既定値・PIDゲインは変えていない。起動前設定と再ビルドが必要。
+- 既定はexecute=falseの入力確認のみ。実行にはconfiguration_verified=true、対話TTY、全台HOVER、指令subscriber接続が必要。デモはarm/takeoff/landを送らない。実測geometryとtopic/frameは未提供のため、YAMLは未検証の例示値・実行無効のまま。
+- フレーム・Quaternion・finite値・source時刻/受信時刻を検査。制御中の入力途絶/制御ループheartbeat停止、HOVER離脱、加速度上限超過で中止ラッチ。HOVER継続機体にXYZ速度0を送りACCを解除、姿勢を急に巻き戻さず、LAND/STOP機体は介入しない。PC/通信/FC故障には独立RC/FC watchdogが必要。中止による物体落下リスクは残る。
+- `test_real_grasp_demo.py`の14件のオフラインmock試験に合格（入力異常、check-only無指令、namespace、sim_time/外力禁止、ACCゲート、中止ラッチ、heartbeat、MuJoCo interface維持等）。全Python構文、XML/YAML、git diff --check通過。入力確認launchのexecute=falseと実機重力補償opt-inのparameter展開を確認。実機飛行・シミュレーション飛行は今回未実施。
+- 操作手順・インターフェース契約・限界は`robots/bee/config/REAL_GRASP.md`。既存未コミット差分を含め、今回はコミットしていない。
+- `catkin build bee --no-status`は依存を含む21 packageすべて成功（2分21秒）。既存ApplyWrench message生成・空generate_messages・Gazebo非推奨warning、CMAKE_PREFIX_PATH差異および微小clock skewのwarningが残った。実機FC firmwareのビルド/書込み・通信互換性試験は行っていない。

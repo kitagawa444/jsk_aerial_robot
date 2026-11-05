@@ -4,6 +4,7 @@ namespace aerial_robot_control
 {
 BeeController::BeeController()
   : GimbalrotorController(),
+    bee_controller_initialized_(false),
     pd_wrench_comp_mode_(false),
     prev_wrench_comp_active_(false),
     pre_module_state_(SEPARATED),
@@ -84,10 +85,37 @@ void BeeController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   pid_reconf_servers_.back()->setCallback(boost::bind(&BeeController::cfgPidCallback, this, _1, _2, indices));
 
   prev_comp_update_time_ = -1;
+  // PoseLinearController starts the observer thread and ros_control may start
+  // calling update() before the most-derived initialize() has returned.  Only
+  // publish this flag after all Gimbalrotor/Bee vectors and publishers exist.
+  bee_controller_initialized_.store(true, std::memory_order_release);
+}
+
+bool BeeController::update()
+{
+  if(!bee_controller_initialized_.load(std::memory_order_acquire))
+    {
+      ROS_WARN_THROTTLE(1.0,
+                        "[BeeController] initialization is incomplete, skip update");
+      return false;
+    }
+  return GimbalrotorController::update();
 }
 
 void BeeController::controlCore()
 {
+  // BeeController performs inertia and interaction-wrench calculations before
+  // delegating to GimbalrotorController.  The latter has its own model-ready
+  // guard, but it is too late to protect the calculations below.  With several
+  // vehicles starting concurrently, the control timer can run while the first
+  // robot-model update is still building its matrices.
+  if(!bee_robot_model_ || !bee_robot_model_->initialized())
+    {
+      ROS_WARN_THROTTLE(1.0,
+                        "[BeeController] robot model is not initialized yet, skip controlCore");
+      return;
+    }
+
   std::map<int, bool> assembly_flag = bee_navigator_->getAssemblyFlags();
   int max_modules_num = bee_navigator_->getMaxModuleNum();
   int module_state = bee_navigator_->getModuleState();
@@ -409,11 +437,27 @@ void BeeController::rosParamInit()
 
 void BeeController::externalWrenchEstimate()
 {
+  if(!bee_controller_initialized_.load(std::memory_order_acquire))
+    {
+      return;
+    }
+
   // Use the actual acceleration/wrench target handed to the allocator.  XY
   // ACC_MODE is a direct feed-forward path and deliberately resets the XY PID
   // controllers, so reconstructing the target from PID::result() makes the
   // observer treat the commanded acceleration itself as an external force.
   const Eigen::VectorXd target_wrench_acc_cog = getTargetWrenchAccCog();
+
+  // The estimator runs in a thread created by PoseLinearController during
+  // controller initialization.  Do not read inertia/model data until the first
+  // model update has completed, and accept only the six-axis target produced by
+  // GimbalrotorController::controlCore().
+  if(!robot_model_ || !robot_model_->initialized())
+    {
+      prev_est_wrench_timestamp_ = 0;
+      integrate_term_ = Eigen::VectorXd::Zero(6);
+      return;
+    }
 
   if(navigator_->getNaviState() != aerial_robot_navigation::HOVER_STATE &&
      navigator_->getNaviState() != aerial_robot_navigation::TAKEOFF_STATE &&
@@ -423,8 +467,10 @@ void BeeController::externalWrenchEstimate()
       integrate_term_ = Eigen::VectorXd::Zero(6);
       return;
     }
-  else if(target_wrench_acc_cog.size() == 0)
+  else if(target_wrench_acc_cog.size() != 6)
     {
+      ROS_WARN_THROTTLE(1.0,
+                        "[BeeController] six-axis target wrench is not ready; skip estimation");
       prev_est_wrench_timestamp_ = 0;
       integrate_term_ = Eigen::VectorXd::Zero(6);
       return;

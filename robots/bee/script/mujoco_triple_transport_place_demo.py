@@ -18,6 +18,8 @@ from mujoco_triple_press_keyboard_demo import MujocoTriplePressKeyboardDemo
 class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
     """Autonomously grasp, transport, place, release, and retreat."""
 
+    MISSION_TOPIC_ROOT = "/mujoco_triple_transport_place"
+
     def __init__(self):
         # Give the autonomous demo known-safe defaults while preserving every
         # explicit command-line override used by an experiment.
@@ -196,6 +198,15 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
             "~transport_timeout", 180.0)
         self.destination_settle_duration = rospy.get_param(
             "~destination_settle_duration", 2.0)
+        # Keep the payload centred while it is lowered and unloaded.  A zero
+        # XY velocity command only damps motion; it cannot reject the steady
+        # lateral bias left by unequal compliant contacts.
+        self.place_xy_hold_position_kp = rospy.get_param(
+            "~place_xy_hold_position_kp", self.transport_position_kp)
+        self.place_xy_hold_velocity_limit = rospy.get_param(
+            "~place_xy_hold_velocity_limit", 0.01)
+        self.place_xy_hold_deadband = rospy.get_param(
+            "~place_xy_hold_deadband", 0.002)
 
         self.place_descent_velocity = rospy.get_param(
             "~place_descent_velocity", 0.005)
@@ -264,27 +275,26 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
         self.failsafe_hold_yaws = None
         self.failsafe_start_roll = 0.0
         self.failsafe_start_wall_time = None
+        topic_root = self.MISSION_TOPIC_ROOT
         self.phase_pub = rospy.Publisher(
-            "/mujoco_triple_transport_place/phase",
+            topic_root + "/phase",
             String, queue_size=1, latch=True)
         self.planner_status_pub = rospy.Publisher(
-            "/mujoco_triple_transport_place/planner/status",
+            topic_root + "/planner/status",
             String, queue_size=1, latch=True)
         self.planner_metrics_pub = rospy.Publisher(
-            "/mujoco_triple_transport_place/planner/metrics",
+            topic_root + "/planner/metrics",
             Vector3Stamped, queue_size=1)
         self.planner_disturbance_linear_pub = rospy.Publisher(
-            "/mujoco_triple_transport_place/planner/"
-            "external_linear_acceleration",
+            topic_root + "/planner/external_linear_acceleration",
             Vector3Stamped, queue_size=1)
         self.planner_disturbance_angular_pub = rospy.Publisher(
-            "/mujoco_triple_transport_place/planner/"
-            "external_angular_acceleration",
+            topic_root + "/planner/external_angular_acceleration",
             Vector3Stamped, queue_size=1)
         self.planner_force_pubs = dict(
             (name, rospy.Publisher(
-                "/mujoco_triple_transport_place/planner/{}/contact_force".
-                format(name), WrenchStamped, queue_size=1))
+                topic_root + "/planner/{}/contact_force".format(name),
+                WrenchStamped, queue_size=1))
             for name in self.names)
         self.planner_status_pub.publish(String(data=self.control_strategy))
 
@@ -1105,6 +1115,23 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
         velocity = math.hypot(object_twist[0], object_twist[1])
         return distance, velocity
 
+    def command_place_xy_hold_velocity(self, object_pose):
+        """Hold the payload over the destination during place and unload."""
+        error_x = self.destination_x - object_pose.position.x
+        error_y = self.destination_y - object_pose.position.y
+        distance = math.hypot(error_x, error_y)
+        if distance <= self.place_xy_hold_deadband:
+            self.translation_velocity_command = [0.0, 0.0]
+            return distance
+        speed = min(
+            self.place_xy_hold_velocity_limit,
+            self.place_xy_hold_position_kp * distance)
+        self.translation_velocity_command = [
+            speed * error_x / distance,
+            speed * error_y / distance,
+        ]
+        return distance
+
     def update_mission(self, object_pose, object_twist, filtered_forces, now):
         if self.safety_active:
             return
@@ -1146,7 +1173,7 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                     format(distance))
 
         elif self.task_phase == "DESTINATION_SETTLE":
-            self.translation_velocity_command = [0.0, 0.0]
+            self.command_place_xy_hold_velocity(object_pose)
             self.target_z_velocity = 0.0
             if self.phase_elapsed(now) >= self.destination_settle_duration:
                 # Once initial lift has been confirmed, allow the hold target
@@ -1163,7 +1190,7 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                         self.place_object_z, self.place_control_target_z))
 
         elif self.task_phase == "DESCEND":
-            self.translation_velocity_command = [0.0, 0.0]
+            self.command_place_xy_hold_velocity(object_pose)
             if (self.lift_hold_target_object_z is None or
                     self.lift_hold_target_object_z >
                     self.place_control_target_z + 1.0e-5):
@@ -1199,7 +1226,7 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                         object_pose.position.z))
 
         elif self.task_phase == "UNLOAD":
-            self.translation_velocity_command = [0.0, 0.0]
+            self.command_place_xy_hold_velocity(object_pose)
             self.target_z_velocity = 0.0
             ratio = min(
                 1.0, self.phase_elapsed(now) /
@@ -1216,6 +1243,7 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                     "vertical load transferred; remove normal preload")
 
         elif self.task_phase == "RELEASE":
+            self.translation_velocity_command = [0.0, 0.0]
             force_released = (
                 self.applied_common_normal_force() <=
                 self.release_normal_force + 0.05 and
@@ -1461,7 +1489,7 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 rospy.loginfo_throttle(
                     0.5,
                     "transport/place: %s object [%.3f, %.3f, %.3f], "
-                    "goal error xy/z %.3f/%+.3f m, force [%.2f %.2f %.2f] N",
+                    "goal error xy/z %.3f/%+.3f m, force [%s] N",
                     self.task_phase,
                     object_pose.position.x,
                     object_pose.position.y,
@@ -1470,8 +1498,8 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                         object_pose.position.x - self.destination_x,
                         object_pose.position.y - self.destination_y),
                     object_pose.position.z - self.place_object_z,
-                    filtered_forces["bee1"], filtered_forces["bee2"],
-                    filtered_forces["bee3"])
+                    " ".join("{:.2f}".format(filtered_forces[name])
+                             for name in self.names))
                 time.sleep(self.control_period)
         finally:
             log_file.flush()

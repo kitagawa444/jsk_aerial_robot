@@ -1,0 +1,41 @@
+# EXAMPLE ONLY: replace geometry/mass/frames with measurements before enabling.
+execute: false
+configuration_verified: false
+object_pose_topic: /mocap/grasp_object/pose
+world_frame: world
+robot_namespaces: {bee1: bee1, bee2: bee2, bee3: bee3}
+cog_frames: {bee1: bee1/cog, bee2: bee2/cog, bee3: bee3/cog}
+# Odometry overrides must describe BASELINK, with WORLD-frame linear velocity.
+# odometry_topics: {bee1: /bee1/uav/baselink/odom, ...}
+object_shape: triangular_prism
+object_mass: 0.20
+object_triangle_side: 0.60
+object_height: 0.60
+robot_mass: 1.84199
+foot_contact_offset: 0.107
+foot_ball_radius: 0.012
+foot_max_compression: 0.015
+use_external_wrench: false
+input_timeout: 0.3
+command_timeout: 0.3
+preflight_timeout: 15.0
+max_command_acceleration: 3.0
+grasp_staging_clearance: 0.80
+approach_speed: 0.01
+approach_accel_limit: 0.4
+press_accel_limit: 1.5
+attitude_ramp_duration: 8.0
+attitude_settle_duration: 3.0
+target_normal_force: 1.0
+minimum_normal_force: 0.0
+maximum_normal_force: 4.0
+keyboard_force_step: 0.1
+initial_z_velocity: 0.0
+keyboard_z_velocity_step: 0.005
+maximum_abs_z_velocity: 0.02
+translation_velocity_limit: 0.02
+translation_z_velocity_limit: 0.01
+keyboard_translation_velocity_step: 0.005
+keyboard_translation_z_velocity_step: 0.002
+yaw_velocity_limit: 0.03
+wrench_log_path: /tmp/bee_real_grasp_wrench.csv

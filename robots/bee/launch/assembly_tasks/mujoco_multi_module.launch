@@ -26,8 +26,16 @@
   <arg name="spawn_yaw" default="0.0"/>
   <arg name="grasp_staging_layout" default="true"/>
   <arg name="grasp_staging_clearance" default="0.80"/>
+  <!-- Delay args remain as optional minimum waits for compatibility.  Ready
+       conditions, rather than these delays, gate backend/controller startup. -->
+  <!-- Give every per-Bee process time to finish controller/plugin
+       initialization before the shared backend starts publishing joint
+       states.  With four or more Bees, starting immediately can expose a
+       first-update Eigen matrix race in aerial_robot_base_node. -->
   <arg name="backend_start_delay" default="1.0"/>
-  <arg name="param_load_delay" default="1.0"/>
+  <arg name="param_load_delay" default="3.0"/>
+  <arg name="backend_ready_timeout" default="30.0"/>
+  <arg name="param_load_timeout" default="30.0"/>
   <arg name="regenerate_single_model" default="false"/>
   <!-- MuJoCo soft friction otherwise creeps under sustained payload load. -->
   <arg name="contact_impratio" default="50.0"/>
@@ -38,12 +46,17 @@
   <arg name="object_y" default="1.0"/>
   <arg name="object_ground_clearance" default="0.0"/>
   <arg name="object_yaw" default="0.0"/>
+  <arg name="object_shape" default="triangular_prism"/>
   <!-- Equal-width/equal-height EPS prism: 600 mm outer side and height. A
        concentric 418.626 mm vertical triangular hole gives exactly 0.500 kg
        at the 96-times EPS density below. Normal wall thickness is 52.36 mm. -->
   <arg name="object_height" default="0.60"/>
   <arg name="object_triangle_side" default="0.60"/>
   <arg name="object_inner_triangle_side" default="0.4186262221"/>
+  <arg name="object_pentagon_side" default="0.60"/>
+  <!-- Full side lengths used when object_shape:=box. -->
+  <arg name="object_size_x" default="0.60"/>
+  <arg name="object_size_y" default="0.60"/>
   <arg name="object_density" default="10.4166666667"/>
   <!-- Positive values override density-derived mass; <= 0 selects density. -->
   <arg name="object_mass" default="-1.0"/>
@@ -89,6 +102,8 @@
     <param name="grasp_staging_clearance" value="$(arg grasp_staging_clearance)"/>
     <param name="backend_start_delay" value="$(arg backend_start_delay)"/>
     <param name="param_load_delay" value="$(arg param_load_delay)"/>
+    <param name="backend_ready_timeout" value="$(arg backend_ready_timeout)"/>
+    <param name="param_load_timeout" value="$(arg param_load_timeout)"/>
     <param name="regenerate_single_model" value="$(arg regenerate_single_model)"/>
     <param name="contact_impratio" value="$(arg contact_impratio)"/>
     <param name="friction_cone" value="$(arg friction_cone)"/>
@@ -98,9 +113,13 @@
     <param name="object_y" value="$(arg object_y)"/>
     <param name="object_ground_clearance" value="$(arg object_ground_clearance)"/>
     <param name="object_yaw" value="$(arg object_yaw)"/>
+    <param name="object_shape" value="$(arg object_shape)"/>
     <param name="object_height" value="$(arg object_height)"/>
     <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
     <param name="object_inner_triangle_side" value="$(arg object_inner_triangle_side)"/>
+    <param name="object_pentagon_side" value="$(arg object_pentagon_side)"/>
+    <param name="object_size_x" value="$(arg object_size_x)"/>
+    <param name="object_size_y" value="$(arg object_size_y)"/>
     <param name="object_density" value="$(arg object_density)"/>
     <param name="object_mass" value="$(arg object_mass)"/>
     <param name="object_freejoint_damping" value="$(arg object_freejoint_damping)"/>
@@ -125,9 +144,13 @@
       <param name="object_y" value="$(arg object_y)"/>
       <param name="object_ground_clearance" value="$(arg object_ground_clearance)"/>
       <param name="object_yaw" value="$(arg object_yaw)"/>
+      <param name="object_shape" value="$(arg object_shape)"/>
       <param name="object_height" value="$(arg object_height)"/>
       <param name="object_triangle_side" value="$(arg object_triangle_side)"/>
       <param name="object_inner_triangle_side" value="$(arg object_inner_triangle_side)"/>
+      <param name="object_pentagon_side" value="$(arg object_pentagon_side)"/>
+      <param name="object_size_x" value="$(arg object_size_x)"/>
+      <param name="object_size_y" value="$(arg object_size_y)"/>
       <param name="spawn_object" value="$(arg spawn_object)"/>
       <param name="spawn_object_pedestal" value="$(arg spawn_object_pedestal)"/>
       <param name="object_pedestal_height" value="$(arg object_pedestal_height)"/>

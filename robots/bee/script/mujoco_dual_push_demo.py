@@ -9,6 +9,7 @@ import time
 
 import rospy
 from aerial_robot_msgs.msg import FlightNav
+from controller_manager_msgs.srv import ListControllers
 from geometry_msgs.msg import Vector3Stamped, WrenchStamped
 from nav_msgs.msg import Odometry
 
@@ -46,6 +47,8 @@ class MujocoDualPushDemo(MujocoGraspDemo):
         self.observer_force_sign = rospy.get_param("~observer_force_sign", 1.0)
         self.observer_force_scale = rospy.get_param("~observer_force_scale", 1.0)
         self.observer_timeout = rospy.get_param("~observer_timeout", 1.0)
+        self.controller_ready_timeout = rospy.get_param(
+            "~controller_ready_timeout", 10.0)
         self.observer_baseline_duration = rospy.get_param(
             "~observer_baseline_duration", 1.0)
         self.direction_confirm_samples = rospy.get_param(
@@ -69,10 +72,10 @@ class MujocoDualPushDemo(MujocoGraspDemo):
         self.cog_odometry = {}
         for name in self.names:
             rospy.Subscriber(
-                "/{}/estimated_external_wrench".format(name),
+                self.robot_topic(name, 'estimated_external_wrench'),
                 WrenchStamped, self.observer_cb, callback_args=name, queue_size=1)
             rospy.Subscriber(
-                "/{}/uav/cog/odom".format(name), Odometry,
+                self.robot_topic(name, 'uav/cog/odom'), Odometry,
                 self.cog_odom_cb, callback_args=name, queue_size=1)
 
     def observer_cb(self, message, name):
@@ -97,6 +100,8 @@ class MujocoDualPushDemo(MujocoGraspDemo):
         return math.atan2(math.sin(first - second), math.cos(first - second))
 
     def wait_for_dual_data(self, timeout=20.0):
+        if not self.wait_for_attitude_controllers():
+            return False
         deadline = time.monotonic() + timeout
         rospy.loginfo(
             "push demo: waiting for %s odometry and object pose",
@@ -110,6 +115,48 @@ class MujocoDualPushDemo(MujocoGraspDemo):
             if ready:
                 return True
             time.sleep(0.05)
+        return False
+
+    def wait_for_attitude_controllers(self):
+        """Verify every active Bee has a running low-level controller."""
+        deadline = time.monotonic() + self.controller_ready_timeout
+        last_states = {}
+        rospy.loginfo(
+            "push demo: checking %s attitude controllers",
+            ",".join(self.names))
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            all_running = True
+            current_states = {}
+            for name in self.names:
+                service_name = "/{}/controller_manager/list_controllers".format(
+                    name)
+                try:
+                    rospy.wait_for_service(service_name, timeout=0.05)
+                    response = rospy.ServiceProxy(
+                        service_name, ListControllers)()
+                    state = next(
+                        (controller.state for controller in response.controller
+                         if controller.name == "attitude_controller"),
+                        "missing")
+                except (rospy.ROSException, rospy.ServiceException):
+                    state = "service unavailable"
+                current_states[name] = state
+                all_running = all_running and state == "running"
+            if all_running:
+                rospy.loginfo(
+                    "push demo: all attitude controllers are running")
+                return True
+            if current_states != last_states:
+                rospy.logwarn(
+                    "push demo: waiting for attitude controllers: %s",
+                    ", ".join("{}={}".format(name, current_states[name])
+                              for name in self.names))
+                last_states = current_states
+            time.sleep(0.10)
+        rospy.logerr(
+            "push demo: attitude controller preflight failed: %s",
+            ", ".join("{}={}".format(name, last_states.get(name, "unknown"))
+                      for name in self.names))
         return False
 
     def wait_for_observers(self, timeout=10.0):

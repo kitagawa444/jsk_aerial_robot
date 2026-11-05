@@ -27,7 +27,8 @@ class MujocoGraspDemo(object):
     ]
 
     def __init__(self):
-        self.names = ["bee1", "bee2", "bee3"]
+        self.names = list(getattr(
+            self, "ACTIVE_NAMES", ("bee1", "bee2", "bee3")))
         self.lock = threading.Lock()
         self.flight_states = {}
         self.odometry = {}
@@ -40,10 +41,16 @@ class MujocoGraspDemo(object):
         # Use the dimensions resolved by the running scene bringup.  Keeping
         # separate hard-coded defaults here caused approach radius and contact
         # height to remain on the old payload after its geometry changed.
-        bringup_ns = "/bee_mujoco_multi_bringup/"
+        self.hardware_mode = getattr(self, 'HARDWARE_MODE', False)
+        self.scene_param_ns = ('~scene/' if self.hardware_mode else
+                               '/bee_mujoco_multi_bringup/')
+        self.robot_namespaces = rospy.get_param('~robot_namespaces', {})
+        bringup_ns = self.scene_param_ns
         scene_object_x = rospy.get_param(bringup_ns + "object_x", 0.0)
         scene_object_y = rospy.get_param(bringup_ns + "object_y", 1.0)
         scene_object_yaw = rospy.get_param(bringup_ns + "object_yaw", 0.0)
+        scene_object_shape = str(rospy.get_param(
+            bringup_ns + "object_shape", "triangular_prism")).lower()
         scene_object_height = rospy.get_param(
             bringup_ns + "object_height", 0.60)
         scene_ground_clearance = rospy.get_param(
@@ -58,6 +65,8 @@ class MujocoGraspDemo(object):
         self.object_x = rospy.get_param("~object_x", scene_object_x)
         self.object_y = rospy.get_param("~object_y", scene_object_y)
         self.object_yaw = rospy.get_param("~object_yaw", scene_object_yaw)
+        self.object_shape = rospy.get_param(
+            "~object_shape", scene_object_shape)
         self.object_height = rospy.get_param(
             "~object_height", scene_object_height)
         self.object_ground_clearance = rospy.get_param(
@@ -67,7 +76,7 @@ class MujocoGraspDemo(object):
             scene_support_height + self.object_ground_clearance +
             self.object_height / 2.0)
         object_mass_default = rospy.get_param(
-            "/bee_mujoco_multi_bringup/object_mass", 0.50)
+            bringup_ns + "object_mass", 0.50)
         self.object_mass = rospy.get_param(
             "~object_mass", object_mass_default)
         self.robot_mass = rospy.get_param("~robot_mass", 1.84199)
@@ -77,13 +86,35 @@ class MujocoGraspDemo(object):
             bringup_ns + "grasp_staging_clearance", 0.80)
         self.triangle_side = rospy.get_param(
             "~object_triangle_side", scene_triangle_side)
+        self.pentagon_side = rospy.get_param(
+            "~object_pentagon_side", rospy.get_param(
+                bringup_ns + "object_pentagon_side", 0.60))
+        self.object_size_x = rospy.get_param(
+            "~object_size_x", rospy.get_param(
+                bringup_ns + "object_size_x", 0.60))
+        self.object_size_y = rospy.get_param(
+            "~object_size_y", rospy.get_param(
+                bringup_ns + "object_size_y", 0.60))
         self.staging_clearance = rospy.get_param(
             "~grasp_staging_clearance", scene_staging_clearance)
-        rospy.loginfo(
-            "grasp demo scene geometry: triangle side %.3f m, height %.3f m, "
-            "centre [%.3f, %.3f, %.3f] m, yaw %.3f rad",
-            self.triangle_side, self.object_height, self.object_x,
-            self.object_y, self.object_z, self.object_yaw)
+        if str(self.object_shape).lower() in ("box", "rectangular_prism"):
+            rospy.loginfo(
+                "grasp demo scene geometry: box %.3f x %.3f x %.3f m, "
+                "centre [%.3f, %.3f, %.3f] m, yaw %.3f rad",
+                self.object_size_x, self.object_size_y, self.object_height,
+                self.object_x, self.object_y, self.object_z, self.object_yaw)
+        elif str(self.object_shape).lower() == "pentagonal_prism":
+            rospy.loginfo(
+                "grasp demo scene geometry: pentagon side %.3f m, height "
+                "%.3f m, centre [%.3f, %.3f, %.3f] m, yaw %.3f rad",
+                self.pentagon_side, self.object_height, self.object_x,
+                self.object_y, self.object_z, self.object_yaw)
+        else:
+            rospy.loginfo(
+                "grasp demo scene geometry: triangle side %.3f m, height "
+                "%.3f m, centre [%.3f, %.3f, %.3f] m, yaw %.3f rad",
+                self.triangle_side, self.object_height, self.object_x,
+                self.object_y, self.object_z, self.object_yaw)
 
         self.control_period = rospy.get_param("~control_period", 0.01)
         self.staging_timeout = rospy.get_param("~staging_timeout", 150.0)
@@ -111,6 +142,8 @@ class MujocoGraspDemo(object):
         self.accel_command_sign_x = rospy.get_param("~accel_command_sign_x", 1.0)
         self.accel_command_sign_y = rospy.get_param("~accel_command_sign_y", 1.0)
         self.use_external_wrench = rospy.get_param("~use_external_wrench", False)
+        if self.hardware_mode and self.use_external_wrench:
+            raise ValueError('external wrench injection is not available on hardware')
         self.force_trial_mode = rospy.get_param("~force_trial_mode", True)
         self.external_lift_force = rospy.get_param("~external_lift_force", 5.0)
         self.hover_handover_duration = rospy.get_param("~hover_handover_duration", 4.0)
@@ -143,31 +176,42 @@ class MujocoGraspDemo(object):
         self.wrench_pubs = {}
         for name in self.names:
             self.start_pubs[name] = rospy.Publisher(
-                "/{}/teleop_command/start".format(name), Empty, queue_size=1)
+                self.robot_topic(name, 'teleop_command/start'), Empty, queue_size=1)
             self.takeoff_pubs[name] = rospy.Publisher(
-                "/{}/teleop_command/takeoff".format(name), Empty, queue_size=1)
+                self.robot_topic(name, 'teleop_command/takeoff'), Empty, queue_size=1)
             self.nav_pubs[name] = rospy.Publisher(
-                "/{}/uav/nav".format(name), FlightNav, queue_size=1)
+                self.robot_topic(name, 'uav/nav'), FlightNav, queue_size=1)
             self.baselink_rpy_pubs[name] = rospy.Publisher(
-                "/{}/final_target_baselink_rpy".format(name),
+                self.robot_topic(name, 'final_target_baselink_rpy'),
                 Vector3Stamped,
                 queue_size=1)
-            self.wrench_pubs[name] = rospy.Publisher(
-                "/{}/mujoco/external_wrench".format(name), WrenchStamped, queue_size=1)
-            rospy.Subscriber("/{}/flight_state".format(name), UInt8,
+            rospy.Subscriber(self.robot_topic(name, 'flight_state'), UInt8,
                              self.flight_state_cb, callback_args=name, queue_size=1)
-            rospy.Subscriber("/{}/ground_truth".format(name), Odometry,
+            odom_topic = rospy.get_param(
+                '~odometry_topics/' + name,
+                self.robot_topic(name, 'uav/baselink/odom' if self.hardware_mode
+                                 else 'ground_truth'))
+            rospy.Subscriber(odom_topic, Odometry,
                              self.odometry_cb, callback_args=name, queue_size=1)
-            rospy.Subscriber("/{}/mujoco/grasp_forces_world".format(name), ForceList,
-                             self.force_cb, callback_args=name, queue_size=1)
-            rospy.Subscriber("/{}/mujoco/grasp_contact_states".format(name), JointState,
-                             self.contact_state_cb, callback_args=name, queue_size=1)
+            if not self.hardware_mode:
+                self.wrench_pubs[name] = rospy.Publisher(
+                    self.robot_topic(name, 'mujoco/external_wrench'), WrenchStamped, queue_size=1)
+                rospy.Subscriber(self.robot_topic(name, 'mujoco/grasp_forces_world'), ForceList,
+                                 self.force_cb, callback_args=name, queue_size=1)
+                rospy.Subscriber(self.robot_topic(name, 'mujoco/grasp_contact_states'), JointState,
+                                 self.contact_state_cb, callback_args=name, queue_size=1)
 
-        rospy.Subscriber("/bee1/mujoco/grasp_object_pose", PoseStamped,
+        object_topic = (rospy.get_param('~object_pose_topic') if self.hardware_mode else
+                        rospy.get_param('~object_pose_topic', '/bee1/mujoco/grasp_object_pose'))
+        rospy.Subscriber(object_topic, PoseStamped,
                          self.object_pose_cb, queue_size=1)
 
         self.log_file = None
         self.log_writer = None
+
+    def robot_topic(self, name, suffix):
+        namespace = self.robot_namespaces.get(name, name).strip('/')
+        return '/{}/{}'.format(namespace, suffix)
 
     def flight_state_cb(self, msg, name):
         with self.lock:
@@ -405,7 +449,8 @@ class MujocoGraspDemo(object):
             wrench = WrenchStamped()
             wrench.header.stamp = msg.header.stamp
             wrench.header.frame_id = "world"
-            self.wrench_pubs[name].publish(wrench)
+            if name in self.wrench_pubs:
+                self.wrench_pubs[name].publish(wrench)
 
     def ramp_attitude_at_staging(self, desired_radii, desired_tangents):
         """Tilt the physical feet toward the object without a step command."""
