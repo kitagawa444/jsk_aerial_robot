@@ -149,6 +149,29 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
 
 void BeeNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg)
 {
+  std::lock_guard<std::mutex> lock(grasp_command_mutex_);
+  if (grasp_command_active_) return;
+  processNavigationCommand(msg);
+}
+
+void BeeNavigator::applyGraspCommand(const aerial_robot_msgs::FlightNav& command,
+                                     const geometry_msgs::Vector3Stamped& attitude, bool release)
+{
+  std::lock_guard<std::mutex> lock(grasp_command_mutex_);
+  // Never overwrite takeoff, landing or disarmed navigation with a grasp command.
+  if (getNaviState() != HOVER_STATE || getModuleState() != SEPARATED)
+  {
+    grasp_command_active_ = false;
+    return;
+  }
+  grasp_command_active_ = !release;
+  processNavigationCommand(boost::make_shared<aerial_robot_msgs::FlightNav>(command));
+  if (!release)
+    setFinalTargetBaselinkRPY(tf::Vector3(attitude.vector.x, attitude.vector.y, attitude.vector.z));
+}
+
+void BeeNavigator::processNavigationCommand(const aerial_robot_msgs::FlightNavConstPtr& msg)
+{
   if (getNaviState() == TAKEOFF_STATE || BaseNavigator::getNaviState() == LAND_STATE || getModuleState() != SEPARATED)
     return;
 

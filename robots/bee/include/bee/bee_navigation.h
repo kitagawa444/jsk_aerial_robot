@@ -33,6 +33,9 @@ namespace aerial_robot_navigation
                     double loop_du) override;
 
     void update() override;
+    // Called by BeeController on the existing flight-control loop.
+    void applyGraspCommand(const aerial_robot_msgs::FlightNav& command,
+                           const geometry_msgs::Vector3Stamped& attitude, bool release);
 
     inline void setTargetPosCandX( float value){  target_pos_candidate_.setX(value);}
     inline void setTargetPosCandY( float value){  target_pos_candidate_.setY(value);}
@@ -135,6 +138,9 @@ namespace aerial_robot_navigation
     virtual void naviCallback(const aerial_robot_msgs::FlightNavConstPtr & msg) override;
 
   private:
+    std::mutex grasp_command_mutex_;
+    bool grasp_command_active_ = false;
+    void processNavigationCommand(const aerial_robot_msgs::FlightNavConstPtr& msg);
     void setAssemblyFinalTargetBaselinkRotCallback(const spinal::DesireCoordConstPtr & msg);
     void rotateContactPointFrame();
     boost::shared_ptr<BeeRobotModel> bee_robot_model_;

@@ -85,6 +85,12 @@ void BeeController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   pid_reconf_servers_.back()->setCallback(boost::bind(&BeeController::cfgPidCallback, this, _1, _2, indices));
 
   prev_comp_update_time_ = -1;
+  bool grasp_enabled = false;
+  bool grasp_interface_enabled = true;
+  nh_.param("controller/grasp_mode", grasp_enabled, false);
+  nh_.param("controller/grasp_interface_enabled", grasp_interface_enabled, true);
+  if(grasp_interface_enabled)
+    grasp_mode_.reset(new bee::grasp::GraspMode(nh_, ros::NodeHandle(nh_, "grasp"), grasp_enabled));
   // PoseLinearController starts the observer thread and ros_control may start
   // calling update() before the most-derived initialize() has returned.  Only
   // publish this flag after all Gimbalrotor/Bee vectors and publishers exist.
@@ -99,6 +105,12 @@ bool BeeController::update()
                         "[BeeController] initialization is incomplete, skip update");
       return false;
     }
+  aerial_robot_msgs::FlightNav command;
+  geometry_msgs::Vector3Stamped attitude;
+  bool release = false;
+  if(grasp_mode_ && grasp_mode_->takeCommand(command, attitude, release,
+                                               bee_navigator_->getModuleState() == SEPARATED))
+    bee_navigator_->applyGraspCommand(command, attitude, release);
   return GimbalrotorController::update();
 }
 

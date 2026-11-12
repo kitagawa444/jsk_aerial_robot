@@ -46,8 +46,8 @@ add_library(bee_sensor_pluginlib  src/sensor/imu.cpp)
 target_link_libraries(bee_sensor_pluginlib ${catkin_LIBRARIES})
 add_dependencies(bee_sensor_pluginlib aerial_robot_msgs_generate_messages_cpp spinal_generate_messages_cpp)
 
-add_library(bee_controller src/control/bee_controller.cpp)
-target_link_libraries(bee_controller bee_sensor_pluginlib bee_robot_model ${catkin_LIBRARIES})
+add_library(bee_controller src/control/bee_controller.cpp src/control/grasp_mode.cpp)
+target_link_libraries(bee_controller bee_sensor_pluginlib bee_robot_model bee_navigation bee_cooperative_grasp ${catkin_LIBRARIES})
 add_dependencies(bee_controller ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 add_library(bee_robot_model src/model/bee_robot_model.cpp)
@@ -89,7 +89,7 @@ install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigati
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(DIRECTORY include/bee/cooperative_grasp
+install(DIRECTORY include/bee/cooperative_grasp include/bee/control
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 

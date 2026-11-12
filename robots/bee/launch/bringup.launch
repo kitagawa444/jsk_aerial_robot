@@ -5,6 +5,10 @@
   <arg name="simulation" default="False" />
   <!-- Opt-in hardware profile for the net-Z-ACC grasp controller. -->
   <arg name="grasp_gravity_compensation" default="false" />
+  <arg name="grasp_mode" default="false"/>
+  <!-- Legacy standalone tracker, retained for comparison only. -->
+  <arg name="launch_grasp_tracker" default="false"/>
+  <arg name="grasp_controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
   <arg name="control_mode" default="0" />
   <arg name="estimate_mode"  default= "1" />
   <arg name="sim_estimate_mode"  default= "2" />
@@ -37,6 +41,14 @@
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
+    <param name="controller/grasp_mode" value="$(arg grasp_mode)"/>
+    <param name="controller/grasp_interface_enabled"
+           value="$(eval arg('grasp_mode') or not arg('launch_grasp_tracker'))"/>
+    <rosparam command="load" file="$(arg grasp_controller_config)" ns="grasp"/>
+    <param name="grasp/base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
+    <param name="grasp/allow_empty_base_frame" value="$(arg mujoco)"/>
+    <param name="grasp/cog_frame" value="$(arg robot_ns)/cog"/>
+
     # EGOMOTION_ESTIMATE = 0
     # EXPERIMENT_ESTIMATE = 1. for unstable mocap, use this mode
     # GROUND_TRUTH = 2
@@ -134,4 +146,10 @@
   </include>
 
 
+  <include file="$(find bee)/launch/grasp_tracker.launch" if="$(eval arg('launch_grasp_tracker') and not arg('grasp_mode'))">
+    <arg name="robot_ns" value="$(arg robot_ns)"/>
+    <arg name="controller_config" value="$(arg grasp_controller_config)"/>
+    <arg name="base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
+    <arg name="allow_empty_base_frame" value="$(arg mujoco)"/>
+  </include>
 </launch>

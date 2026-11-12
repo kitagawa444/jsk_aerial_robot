@@ -8,6 +8,7 @@
 #include <beetle/TaggedWrenches.h>
 #include <gimbalrotor/control/gimbalrotor_controller.h>
 #include <bee/sensor/imu.h>
+#include <bee/control/grasp_mode.h>
 
 namespace aerial_robot_control
 {
@@ -38,6 +39,7 @@ namespace aerial_robot_control
     std::atomic<bool> bee_controller_initialized_;
     boost::shared_ptr<BeeRobotModel> bee_robot_model_;
     boost::shared_ptr<aerial_robot_navigation::BeeNavigator> bee_navigator_;
+    std::unique_ptr<bee::grasp::GraspMode> grasp_mode_;
     
     map<string, ros::Subscriber> ff_inter_wrench_subs_;
 
