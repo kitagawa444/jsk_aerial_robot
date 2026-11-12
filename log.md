@@ -774,3 +774,216 @@ rosrun bee mujoco_triple_transport_place_demo.py \
 - `test_real_grasp_demo.py`の14件のオフラインmock試験に合格（入力異常、check-only無指令、namespace、sim_time/外力禁止、ACCゲート、中止ラッチ、heartbeat、MuJoCo interface維持等）。全Python構文、XML/YAML、git diff --check通過。入力確認launchのexecute=falseと実機重力補償opt-inのparameter展開を確認。実機飛行・シミュレーション飛行は今回未実施。
 - 操作手順・インターフェース契約・限界は`robots/bee/config/REAL_GRASP.md`。既存未コミット差分を含め、今回はコミットしていない。
 - `catkin build bee --no-status`は依存を含む21 packageすべて成功（2分21秒）。既存ApplyWrench message生成・空generate_messages・Gazebo非推奨warning、CMAKE_PREFIX_PATH差異および微小clock skewのwarningが残った。実機FC firmwareのビルド/書込み・通信互換性試験は行っていない。
+
+## 2026-11-05 中央把持制御のC++化とMuJoCoシーン生成の分離
+
+- 作業前に既存差分を`29c1a958`へコミットし、関連リポジトリ`aerial_robot_3rdparty`も`33831d1`へコミットした。originをfetchし、両方ともbehind 0を確認。今回の分離実装はその後の未コミット差分。
+- `bee_cooperative_grasp`ライブラリへ状態推定、phase管理、押し付け、支持移行、Z軌道PID、滑り補正、物体姿勢・力配分を移した。ROS入出力は`bee_cooperative_grasp_node`、操作要求は`grasp_keyboard.py`へ分離。制御内部状態はLift/Hold/Transportを通して維持する。
+- `mujoco_scene_generator.py`を切り出し、ROS masterなしでXML/composer YAML/制御用manifestを生成可能にした。`mujoco_multi_bringup.py`は生成呼び出しと各プロセスの起動・待機・終了を担当。中央制御はbringupのprivate parameterではなく、確定した物理条件のmanifestを受け取る。
+- 初期版の対象はMuJoCo上の自律把持・運搬・載置。既定はpreviewで飛行topicへpublishしない。実行時は既存の各Bee制御器へWORLD/COG加速度と姿勢を送る。arm/takeoffは行わない。実機入口・旧Pythonデモを残し、MPC、旧連続キー操作、旧CSV全列と形状別自動チューニングは未移行。
+- 独立ビルド、C++テスト13件、シーン生成offlineテスト6件、既存実機入口offlineテスト14件を通過。C++の押し付け計算36条件とZ reference 300 sampleをcheckpointのPython出力と比較した。旧生成処理と6条件の辞書比較、3形状XMLのMuJoCo 2.3.7読み込みも通過。
+- 専用localhost ROS masterの合成入力試験でpreview無指令、実行指令、入力途絶停止、再開拒否を確認。初回3台飛行試験で重複`/clock`をheartbeat停止と誤判定したため、ループ生存監視をsteady clockで更新するよう修正。入力鮮度の監視とdt=0時の積分停止は継続し、時刻重複の回帰試験を追加した。
+- 修正後の3台・500 g三角柱と4台・500 g直方体のheadless試験は`Complete`に到達。約50 mm離床、X方向0.40 m運搬、載置、解放、退避を確認。3台の最終poseは`(0.400979889, 0.999513597, 0.949914656) m`、最終XY誤差は約1.1 mm。各条件1回の完走確認で、旧制御との性能同等性を保証する試験ではない。
+- 5台・800 g五角柱は2回とも`Approach`中の入力鮮度検査で中止した。1回目はbee1のflight state、2回目は物体pose。`input_timeout=1.0 s`は維持。配信遅延・シミュレータ負荷の原因特定と5台での完走確認は残る。ログは`/tmp/bee-grasp-sim-pentagon-first/`、`/tmp/bee-grasp-sim-pentagon/`、成功した3・4台は`/tmp/bee-grasp-sim-smoke-retry/`、`/tmp/bee-grasp-sim-box/`。
+- 起動手順、コードの入口、データ契約、移行範囲は`robots/bee/COOPERATIVE_GRASP.md`に記載。
+- 通常のワークスペースでも`catkin build bee --no-deps --no-status -j2`が成功し、devel内の新ノードをROSから検出できた。`catkin test bee --no-status --make-args -j2`でもC++テスト13件が通過。既存の空`generate_messages()`警告は残る。
+
+### 同日: 合意したシミュレーション起動構造へ分離
+
+- ユーザー指定の`grasp_sim.launch` → `mujoco_world.launch` / `multi_robot_bringup.launch` / `cooperative_grasp.launch`という3分割を実装。`grasp_real.launch`は追加していない。実機では各ロボット上の既存`bringup.launch`を個別に起動する前提。
+- `multi_robot_bringup.launch`はシミュレーション用の便宜的な入口。共通の`mujoco_vehicle.launch.xml`から各Beeの`bringup.launch`をincludeし、共有backendを各機体から起動しない。姿勢制御器は各bringupの標準spawnerがcontroller managerを待って起動する。
+- `mujoco_world.launch`は共有MuJoCoのnodeを明示。`prepare_mujoco_scene.py`をlaunch-prefixとして使い、XML生成、全台のパラメータ待機、初期化猶予の後で`exec`する。Pythonの中で子launchや各Beeを起動しないため、全プロセスをroslaunchが直接管理する。
+- `robot_count:=3/4/5`から既存の三角柱・直方体・五角柱YAMLと対応するtask YAMLを選択する。scene_configの台数不一致は起動前に拒否。executeの既定値はfalseのまま。旧launchと`mujoco_multi_bringup.py`は互換用に残し、新しい入口からは呼ばない。
+- 3・4・5台すべてのlaunch展開と、専用localhost ROS masterでの実際の起動・終了が成功。全台の姿勢制御器running、物理時刻の進行、中央制御Idle、preview無指令、停止後のノード消滅を確認。今回の試験では離陸・把持は行っていない。ログは`/tmp/bee-grasp-launch-{3,4,5}/`。
+- 起動前処理のofflineテスト5件、Python/XML構文、git diff --checkが通過。制御式・phase遷移・物体の生成条件は変更していない。
+
+## 2026-11-06 起動時のカルマンフィルタ状態切替競合を修正
+
+- 追加の起動確認で3台headlessの`aerial_robot_base_node`がEigen行列積assertで終了した。assert時のスタックを取得し、`ImuCallback → Imu::estimateProcess → KalmanFilterPosVelAcc::prediction → KalmanFilter::prediction`、`kf_base_plugin.h`の共分散初期化式が発生箇所と特定した。以前のBee controller初期化ガードの対象外だった。
+- IMU設定ではZの加速度バイアス推定がOFF、mocapではONのため、IMU校正後にmocapが推定状態を2次元から3次元へ切り替える。この切替全体に排他制御がなく、途中でIMU予測が走ると入力行列3×2と更新前の共分散1×1を掛けていた。既存フィルタを使う単独試験でもこの途中状態を再現し、切替完了後なら正常になることを確認。
+- 別リポジトリ`kalman_filter`の`KalmanFilterPosVelAcc`で、状態切替全体と予測の入力次元選択から計算までを同じrecursive mutexで保護した。基底クラスの共分散設定・取得、状態次元・開始フラグ・予測バッファ長のアクセスも保護。共分散取得は参照ではなくコピーを返す。バイアス有効化済みの再設定で状態履歴を再初期化しないようにした。launchの待機時間や制御ゲインは変更していない。
+- `test_kf_mode_switch`の4件が成功。切替途中で停止させたsetterに対して別スレッドの予測が完了まで待つこと、再設定時の履歴維持、共分散snapshot、従来の2状態予測値を確認。`catkin test kalman_filter --no-status --make-args -j2`で実行。
+- ヘッダ変更の利用側も含め`catkin build bee aerial_robot_base --no-status -j2`で21 packageが成功。回帰テスト結果は`/tmp/bee-kf-race-tests.log`、build結果は`/tmp/bee-kf-race-build.log`。
+- 修正後の通常launchで3台headlessを3回、4・5台headlessを各1回、3台GUI/execute=trueを1回確認し、全6試行で起動・制御器running・物理時刻進行・機体ノード生存・終了後のノード消滅を確認。各ログにassert・異常終了なし。離陸・把持開始は行っていない。ログは`/tmp/bee-grasp-startup-3-wuogfx4h/`、`3-yhj0xq5c/`、`3-f9a7qxcd/`、`4-p6vm2x81/`、`5-iemdb0gz/`、`3-tv0vbni8/`（後続名も同じ`/tmp/bee-grasp-startup-`接頭辞）。
+
+## 2026-11-10 既存MPCへ滑り・モーメント補正を追加
+
+- 旧Pythonの`mujoco_triple_transport_place_demo.py`に`~planner_contact_stabilization_enabled`（既定true）を追加。falseで従来のMPC接触制御経路を比較できる。C++中央制御へのMPC移植ではない。
+- 共通鉛直滑り・零和の機体間接触高さ補正を既存Z制御から独立したメソッドへ抽出し、MPCからも呼ぶ。MPC側の元の個別相対Z補正は有効時に置き換え、二重に加算しない。静的支持の下限と既存の補正振幅・変化率制限を維持。
+- MPC中も局所モーメントのフィルタと物体モーメント制御を更新し、roll/pitchに対する零和Z加速度補正、yawに対する接線加速度補正を指令に合成する。各機のroll/yaw trimは従来どおり持ち上げ中は固定。支持移行と初回solver待機でも補正を反映する。物体ZのPIDはMPCに重ねていない。
+- 補正は最適化後に加算するため、OCPの摩擦・推力制約が補正後の指令まで保証する構成ではない。今回の変更だけでPID経路と下位制御全体が同一になったわけではない。
+- 構文確認、git diff --check、既存hardware入口チェック14件に成功。抽出した滑り・高さ補正とフィルタは、dt=0を含む120フレームの合成入力で変更前と数値一致した。新規テストソースはリポジトリに追加していない。
+- 独立ROS masterのMuJoCoで3台・500 g・目標運搬距離1.5 m・real_time_factor=1.0・observer_timeout=2.0 sを1試行。環境は新しい`grasp_sim.launch`をpreviewで起動し、旧Python制御だけが飛行指令を出した。約47 mmの離床時に共通滑り基準を確定し、滑り・高さ差・roll/pitch・yawの各補正が非ゼロで指令に反映された。
+- 試験結果は失敗。LIFT中の高さ振動が残りHOLD/TRANSPORTに移行せず、相対接触高さの滑りが60 mmに達してFAILSAFE_HOLD。補正有効後の物体Zは0.98452--1.02629 m、共通滑り補正は終盤-0.03 m/s2の下限に達した。記録されたsolver時間は1.0--3.4 ms（中央値1.3 ms）。Eigen assertやPython例外はない。補正を追加するだけでは解消していない。補正無効との同条件A/B試験は今回未実施で、悪化・改善の因果関係は断定しない。
+- ログ: `/tmp/bee-mpc-stabilized-qo4dawy4/` の`result.json`、`analysis.json`、`telemetry.csv`、`demo.log`、`launch.log`。試験のROS/MuJoCoプロセスは終了済み。
+
+## 2026-11-10 MPCのXYを維持して共通Zを従来制御へ切り替え
+
+- `~planner_vertical_control:=pid`を追加（既定は`mpc`のまま）。MPCとobserver補正を合成した各機加速度の平均Zを、従来Z制御の共通加速度に置き換える。XYと各機間の差動Z成分、既存のモーメント補正は維持。共通滑りはPID側で1回だけ計算する。
+- 支持移行・高さ目標軌道・Z積分もPID側が管理し、MPC sampleで上書きしない。初回solver待機でもPID出力を維持。HOLD判定はPIDの目標軌道を参照する。PID Zの選択には`planner_contact_stabilization_enabled=true`が必要。最適化自体は依然3Dなので、比較用の混合構成であり、整合した新しい2D MPCを実装したわけではない。
+- 構文確認、git diff --check、既存hardware入口チェック14件に成功。新規テストソースは追加していない。
+- 同条件（3台、500 g、1.5 m、real_time_factor=1.0、observer_timeout=2.0 s）でMuJoCo検証。初回`/tmp/bee-mpc-pidz-m72h65cu/`は接近中にbee1 observerが2秒途絶して終了し、LIFT前なのでZ制御の比較対象外。タイムアウト値を変えず再起動した。
+- 再試行`/tmp/bee-mpc-pidz-a7votw_v/`はLIFT→TRANSPORT→DESTINATION_SETTLE→DESCEND→UNLOAD→RELEASE→RETREAT→UNWIND→VERIFY→COMPLETE。制御実行約203秒、最終位置(1.496691, 1.002938, 0.949916) m、載置XY誤差約4.43 mm。Eigen assert/Python例外なし、試験プロセス終了済み。
+- 運搬中のZは0.98958--1.00074 m（開始直後の低下を含む）。X>=0.5 mの区間は1.00029--1.00074 m、変動幅約0.45 mm。この区間のZ積分補償は約0.038 m/s2。前回の共通Z=MPCではHOLDに入れず相対滑り60 mmで停止したのに対し、今回は完走したため、共通Z制御経路が失敗に大きく関与するとの見立てを支持する。ただし有効1試行で、PIDの積分・目標軌道・支持移行のどの要素が支配的かは未分離。
+- 相対接触高さの滑りは運搬終端で約33.5 mm残っており、滑りそのものの解消は確認できていない。ログ・集計は上記ディレクトリの`telemetry.csv`、`analysis.json`、`result.json`。
+
+## 2026-11-10 XY=MPC・共通Z=PIDの反復把持試験（10回）
+
+- ユーザー依頼により、新たに10回の全工程試験を連続実行。各回で独立ROS master・MuJoCoを新規起動し、前回のプロセス終了後に次を開始。条件は3台、500 g、1.5 m運搬、real_time_factor=1.0、observer_timeout=2.0 s、`control_strategy=whole_body_mpc`、`planner_vertical_control=pid`、接触安定化補正有効。途中でゲイン、タイムアウト、制御コードを変更していない（主要3ファイルのSHA256一致を毎回確認）。新規テストソースはリポジトリに追加していない。
+- 全10試行を分母として完走6/10（60%）。成功は1・2・4・6・7・8回目。3・5・9回目はTRANSPORT、10回目はDESCENDで`object pose input became stale`によるFAILSAFE_HOLD。失敗を除外して成功率を計算していない。全回LIFT/HOLDを経てTRANSPORTまで進んだ。Eigen assert・Python例外は0件。
+- 完走例の最終載置XY誤差は0.79--2.83 mm（中央値1.24 mm）。X>=0.5 mの運搬区間におけるZ変動幅は0.10--3.22 mm（中央値0.17 mm）。これは区間内の最大値と最小値の差で、目標値に対する誤差ではない。運搬開始直後の高さ低下はこの指標の対象外で、全TRANSPORT区間の範囲もsummary.jsonに保存。
+- 完走例でも運搬終端の相対接触高さの滑りは28.5--39.4 mm残った。全試行の運搬中Y偏差は最大83.7 mm（9回目、入力途絶で停止した試行）。Z振動・滑り上限を理由とする停止は今回なかったが、滑りやXY追従が解消したとの結論ではない。
+- 結果は共通Z切替の再現性をある程度支持する一方、全工程の完走率は60%にとどまる。停止理由は4回とも物体姿勢入力の更新途絶で、次の調査対象。入力途絶の発生原因自体は、この反復試験では未解析。
+- 全試行の起動・停止込みの所要時間は約32分。集計: `/tmp/bee-mpc-pidz-repeat-th_pfiwn/summary.json`、一覧: 同`results.csv`、固定条件・ソースhash: 同`conditions.json`。各試行の生ログ/telemetryへのパスを集計に記録。試験用launchは全回停止処理を完了。
+
+## 2026-11-10 物体姿勢入力途絶の原因を特定
+
+- 10回試験で停止した3・5・9・10回目のdemo.logは、停止直前にログの実時刻が後戻りし、その後シミュレーション時刻が固定されていた。制御側の`input_safety_reason()`はtime.monotonic()で最終受信から1秒を判定しており、単純な実時刻の後戻りによる受信側の誤判定ではない。
+- 配信元`aerial_robot_3rdparty/mujoco_ros_control/src/mujoco_ros_control.cpp:263,300-305`が原因。real_time_factorの速度調整で`ros::WallTime`を使って経過時間を測り、`target_wall_duration - actual_wall_duration`だけsleepする。処理中にOSの実時刻が約2秒戻ると経過時間が負になり、通常約100 ms周期のメインループが約2秒余計に待機する。このループ内で物理更新・/clock・物体姿勢の配信を行うため、それらが同時に止まる。
+- `/tmp/bee_clock_trace.so`のLD_PRELOAD計測をMuJoCoのみに追加し、独立プロセスで/clockと物体姿勢の到着時刻・source stampを記録。OS時計は変更せず自然発生の現象を観測した。制御ソースやタイムアウトは変更していない。WSL2環境で実時刻の約2秒の後戻りを約32秒間隔で観測し、その際もmonotonicは正常に進んでいた。
+- 再現ログ`/tmp/bee-clock-diagnostic-2jartyyh/`。sim時刻52.915 sでMuJoCoが2.193982 sのnanosleepを要求し、実際に2.194985 s待機。独立受信側でも/clockが2.194598 s、物体姿勢が2.197144 s途絶。スタックは`mujoco_ros_control(main) → ros::ros_wallsleep → nanosleep`。
+- 同一試行のTRANSPORT中、sim時刻146.425 sで再発。MuJoCoの要求待機時間2.094493 s、実測2.094872 s、独立受信の/clock間隔2.094894 s、物体姿勢間隔2.096523 s。最後の物体姿勢受信の実時刻1794293249.5878375に対し、1794293250.596774に`object pose input became stale`でFAILSAFE_HOLDへ移行（差約1.009秒）。配信再開後のsource stampは146.42→146.43 sで、物理時刻自体が止まっていた。これにより速度調整の長いsleep→配信停止→1秒timeoutの経路を確認した。
+- 修正方針は、MuJoCoの速度調整の経過時間計測を`ros::SteadyTime`または`std::chrono::steady_clock`へ変更すること。入力安全タイムアウトを緩める必要はない。今回は原因調査のみで修正未実施。OS時計の後戻りを発生させる同期元（WSL/ホスト側など）の特定まではできていない。systemdがPID 1でなくtimedatectlは利用不可、保存journalは過去のものだった。
+- 生データ: 同ディレクトリ`launch.log`（CLOCK_TRACE）、`demo.log`、`receive_timing.csv`、集計`clock_analysis.json`。診断用launchは停止処理完了。
+
+## 2026-11-10 MuJoCoの速度調整を単調時計に変更し、10回検証
+
+- ユーザー承認の方針どおり、別リポジトリ`aerial_robot_3rdparty`の`mujoco_ros_control/src/mujoco_ros_control.cpp`を修正。ループ開始を`std::chrono::steady_clock::now()`で記録し、`simulated_chunk / real_time_factor`から単調時計上の期限を作り、`std::this_thread::sleep_until()`で待つ。期限を過ぎた場合は待機せず、real_time_factor<=0の無制限動作とpause時の既存分岐も維持。制御ゲイン・入力安全タイムアウトは変更していない。
+- `catkin build mujoco_ros_control --no-deps --no-status -j2`が警告なしで成功。ビルド記録は`/tmp/bee-steady-clock-build.log`。新規テストソースはリポジトリに追加していない。
+- 修正後に3台・500 g・1.5 m運搬・XY=MPC/共通Z=PID・接触安定化有効・real_time_factor=1.0の全工程試験を10回。毎回ROS master/MuJoCoを新規起動。全回でMuJoCoのclock/sleep計測と独立した/clock・物体姿勢受信間隔の計測を併用。物体姿勢の入力安全タイムアウトは1秒、observer_timeoutは前回と同じ2秒。
+- 結果は10/10 COMPLETE。全回で把持・運搬・載置・解放・退避まで完了。前回は同じ制御設定で6/10完走、4回の物体姿勢入力途絶があったが、今回は入力途絶0回、Python例外/Eigen assertも0回。全launch停止処理の完了を確認。
+- 試験中に実時刻の約2秒の後戻りを計67回観測。その条件でも、独立受信の最大間隔は物体姿勢126.54 ms、/clock126.03 ms。1秒超の受信間隔は0件、計測対象MuJoCoの200 ms超nanosleep要求も0件。修正前に記録した約2.1秒の待機と配信停止は再発していない。
+- 最終載置XY誤差1.11--4.49 mm（中央値2.48 mm）。X>=0.5 mのTRANSPORT区間のZ変動幅0.13--0.99 mm（中央値0.25 mm）。運搬終端の相対滑りは30.9--39.2 mm残り、運搬途中のY偏差は最大111.9 mm（9回目、目的地までに収束）。今回の修正は配信停止への対処であり、接触滑りや途中のXY追従誤差を解消したという結果ではない。
+- 起動・停止込み約36.4分。全試行で制御ソースのhashを照合し、終了時にMuJoCoのソース/ビルド済みバイナリも開始時hashと一致することを確認した。
+- 集計: `/tmp/bee-steady-clock-repeat-1boz8dow/summary.json`、一覧: 同`results.csv`、固定条件とhash: 同`conditions.json`。各試行の生ログ・`receive_timing.csv`・飛行telemetryへのパスを集計に記録。診断用のlaunch/preload/実行スクリプトは/tmp内のみ。
+
+
+## 2026-11-11: 接触中の接線PDを外した比較試験
+
+- ユーザー依頼により、面の中央への復元と接線方向の減衰 `-tangent_kp*s - tangent_kd*ds` を無効にする `controller/contact_tangent_control_enabled` を追加。C++の`contactCommand()`（Preload〜Release）のみに適用。接近・退避時のPD、yaw補正、共通XY移動、法線力・Z制御と安全閾値は維持。
+- `ControlConfig`の未指定時は従来どおりtrue。標準`config/grasp/controller.yaml`はfalseに変更。trueへの設定変更・再起動で従来動作に戻せる。Python legacy/MPC経路は変更していない。
+- `catkin build bee --no-deps --no-status -j2`成功、警告なし。ログ `/tmp/bee-contact-tangent-build.log`。新しいリポジトリ内テストファイルは追加していない。
+- `/tmp/check_bee_grasp_flight.py`を元に、設定確認と接触点位置の記録を追加した `/tmp/check_bee_contact_tangent.py`、逐次実行用 `/tmp/repeat_bee_contact_tangent.py` で試験。各回専用localhost ROS masterと共有MuJoCoを新規起動し、C++中央PIDをexecute=trueで動作させた。
+- 条件: Bee 3台、500 g三角柱、50 mm持ち上げ、X方向400 mm運搬、載置・解放・退避。接線PDあり1回、なし2回。同一ビルドのハッシュ不変を確認。全3回Complete、各launchの終了完了を確認。
+
+| 接線PD | 結果 | 運搬中の最大横ずれ | 接触解除中の最大横ずれ | 最終XY誤差 | 開始後の所要時間 |
+| --- | --- | --- | --- | --- | --- |
+| あり | Complete | 0.445 mm | 1.476 mm | 1.093 mm | 124.2 s |
+| なし・1回目 | Complete | 0.682 mm | 5.454 mm | 1.040 mm | 123.1 s |
+| なし・2回目 | Complete | 0.476 mm | 5.760 mm | 0.950 mm | 145.2 s |
+
+- 横ずれは100 ms間隔で、最新受信したground_truth姿勢とcontact_offsetから代表接触点を再構成し、物体のyawとface_anglesから接線を作って求めた `abs(s_i)` の全機最大値。時刻同期済みの接触センサによる直接計測ではない。
+- 今回の初期配置・摩擦条件では、接線PDを外しても全工程は成立した。一方、接触解除時のずれは増加。なし2回目は持ち上げの収束に時間がかかった。外乱や初期横ずれを追加していないため、制御の不要性や頑健性、収束時間差の因果関係までは断定しない。
+- 結果: `/tmp/bee-contact-tangent-comparison-muii_llm/summary.json` と `results.csv`。生ログ: `/tmp/bee-contact-tangent-on-beyvxy_o`、`/tmp/bee-contact-tangent-off-bu6ayup8`、`/tmp/bee-contact-tangent-off-gf9d9b3h`。各フォルダにcontroller.yaml、conditions.json、telemetry.csv、contacts.csv、result.json、launch.logを保存。
+
+
+## 2026-11-11: 荷重から押し付け力を計算し、observerでPreload完了判定
+
+- ユーザー指定に従い、接触高さ維持PDのみを標準controller.yamlのz_velocity_kp/kd=0で無効化。支持移行前はZ速度0を指令する。支持移行後の各機高さ差補正・共通すべり補正・物体Z制御・傾き補正は維持。前回無効化した接触接線PDも無効のまま。
+- 固定task/normal_forceを廃止。GraspPhaseManagerが `margin * object_mass * (gravity + design_vertical_acceleration) / (robot_count * friction_coefficient)` を計算し、Preload〜Unloadの目標に使う。標準は設計mu=0.5、余裕率1.2、想定加速度0。500 g・3台なら3.924 N/台。設計muはシミュレータ摩擦とは別の明示設定。旧normal_force設定は移行を求めるエラーにし、必要力がmax_normal_forceを超える設定も起動エラーにする。~normal_force_targetで計算値を公開。
+- Preload→SupportTransferを、全機の有限なobserver法線力が `preload_force_ratio * normal_force_target` 以上でpreload_duration継続する判定へ変更。標準90%・3秒、今回は3.5316 N以上。指令到達条件は削除。各機のモーメント配分後目標ではなく、共通の必要力に対する下限判定。
+- task_multi.yamlも固定6 Nから同じ計算式へ移行。今回の実飛行シミュレーション検証は3台のみ。4/5台の全工程は未再検証。
+- ビルド成功・警告なし: /tmp/bee-derived-force-build.log。既存C++試験の固定TaskConfigフィールド参照1行を新APIへ追従し、既存13件と/tmp内の追加確認2件を実行、15/15通過。荷重・台数・加速度による計算、摩擦係数不正／過大必要力の拒否、指令到達のみでは進まないこと、NaN拒否、observerが継続条件を満たせば指令到達とは独立に進むことを確認。リポジトリ内に新規テストは追加していない。/tmp/bee_derived_force_checks.cpp、/tmp/bee-derived-force-checks.log。
+- /tmp/repeat_bee_derived_force.pyでMuJoCoを2回新規起動。C++ PID、3台500 g、50 mm持ち上げ、400 mm運搬・載置・退避が2/2 Complete。実行時の目標力3.924 NとZ速度PDゲイン0を確認。同一バイナリを使用、全launch終了完了、Traceback/Assertionなし。
+  - 1回目: 122.3 s、最終XY誤差0.281 mm、最大持ち上げ49.930 mm。ログ /tmp/bee-derived-force-off-5gk5qhtl。
+  - 2回目: 122.4 s、最終XY誤差0.426 mm、最大持ち上げ49.944 mm。ログ /tmp/bee-derived-force-off-_200xw08。
+- 集計: /tmp/bee-derived-force-repeat-yfbxg7km/summary.json。2回の正常条件での動作確認であり、摩擦誤差・外乱への頑健性までは未検証。
+
+
+## 2026-11-11: 各機高さ差と共通すべり補正を両方無効化
+
+- ユーザー依頼により標準controller.yamlのrelative_z_kp/kdを8/2から0/0、slip_kp/kdを5/2から0/0へ変更。各機の高さ差補正と共通すべり補正をともに無効化した。接触接線PDと支持移行前の接触高さPDは先行試験から無効のまま。物体高度PID・荷重支持・モーメントによる傾き補正・observerによるPreload判定は維持。すべり・高さ差の計測、安全上限も維持。設定だけの変更のため再ビルドは不要。
+- /tmp/repeat_bee_height_feedback_off.pyでC++ PID、3台・500 g・50 mm持ち上げ・400 mm運搬の試験を2回実施。毎回隔離したROS master/MuJoCoを新規起動。実行中の4ゲインが0であることと、目標法線力3.924 N/台、Preload判定閾値3.5316 Nを確認。
+- 結果は0/2 Complete。両回とも持ち上げからTransportに進んだ後、`contact height difference limit`でAborted。これは各接触高さの平均からの偏差が40 mmを超える判定であり、機体間の最大・最小差40 mmという意味ではない。
+  - 1回目: 開始から75.9 sで中止。最終記録の平均高さからの最大偏差40.29 mm、共通すべり4.15 mm。/tmp/bee-height-feedback-off-off-pqhwgiq6。
+  - 2回目: 開始から77.5 sで中止。最終記録の平均高さからの最大偏差40.33 mm、共通すべり5.10 mm。/tmp/bee-height-feedback-off-off-1fglsxlg。
+- 100 ms間隔のログから代表接触点位置を再構成した高さ偏差なので、制御器の中止瞬間と完全に同時刻の値ではない。全launch終了完了。シミュレータ側のTraceback/Assertionなし。ハーネスのRuntimeErrorはAbortedを試験失敗として返したもの。
+- 直前の補正有効条件では同じ3台条件で2/2 Completeだった。今回の同時無効化では高さ差が拡大したが、どちらの補正がどれだけ寄与したかは単独無効化していないため断定しない。設定は依頼どおり両方無効のままとし、安全閾値の緩和や自動復帰は行わない。
+- 集計 /tmp/bee-height-feedback-off-repeat-372acztg/summary.json、results.csv。各試行フォルダに条件・contacts.csv・telemetry.csv・ログを保存。
+
+
+## 2026-11-11: 接触高さ差のP項のみ復帰
+
+- ユーザーの「高さのばらつきを戻す項は元に戻して」に従い、標準controller.yamlのrelative_z_kpを0から8.0へ復帰。relative_z_kd=0、slip_kp/kd=0、支持移行前のz_velocity_kp/kd=0、接触接線PD無効は維持。
+- YAML読み込みと設定値、diffチェックを確認。設定変更のみでビルド不要。P項のみ復帰した状態の飛行試験は未実施。反映にはノード再起動が必要。
+
+
+## 2026-11-11: 高さ差P項のみ復帰した状態で2回飛行試験
+
+- ユーザー依頼による再試験。標準設定relative_z_kp=8.0、relative_z_kd=0、slip_kp/kd=0のまま実行。接触接線PDと支持移行前の接触高さPDも無効のまま。物体高度PID・荷重支持・傾き補正と安全閾値は維持。今回は制御コード・設定の追加変更なし。
+- /tmp/repeat_bee_height_p_only.pyから毎回専用localhost ROS masterとMuJoCoを新規起動し、実行時パラメータを照合。C++ PID・3台500 g・目標法線力3.924 N/台、50 mm持ち上げ、400 mm運搬・載置・退避を2回実施し2/2 Complete。
+  - 1回目: 持ち上げ〜下降の平均接触高さからの最大偏差0.279 mm、運搬終了時の共通すべり11.291 mm、同区間の最大絶対共通すべり16.236 mm、最終XY誤差0.663 mm、125.8 s。/tmp/bee-height-p-only-off-drebeqwu。
+  - 2回目: 持ち上げ〜下降の平均接触高さからの最大偏差0.771 mm、運搬終了時の共通すべり10.324 mm、同区間の最大絶対共通すべり15.282 mm、最終XY誤差1.092 mm、123.3 s。/tmp/bee-height-p-only-off-amdxtmkx。
+- 前回の高さ差P/Dと共通すべり補正すべて無効では2/2が高さ差40 mm上限で中止した。今回のP項のみ復帰では同上限に到達せず完走。共通すべりは残存しており、2回の正常条件での確認を頑健性の保証とはしない。
+- 接触高さ偏差は100 ms間隔の最新受信姿勢からの再構成値。全launch終了完了、シミュレータ側Traceback/Assertionなし、試験間バイナリハッシュ不変。
+- /tmp/bee-height-p-only-repeat-2uh7mjup/summary.json、results.csvに集計。設定は高さ差P項のみ復帰したまま維持。
+
+
+## 2026-11-11 中央の協調参照生成と各Beeの追従・外力補償を分離
+
+- 合意した速度参照方式へ変更。中央は物体の高さPI→速度参照、水平移動、各機の接触高さ差、物体モーメントの補正を担当。各機には時刻付き速度・運動加速度・法線力目標・姿勢を送る。位置目標は接触中のローカル追従には使わない。
+- `tracking_reference.cpp`で速度参照の上限・変化率を制限し、その差分から加速度FFを生成。旧加速度用ゲインと速度参照用ゲインを分離。旧中央経路は`distributed_tracking: false`で比較可能、既定YAMLはtrue。
+- 各bringupへ任意起動の`bee_grasp_tracker_node`を追加。MuJoCo multi bringupは有効化。自機の接触代表点速度、CoG observerを使って接線/Z速度追従・外力補償、法線力制御を計算し、既存WORLD/COG ACCインタフェースへ出力。共有の飛行制御クラスやPythonデモは変更していない。
+- 支持移行では予測支持力で立ち上げ、支持判定後に `(1-b)*planned_support - b*estimated_external_z` で実測外力補償へ移行。中央の運動加速度に重量補償を含めず、二重補償を回避。Unload/Releaseで支持補償を下げる。
+- 中央は各trackerのready/status鮮度/faultを監視。各trackerも参照・自機入力の鮮度、frame、finite値、参照上限、持続速度誤差を検査し、timeout時は停止してfaultをラッチ。LAND/STOPへの指令上書きはしない。
+- 新規ROSメッセージはGraspReference、GraspTrackingStatus。previewでは各trackerへ実行参照を出さず、flight指令は出ない。
+- 初回試験 `/tmp/bee-grasp-flight-3-a_ic0r2_` は持ち上げ後Transportでyaw安全上限に到達。実測物体角速度を参照へ入れて不要な回転を追従していたため、姿勢一定タスクでは当該項を除去した。安全閾値の緩和はしていない。
+- 修正後 `/tmp/bee-distributed-flight-3-ito6jnvd`：3台・500 g、持ち上げ49.96 mm、0.4 m運搬・載置・解放・退避までComplete、最終XY誤差3.24 mm。
+- 最終ビルド `/tmp/bee-distributed-flight-3-e1f29kb6`：同工程Complete、持ち上げ49.95 mm、最終XY誤差1.16 mm。2回とも全機HOVER状態で終了。
+- ビルド成功（最終 `/tmp/bee-distributed-build-final.log` は警告なし）、既存C++回帰26件成功。`/tmp/check_bee_references.cpp`で差分整合・参照上限・荷重非混入・混合率・dt=0を確認。
+- `/tmp/check_bee_tracker.py`：最終参照timeout試験 `/tmp/bee-tracker-contract-wl8alddf` と入力timeout試験 `/tmp/bee-tracker-contract-36nu3rnb` が成功。予測荷重と実測荷重を切替えても加速度は約1.20 m/s^2で二重にならず、速度誤差解消時は約1.05 m/s^2。無指令時無出力、停止、faultラッチも確認。
+- 既存 `check_cooperative_grasp_ros.py` のpreview/execution両経路も成功。リポジトリに新しいテストソースは追加していない。
+- 初期試験ハーネスのtracking.csvは複数callbackの同時書き込みで破損行があるため、結果の数値は単一スレッドで書いたtelemetry.csv/result.jsonによる。今後のハーネスにlockを追加。実機・4/5台の分散追従の飛行は未検証。
+
+
+## 2026-11-11 平均高さへの補正を物体座標の接触配置補正へ変更
+
+- ユーザーの指摘：同じ高さへの補正は、異なる高さにアタッチする配置には適用できない。
+- 基準の決め方を質問し、返信待ちの間に制御と安全判定を調査。基準は推奨案の「Preload成立時、SupportTransfer開始時に実測の接触代表点を物体座標で記録する」方式を採用。
+- ContactGeometryを追加。`rho_i_ref = R_capture^T (pc_i_capture - po_capture)`を保存し、現在の全姿勢を使った`e_i = R_now^T (pc_i_now - po_now) - rho_i_ref`を計算。基準を毎tick更新して滑りを追認しない。実測作用腕の更新は従来どおり。
+- 分散追従では平均高さ差ではなく`e_i - mean(e)`の制御対象成分から速度補正を生成。ゲイン名を`contact_geometry_velocity_gain`へ変更。現在は物体Z成分を使用、横方向は既存無効設定を維持。worldへ戻した後、ローカル法線力制御と競合しないよう法線成分を除去。共通モードは除き、無効の共通すべり制御を再有効化しない。
+- 分散経路の安全判定も初期高さ差ではなく配置変形の3次元normへ変更。`max_contact_deviation=0.04 m`、共通誤差normは`max_slip=0.06 m`。旧中央加速度経路は旧判定を維持。中央の`~contact_geometry_errors`に機体順の物体座標誤差を公開。
+- ビルド成功、C++回帰26件成功。リポジトリに新しいテストソースは追加せず、`/tmp/check_bee_contact_geometry.cpp`で高さ差30 cmの初期配置が無補正・正常判定となること、剛体並進/回転不変性、1点のずれへの反応、補正符号、配置変形による停止、resetと共通モード分離を確認。
+- `/tmp/bee-distributed-flight-3-zom17nmf`：3台・500 g、50.01 mm持ち上げ、0.4 m運搬・載置・解放・退避がComplete。最終XY誤差4.50 mm、約127.7秒。
+- 今回一般化したのは配置誤差・補正・監視。シーン生成/接近/法線力制御は水平面法線、支持配分は鉛直摩擦を前提にしている。任意面法線や任意姿勢での全工程には、それらも別途変更が必要。
+
+
+## 2026-11-11 接触配置補正後の反復試験
+
+- ユーザー依頼による検証。制御コード・設定・バイナリは固定し、各回専用ROS masterとMuJoCoを新規起動。50 mm持ち上げ、400 mm運搬、載置・解放・退避の5回中4回Complete。
+- 3台500 g: 2/3 Complete（最終XY誤差3.86 / 0.98 mm）。3回目はPreload timed outで中止、持ち上げ前。4台500 g: 1/1 Complete（3.15 mm）。5台800 g: 1/1 Complete（0.71 mm）。完走時の持ち上げ49.99–50.02 mm。
+- 完走時の最大差動接触配置誤差1.56–2.52 mm、共通誤差16.25–22.03 mm。全5回tracker faultなし、assert/Tracebackなし、launch終了確認。試験間ハッシュ不変。
+- Preload中止の原因候補: 個別押し付け目標へのモーメント補正（最大±0.6 N）と、全機に共通目標の90%を要求する移行判定の不整合。共通3.924 Nから低い側3.324 Nとなり得るのに対し閾値3.5316 N。終了前推定外力XYノルム約4.37 / 4.07 / 3.32 N。個別目標法線力のログがなく確定ではない。配置補正有効化前の停止であり、閾値やゲインは変更しなかった。
+- ビルド成功、既存回帰集計26件失敗0。接触配置の数値試験、および3/4/5台各1,000条件のランダム幾何試験も成功。異なる接触高さ・任意配置での実際の飛行試験ではない。
+- 参照timeout合成試験 /tmp/bee-tracker-contract-qwdl13i5 は成功。自機入力timeout試験 /tmp/bee-tracker-contract-w6l8jyx1 は並行実行時に意図した途絶前の入力鮮度異常で失敗。全飛行終了後の単独再試験 /tmp/bee-tracker-contract-b_ogb_t9 は成功（停止・faultラッチ確認）。最初の鮮度異常の原因は未確定として残す。
+- 集計 /tmp/bee-grasp-validation-hu3ukw4b/summary.json、results.csv。詳細はCOOPERATIVE_GRASP.mdの追加検証節に記載。リポジトリへのテストソース追加、制御修正、コミットは行っていない。
+
+
+## 2026-11-11 接触位置を戻す速度補正を削除
+
+- ユーザー指示により、分散追従の接触配置誤差から速度指令を作るP項を削除。contact_geometry_velocity_gainを型・パラメータ読込・検証・YAMLから除去。
+- 接触配置の記録、診断、安全判定は維持。ローカル速度追従、押し付け力制御、物体高さPI、モーメント配分は維持。旧中央加速度経路は変更していない。
+- ビルド成功、既存回帰集計26件失敗0。/tmp/check_bee_contact_monitor_only.cppで不均一な初期高さ、剛体変換不変性、単点変位時に復元速度・加速度が出ないこと、誤差の検出と安全停止、resetを確認。リポジトリへのテストソース追加なし。
+- この変更後の運搬飛行は未再試験。直前の5回中4回Completeの結果は復元項があった状態の実績として区別する。
+
+
+## 2026-11-11 位置復元なし・モーメント制御ありで5回運搬試験
+
+- ユーザー指定: 接触位置は中央のモーメント計算・力配分に使い、ずれを戻す制御は使わない。その構成のままコード・設定・バイナリを固定して検証。
+- 各回のROSパラメータで分散追従有効、接触位置復元ゲインなし、接線位置補正無効、支持前Z位置補正ゼロ、共通すべり補正ゼロを確認。位置ずれだけでは復元速度・加速度が出ない数値試験も再成功。
+- 3台500 g 3/3 Complete（最終XY誤差8.94 / 6.20 / 8.33 mm）、4台500 g 1/1（0.87 mm）、5台800 g 1/1（2.72 mm）。全5回で約50 mm持ち上げ、400 mm運搬、載置・解放・退避まで完了。
+- 差動接触配置誤差の各回最大1.76–2.83 mm、共通誤差16.08–22.23 mm。3台は下降開始以降に5.72–8.58 mmのXY移動が残る。成功と位置精度を区別し、性能向上・低下の統計的判断は行わない。
+- 全工程のtracker faultなし、assert/Tracebackなし、全launch終了確認。試験間のハッシュ不変。前回のPreload timeoutは再現せず、原因修正をしたわけではない。
+- 集計 /tmp/bee-no-position-validation-7qwc1x5b/summary.json、results.csv。各回にruntime_controller.jsonとforce_references.csvを保存。任意配置・意図的なすべり外乱を加えた飛行は未検証。制御ソースや設定の変更・コミットなし。
+
+
+## 2026-11-12 BeeControllerにgrasp modeを統合
+
+- ユーザー希望に合わせ、各機の速度追従・法線力制御・外力補償をBeeController所有のGraspModeへ統合。src/control/grasp_mode.cppに処理を分け、既存のBeeController::updateから最新の加速度・姿勢目標をBeeNavigatorへ直接適用。標準構成では独立trackerノード、自分宛てのuav/nav再送なし。
+- bringupのgrasp_mode引数は既定false、MuJoCo multi bringupではtrue。/beeN/grasp/set_mode（SetBool）とgrasp/enabled（latched Bool）を追加。通常モードは参照を無視。有効化のみでは指令せず、中央の参照を待つ。無効化／fault時は次の飛行制御周期で停止指令を適用して通常ナビゲーションへ戻す。faultは明示的off/onと再校正で再開。
+- 自機のodometry/observer topicと制御式を維持。参照更新・監視は100 Hz WallTimer、受信・計算・指令取得はmutexで保護。指令適用は既存40 Hzの飛行制御周期。HOVER・非合体状態のみ適用し、LAND/STOPの指令は上書きしない。飛行制御ループの稼働も鮮度監視に追加。
+- 中央のphase管理・接触位置を使ったモーメント配分・安全監視は維持。初期接触位置へ戻す補正は追加していない。制御ゲインも変更なし。
+- 未コミットの旧trackerソース/launch削除を含む操作は自動承認レビューが復旧リスクを理由に拒否したため、削除を行わず保持。旧独立ノードは明示的な旧オプション時だけ起動し、統合側インタフェースと排他にした。標準構成では起動しない。
+- ビルド成功、既存回帰集計26件失敗0。合成入力試験は通常モード参照無視、activeからの無効化停止、再校正、速度・力の計算、参照/入力timeout、faultラッチを確認。最初のハーネスはfault通知と次の40 Hz適用の順序を考慮せずassert失敗したが、停止指令到着を待つよう修正して再成功。/tmp/bee-grasp-mode-contract-jx_i37_t、/tmp/bee-grasp-mode-contract-6k4n6qtv。
+- MuJoCoで3台500 g、4台500 g、5台800 gが各1/1 Complete。50 mm持ち上げ、400 mm運搬、載置・解放・退避。最終XY誤差8.90 / 3.12 / 2.12 mm。全機で通常/grasp切り替え、独立trackerノード不存在、各base node存在を確認。全工程faultなし、assert/Tracebackなし、launch終了、試験間ハッシュ不変。
+- 集計 /tmp/bee-integrated-validation-0kgwvo0u/summary.json、results.csv。実機は未検証。リポジトリへテストソース追加なし、コミットなし。
