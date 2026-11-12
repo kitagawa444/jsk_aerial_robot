@@ -15,10 +15,6 @@
 #include <math.h>  // lrintf
 #include "esc_telem.h"
 
-/* User Configuration */
-// Timer Clock
-#define TIMER_CLOCK 100000000  // 100MHz
-
 /* Definition */
 #define MHZ_TO_HZ(x) ((x) * 1000000)
 
@@ -75,6 +71,7 @@ public:
   void initTelemetry(UART_HandleTypeDef* huart);
 
   void write(uint16_t* motor_value_array, bool is_telemetry);
+  bool telemetryFresh() const;
 
   /* dshot telemtry */
   bool is_telemetry_ = false;
@@ -103,12 +100,19 @@ private:
 
   // dshot write
   uint16_t dshot_prepare_packet(uint16_t value, bool dshot_telemetry);
-  void dshot_prepare_dmabuffer(uint32_t* motor_dmabuffer, uint16_t value, bool is_telemetry);
+  void dshot_prepare_dmabuffer(uint32_t* motor_dmabuffer, uint16_t value, bool is_telemetry, unsigned motor);
   void dshot_prepare_dmabuffer_all(uint16_t* motor_value, bool* is_telemetry);
-  void dshot_dma_start();
+  bool dshot_dma_start();
   void dshot_enable_dma_request();
 
-  int num_freq_divide = 0;  // make sure that the freq for telemetry is < 150hz
+  uint32_t zero_high_[4] = {};
+  uint32_t one_high_[4] = {};
+  uint32_t last_request_ms_ = 0;
+  uint32_t last_received_ms_[4] = {};
+  uint8_t received_mask_ = 0;
+  uint32_t ready_after_ms_ = 0;
+  bool transmission_started_ = false;
+  spinal::ESCTelemetry& telemetry(unsigned motor);
 };
 
 #endif  // DSHOT_H

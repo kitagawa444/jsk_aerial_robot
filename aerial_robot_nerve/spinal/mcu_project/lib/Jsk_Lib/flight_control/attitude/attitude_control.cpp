@@ -235,15 +235,7 @@ void AttitudeController::pwmsControl(void)
       uint16_t motor_value[4] = { 0, 0, 0, 0 };
       for (int i = 0; i < 4; i++)
         {
-          // target_pwm_: 0.5 ~ 1.0
-          uint16_t motor_v = (uint16_t)((target_pwm_[i] - 0.5) / 0.5 * DSHOT_RANGE + DSHOT_MIN_THROTTLE);
-
-          if (motor_v > DSHOT_MAX_THROTTLE)
-            motor_v = DSHOT_MAX_THROTTLE;
-          else if (motor_v < DSHOT_MIN_THROTTLE)
-            motor_v = DSHOT_MIN_THROTTLE;
-    
-          motor_value[i] = motor_v;
+          motor_value[i] = dshot_protocol::throttle(target_pwm_[i]);
         }
 
       dshot_->write(motor_value, dshot_->is_telemetry_);
@@ -261,7 +253,7 @@ void AttitudeController::pwmsControl(void)
 
               float voltage_ave = (float)(dshot_->esc_reader_.esc_msg_1_.voltage + dshot_->esc_reader_.esc_msg_2_.voltage +
                                           dshot_->esc_reader_.esc_msg_3_.voltage + dshot_->esc_reader_.esc_msg_4_.voltage) / 400.0;
-              bat_->update(voltage_ave);
+              if (dshot_->telemetryFresh()) bat_->update(voltage_ave);
 
               dshot_->esc_reader_.is_update_all_msg_ = false;
             }
@@ -738,6 +730,27 @@ void AttitudeController::maxYawGainIndex()
 void AttitudeController::pwmTestCallback(const spinal::PwmTest& pwm_msg)
 {
 #ifndef SIMULATION  
+  if (!pwm_msg.pwms_length)
+  {
+    pwm_test_flag_ = false;
+    for (int i = 0; i < MAX_MOTOR_NUMBER; ++i) pwm_test_value_[i] = IDLE_DUTY;
+    nh_->logwarn("Escape from pwm test mode");
+    return;
+  }
+  // Validate the whole message before changing any motor or mode.
+  if (pwm_msg.motor_index_length && pwm_msg.motor_index_length != pwm_msg.pwms_length)
+  {
+    nh_->logerror("The number of index does not match the number of pwms.");
+    return;
+  }
+  for (unsigned i = 0; i < pwm_msg.motor_index_length; ++i)
+  {
+    if (pwm_msg.motor_index[i] >= MAX_MOTOR_NUMBER)
+    {
+      nh_->logerror("PWM test motor index out of range");
+      return;
+    }
+  }
   if(pwm_msg.pwms_length && !pwm_test_flag_)
     {
       pwm_test_flag_ = true;

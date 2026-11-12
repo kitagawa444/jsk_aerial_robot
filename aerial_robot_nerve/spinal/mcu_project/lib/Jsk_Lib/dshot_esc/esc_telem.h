@@ -16,6 +16,7 @@
 #include <std_msgs/UInt8.h>
 #include <spinal/ESCTelemetry.h>
 #include <spinal/ESCTelemetryArray.h>
+#include "dshot_protocol.h"
 
 #define ESC_BUFFER_SIZE 512
 
@@ -45,7 +46,8 @@ public:
   spinal::ESCTelemetry esc_msg_4_;
 
   void init(UART_HandleTypeDef* huart);
-  void update(spinal::ESCTelemetry& esc_msg);
+  bool update(spinal::ESCTelemetry& esc_msg);
+  void beginRequest();
   bool available();
   int readOneByte();
 
@@ -54,13 +56,7 @@ public:
   int num_motor_mag_pole_; // conversion from erpm to rpm
 
 private:
-  uint8_t step_ = 0;
-  uint8_t msg_id_ = 0;
-  uint16_t payload_length_ = 0;
-  uint16_t payload_counter_ = 0;
-  uint8_t ck_a_ = 0;
-  uint8_t ck_b_ = 0;
-  uint8_t class_ = 0;
+  dshot_protocol::KissParser parser_;
 };
 
 uint8_t update_crc8(uint8_t crc, uint8_t crc_seed);
