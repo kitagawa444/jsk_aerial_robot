@@ -1,0 +1,18 @@
+# Input for mujoco_scene_generator.py. These keys also match legacy launch args.
+robot_count: 3
+object_shape: triangular_prism
+object_triangle_side: 0.60
+object_inner_triangle_side: 0.4186262221
+object_height: 0.60
+object_mass: 0.50
+object_x: 0.0
+object_y: 1.0
+object_yaw: 0.0
+spawn_object_pedestal: true
+object_pedestal_height: 0.65
+spawn_destination_pedestal: true
+destination_pedestal_x: 0.40
+destination_pedestal_y: 1.0
+destination_pedestal_height: 0.65
+object_sliding_friction: 0.5
+grasp_staging_clearance: 0.80
