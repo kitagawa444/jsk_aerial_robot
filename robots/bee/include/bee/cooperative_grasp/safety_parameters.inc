@@ -1,0 +1,12 @@
+// Shared parameter names for ROS loading and validation.
+GRASP_PARAM(input_timeout)
+GRASP_PARAM(max_acceleration)
+GRASP_PARAM(max_tilt)
+GRASP_PARAM(max_slip)
+GRASP_PARAM(max_height_difference)
+GRASP_PARAM(max_contact_deviation)
+GRASP_PARAM(max_drop)
+GRASP_PARAM(max_object_speed)
+GRASP_PARAM(max_yaw_rate)
+GRASP_PARAM(force_loss_threshold)
+GRASP_PARAM(force_loss_duration)

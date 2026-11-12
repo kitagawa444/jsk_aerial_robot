@@ -1,0 +1,13 @@
+<launch>
+  <!-- Central controller only. Start the scene/vehicles separately. -->
+  <arg name="execute" default="false"/>
+  <arg name="controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
+  <arg name="task_config" default="$(find bee)/config/grasp/task.yaml"/>
+  <arg name="interface_config" default="$(find bee)/config/grasp/interface_mujoco.yaml"/>
+  <node pkg="bee" type="bee_cooperative_grasp_node" name="bee_cooperative_grasp" output="screen">
+    <rosparam command="load" file="$(arg controller_config)"/>
+    <rosparam command="load" file="$(arg task_config)"/>
+    <rosparam command="load" file="$(arg interface_config)"/>
+    <param name="execute" value="$(arg execute)"/>
+  </node>
+</launch>

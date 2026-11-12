@@ -1,0 +1,9 @@
+std_msgs/Header header
+bool ready
+bool active
+bool calibrated
+string fault
+geometry_msgs/Vector3 velocity
+geometry_msgs/Vector3 velocity_error
+geometry_msgs/Vector3 external_force
+geometry_msgs/Vector3 commanded_acceleration

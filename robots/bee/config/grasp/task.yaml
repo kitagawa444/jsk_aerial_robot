@@ -1,0 +1,12 @@
+task:
+  automatic_transport: true
+  friction_coefficient: 0.5  # Design lower bound, independent of simulator friction.
+  normal_force_margin: 1.2
+  design_vertical_acceleration: 0.0  # m/s^2, upward design acceleration.
+  preload_force_ratio: 0.9  # All observer forces must reach this fraction for preload_duration.
+  lift_height: 0.05
+  transport_speed: 0.02
+  descent_speed: 0.005
+  staging_timeout: 150.0
+  lift_timeout: 150.0
+  transport_timeout: 180.0
