@@ -18,6 +18,32 @@ During continuous contact, the momentum observer supplies the inner normal
 force servo and low-pass contact-reaction correction; force-site values are
 monitoring only.
 
+With `~planner_contact_stabilization_enabled:=true` (default), the MPC path
+also runs the existing common vertical-slip and zero-sum contact-height
+controllers, object roll/pitch moment allocation, and object yaw feedback.
+The common slip reference is latched after lift-off, and its acceleration
+correction retains the existing static-support floor. Per-Bee roll/yaw trims
+are calibrated during preload and remain frozen during lift, as in legacy
+control. These controllers also run during the MPC support ramp and initial
+solver wait; they do not run the legacy object-height PID.
+
+The shared vertical corrections replace the MPC path's original per-Bee
+relative-Z correction. Tangential relative-position and observer force
+corrections remain. The MPC's planned acceleration is still the nominal
+command, with bounded stabilization corrections added afterward. Consequently,
+the OCP's force, friction and thrust constraints describe the nominal plan,
+not a guarantee for the corrected commands or actual contacts. Set the flag
+to `false` to reproduce the original MPC contact-control path for comparison.
+
+For a vertical-control comparison, set `~planner_vertical_control:=pid`
+(default: `mpc`). This keeps MPC XY commands and the differential Z commands,
+but replaces their mean Z acceleration with the existing PID path's common
+Z command, including gravity support, observer correction and common slip.
+The PID path owns support transfer, the height reference and the integrator;
+MPC samples must not overwrite those states. This option requires contact
+stabilization to be enabled. The optimizer still solves the full 3D problem,
+so this is a diagnostic hybrid controller, not a new consistent 2D MPC model.
+
 At every replan, the demo recomputes the three object-to-contact arms from the
 current object pose and each Bee's four-ball representative center.  It also
 recomputes the object-to-Bee-CG arms from observer odometry.  Both sets are
@@ -56,6 +82,13 @@ rosrun bee mujoco_triple_transport_place_demo.py \
   _control_strategy:=whole_body_mpc
 ```
 
+MPC XY with the existing common Z controller:
+
+```bash
+rosrun bee mujoco_triple_transport_place_demo.py \
+  _control_strategy:=whole_body_mpc _planner_vertical_control:=pid
+```
+
 Legacy mode remains the default:
 
 ```bash
@@ -69,6 +102,8 @@ rosrun bee mujoco_triple_transport_place_demo.py
 | `~planner_horizon` | 0.6 s | finite prediction horizon |
 | `~planner_nodes` | 6 | shooting intervals |
 | `~planner_rate` | 5 Hz | requested replan rate |
+| `~planner_contact_stabilization_enabled` | true | shared slip, contact-height and moment feedback below MPC |
+| `~planner_vertical_control` | mpc | `pid` replaces common Z with the existing vertical controller |
 | `~planner_object_acceleration_limit` | 0.02 m/s² | translational object acceleration bound |
 | `~planner_horizontal_velocity_constraint_limit` | 0.08 m/s | recoverable OCP XY velocity region; trajectory speed is unchanged |
 | `~planner_vertical_velocity_constraint_limit` | 0.08 m/s | recoverable OCP Z velocity region; trajectory speed is unchanged |

@@ -786,7 +786,10 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             # finite-height trajectory.  Latch the trajectory only after the
             # measured load and object Z velocity have settled.  The optional
             # whole-body planner retains its own support-transfer sequence.
-            if (not getattr(self, "whole_body_planner_enabled", False) and
+            mpc_vertical_control = (
+                getattr(self, "whole_body_planner_enabled", False) and
+                getattr(self, "planner_vertical_control", "mpc") == "mpc")
+            if (not mpc_vertical_control and
                     not self.lift_support_transfer_complete):
                 return
             # The whole-body controller transfers weight through a filtered
@@ -931,33 +934,16 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
         else:
             self.lift_reference_z = next_reference_z
 
-    def update_lift_z_control(
-            self, odometry, object_pose, object_twist,
-            observed_object_vertical_force, dt):
-        """Generate common feed-forward and zero-sum Z accelerations.
+    def update_lift_contact_stabilization(
+            self, odometry, object_pose, object_twist, dt):
+        """Update common slip and zero-sum contact-height corrections.
 
-        The object trajectory supplies Fz=m_object*(g+a_ref) before observer
-        feedback.  The momentum observer is deliberately restricted to a
-        slow, bounded force correction.  Contact-height and Mx/My components
-        remain zero-sum and therefore cannot alter the requested common force.
+        Shared by the PID and MPC paths; does not generate an object
+        trajectory or integrate the object-height PID.
         """
-        if not self.lift_mode_active:
+        if not self.lift_mode_active or self.lift_fault:
             return
-
         dt = self.clamp_value(dt, 0.0, 0.05)
-        filter_tau = max(1.0e-3, self.lift_observer_force_time_constant)
-        alpha = dt / (filter_tau + dt) if dt > 0.0 else 0.0
-        self.filtered_object_vertical_force += alpha * (
-            observed_object_vertical_force -
-            self.filtered_object_vertical_force)
-        transfer_filter_tau = max(
-            1.0e-3, self.lift_support_transfer_force_time_constant)
-        transfer_alpha = (
-            dt / (transfer_filter_tau + dt) if dt > 0.0 else 0.0)
-        self.lift_support_transfer_filtered_force += transfer_alpha * (
-            observed_object_vertical_force -
-            self.lift_support_transfer_filtered_force)
-
         states = dict(
             (name, self.contact_position_state(
                 name, odometry[name], object_pose, object_twist))
@@ -1042,6 +1028,36 @@ class MujocoTriplePressKeyboardDemo(MujocoDualPushDemo):
             self.lift_contact_z_acceleration_offsets.values()) / len(self.names)
         for name in self.names:
             self.lift_contact_z_acceleration_offsets[name] -= applied_mean
+
+    def update_lift_z_control(
+            self, odometry, object_pose, object_twist,
+            observed_object_vertical_force, dt):
+        """Generate common feed-forward and zero-sum Z accelerations.
+
+        The object trajectory supplies Fz=m_object*(g+a_ref) before observer
+        feedback.  The momentum observer is deliberately restricted to a
+        slow, bounded force correction.  Contact-height and Mx/My components
+        remain zero-sum and therefore cannot alter the requested common force.
+        """
+        if not self.lift_mode_active:
+            return
+
+        dt = self.clamp_value(dt, 0.0, 0.05)
+        filter_tau = max(1.0e-3, self.lift_observer_force_time_constant)
+        alpha = dt / (filter_tau + dt) if dt > 0.0 else 0.0
+        self.filtered_object_vertical_force += alpha * (
+            observed_object_vertical_force -
+            self.filtered_object_vertical_force)
+        transfer_filter_tau = max(
+            1.0e-3, self.lift_support_transfer_force_time_constant)
+        transfer_alpha = (
+            dt / (transfer_filter_tau + dt) if dt > 0.0 else 0.0)
+        self.lift_support_transfer_filtered_force += transfer_alpha * (
+            observed_object_vertical_force -
+            self.lift_support_transfer_filtered_force)
+
+        self.update_lift_contact_stabilization(
+            odometry, object_pose, object_twist, dt)
 
         if self.lift_fault or not self.lift_preload_ready():
             self.lift_common_z_acceleration_command = 0.0

@@ -50,6 +50,17 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 "control_strategy must be legacy or whole_body_mpc")
         self.whole_body_planner_enabled = (
             self.control_strategy == "whole_body_mpc")
+        # Keep contact stabilization below the planner. Disable only for
+        # comparison with the original MPC contact-control path.
+        self.planner_contact_stabilization_enabled = rospy.get_param(
+            "~planner_contact_stabilization_enabled", True)
+        self.planner_vertical_control = str(rospy.get_param(
+            "~planner_vertical_control", "mpc")).lower()
+        if self.planner_vertical_control not in ("mpc", "pid"):
+            raise ValueError("planner_vertical_control must be mpc or pid")
+        if (self.planner_vertical_control == "pid" and
+                not self.planner_contact_stabilization_enabled):
+            raise ValueError("PID Z requires planner_contact_stabilization_enabled")
         self.whole_body_planner = None
         self.planner_result = None
         self.planner_solution_ros_time = None
@@ -582,26 +593,47 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
             vector *= limit / norm
         return vector
 
+    def stabilized_planner_common_z(self, common_z):
+        """Apply the shared slip correction without removing weight support."""
+        corrected_z = common_z + self.lift_common_slip_acceleration
+        if self.lift_common_slip_feedback_active:
+            support_floor = (
+                self.lift_hold_support_floor_scale *
+                self.grasp_object_mass * self.gravity_acceleration /
+                (len(self.names) * max(1.0e-6, self.robot_mass)))
+            corrected_z = max(corrected_z, support_floor)
+        return self.clamp_value(
+            corrected_z, -self.lift_common_z_acceleration_limit,
+            self.lift_common_z_acceleration_limit)
+
     def planner_ramp_commands(
             self, odometry, object_pose, object_twist,
             filtered_forces, contact_radius, dt,
             update_planner_force_state=True):
-        ramp_duration = max(0.0, self.lift_force_ramp_duration)
-        if ramp_duration <= 1.0e-6:
-            self.lift_force_ramp_ratio = 1.0
+        if self.planner_vertical_control == "pid":
+            # update_lift_z_control already advanced support transfer once.
+            vertical_force = self.lift_vertical_force_target / len(self.names)
         else:
-            self.lift_force_ramp_ratio = min(
-                1.0, self.lift_force_ramp_ratio + dt / ramp_duration)
-        vertical_force = (
-            self.lift_force_ramp_ratio * self.grasp_object_mass *
-            self.gravity_acceleration / len(self.names))
-        self.lift_vertical_force_target = vertical_force * len(self.names)
-        self.lift_reference_z = object_pose.position.z
-        self.lift_reference_velocity = 0.0
-        self.lift_reference_acceleration = 0.0
-        self.lift_object_acceleration_command = 0.0
-        self.lift_common_z_acceleration_command = (
-            vertical_force / max(1.0e-6, self.robot_mass))
+            ramp_duration = max(0.0, self.lift_force_ramp_duration)
+            if ramp_duration <= 1.0e-6:
+                self.lift_force_ramp_ratio = 1.0
+            else:
+                self.lift_force_ramp_ratio = min(
+                    1.0, self.lift_force_ramp_ratio + dt / ramp_duration)
+            vertical_force = (
+                self.lift_force_ramp_ratio * self.grasp_object_mass *
+                self.gravity_acceleration / len(self.names))
+            self.lift_vertical_force_target = vertical_force * len(self.names)
+            self.lift_reference_z = object_pose.position.z
+            self.lift_reference_velocity = 0.0
+            self.lift_reference_acceleration = 0.0
+            self.lift_object_acceleration_command = 0.0
+            self.lift_common_z_acceleration_command = (
+                vertical_force / max(1.0e-6, self.robot_mass))
+            if self.planner_contact_stabilization_enabled:
+                self.lift_common_z_acceleration_command = \
+                    self.stabilized_planner_common_z(
+                        self.lift_common_z_acceleration_command)
 
         applied_forces = np.zeros((3, 3))
         commands = {}
@@ -612,7 +644,10 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 name, odometry[name], object_pose,
                 filtered_forces[name], contact_radius, object_twist)
             commands[name] = (
-                ax, ay, yaw, self.lift_common_z_acceleration_command)
+                ax, ay, yaw, self.lift_common_z_acceleration_command +
+                (self.lift_contact_z_acceleration_offsets[name] +
+                 self.lift_z_acceleration_offsets[name]
+                 if self.planner_contact_stabilization_enabled else 0.0))
         if update_planner_force_state:
             self.whole_body_planner.previous_force = applied_forces
             self.whole_body_planner.warm_start = np.tile(
@@ -709,6 +744,24 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
         if self.whole_body_planner is None:
             self.fail_mission("whole-body planner was not initialized")
             return None
+
+        if self.planner_contact_stabilization_enabled:
+            if self.planner_vertical_control == "pid":
+                observed_vertical_force = -sum(
+                    local_wrenches[name]["force_bee"][2]
+                    for name in self.names)
+                # Own the trajectory, support transfer and integrator here;
+                # do not update slip twice or overwrite these states below.
+                self.update_lift_z_control(
+                    odometry, object_pose, object_twist,
+                    observed_vertical_force, dt)
+            else:
+                self.update_lift_contact_stabilization(
+                    odometry, object_pose, object_twist, dt)
+            self.update_lift_yaw_control(object_pose, object_twist, dt)
+            if self.lift_fault:
+                self.fail_mission("contact stabilization aborted lift")
+                return None
 
         # Before the continuous-contact OCP starts, transfer the object's
         # weight from the pedestal to the contacts without a force step.
@@ -841,6 +894,10 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 -self.planner_relative_position_kp *
                 (contact_state[7] - z_reference) -
                 self.planner_relative_velocity_kd * contact_state[8])
+            if self.planner_contact_stabilization_enabled:
+                # Common slip and differential height are handled by the
+                # shared controller, not a second absolute Z correction.
+                z_correction = 0.0
             normal, tangent, yaw = self.face_frame(name, object_pose)
             # The OCP supplies the desired resultant contact force, while the
             # real/simulated Bee and compliant feet remain the inner plant.
@@ -866,28 +923,51 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                 np.asarray(sample["vehicle_accelerations"][index]) +
                 observer_correction + normal_correction +
                 relative_correction)
+            if self.planner_contact_stabilization_enabled:
+                command += self.lift_yaw_tangential_acceleration * np.array(
+                    [tangent[0], tangent[1], 0.0])
+                command[2] += (
+                    self.lift_contact_z_acceleration_offsets[name] +
+                    self.lift_z_acceleration_offsets[name])
             commands[name] = (
                 command[0], command[1],
                 self.moment_corrected_yaw(name, yaw), command[2])
             applied_accelerations.append(command)
 
-        reference_state = sample["reference_state"]
-        self.lift_reference_z = reference_state[2]
-        self.lift_reference_velocity = reference_state[5]
-        self.lift_reference_acceleration = sample["object_acceleration"][2]
-        self.lift_object_acceleration_command = \
-            sample["object_acceleration"][2]
+        if self.planner_contact_stabilization_enabled:
+            # Apply slip to the common component only. As in the PID path,
+            # do not let slip feedback remove static weight support.
+            common_z = float(np.mean(
+                [command[2] for command in applied_accelerations]))
+            corrected_z = (
+                self.lift_common_z_acceleration_command
+                if self.planner_vertical_control == "pid" else
+                self.stabilized_planner_common_z(common_z))
+            for index, name in enumerate(self.names):
+                applied_accelerations[index][2] += corrected_z - common_z
+                ax, ay, yaw, _ = commands[name]
+                commands[name] = (
+                    ax, ay, yaw, applied_accelerations[index][2])
+
+        if self.planner_vertical_control == "mpc":
+            reference_state = sample["reference_state"]
+            self.lift_reference_z = reference_state[2]
+            self.lift_reference_velocity = reference_state[5]
+            self.lift_reference_acceleration = sample["object_acceleration"][2]
+            self.lift_object_acceleration_command = \
+                sample["object_acceleration"][2]
+            self.lift_vertical_force_target = sum(
+                force[2] for force in planned_world_forces)
         self.translation_acceleration_command = list(
             sample["object_acceleration"][0:2])
-        self.lift_vertical_force_target = sum(
-            force[2] for force in planned_world_forces)
         self.lift_common_z_acceleration_command = float(np.mean(
             [command[2] for command in applied_accelerations]))
-        for index, name in enumerate(self.names):
-            self.lift_contact_z_acceleration_offsets[name] = (
-                applied_accelerations[index][2] -
-                self.lift_common_z_acceleration_command)
-            self.lift_z_acceleration_offsets[name] = 0.0
+        if not self.planner_contact_stabilization_enabled:
+            for index, name in enumerate(self.names):
+                self.lift_contact_z_acceleration_offsets[name] = (
+                    applied_accelerations[index][2] -
+                    self.lift_common_z_acceleration_command)
+                self.lift_z_acceleration_offsets[name] = 0.0
         self.publish_planner_state(sample, self.planner_result)
         rospy.loginfo_throttle(
             0.5,
@@ -1388,7 +1468,8 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                     "RELEASE", "RETREAT", "UNWIND", "VERIFY", "COMPLETE",
                     "FAILSAFE_HOLD", "FAILED")
                 if contact_control:
-                    if not self.whole_body_planner_active():
+                    if (not self.whole_body_planner_active() or
+                            self.planner_contact_stabilization_enabled):
                         self.update_local_moment_control(
                             local_wrenches, filtered_forces, control_dt)
                         self.update_object_moment_control(
@@ -1397,7 +1478,8 @@ class MujocoTripleTransportPlaceDemo(MujocoTriplePressKeyboardDemo):
                     self.update_lift_progress(
                         object_pose, odometry, object_twist,
                         object_force[2] if
-                        self.whole_body_planner_active() else None)
+                        (self.whole_body_planner_active() and
+                         self.planner_vertical_control == "mpc") else None)
 
                 safety_reason = self.airborne_safety_reason(
                     odometry, object_pose, object_twist,
