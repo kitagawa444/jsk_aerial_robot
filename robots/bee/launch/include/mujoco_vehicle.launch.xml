@@ -1,0 +1,17 @@
+<launch>
+  <arg name="robot_id"/>
+  <arg name="controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
+  <include file="$(find bee)/launch/bringup.launch">
+    <arg name="robot_id" value="$(arg robot_id)"/>
+    <arg name="grasp_mode" value="true"/>
+    <arg name="grasp_controller_config" value="$(arg controller_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_rviz" value="false"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <!-- The standard spawner waits for this vehicle's controller_manager. -->
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+</launch>

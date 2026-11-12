@@ -1,0 +1,9 @@
+robot_count: 4
+object_shape: box
+object_size_x: 0.60
+object_size_y: 0.60
+object_height: 0.50
+object_mass: 0.50
+spawn_destination_pedestal: true
+destination_pedestal_x: 0.40
+destination_pedestal_y: 1.0

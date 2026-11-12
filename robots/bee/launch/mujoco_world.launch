@@ -1,0 +1,35 @@
+<launch>
+  <!-- Shared physics only. Vehicle bringups and grasp control are separate. -->
+  <arg name="robot_count" default="3"/>
+  <arg name="scene_config" default="$(eval find('bee') + '/config/grasp/scene_' + {3: 'triangle', 4: 'box', 5: 'pentagon'}[arg('robot_count')] + '.yaml')"/>
+  <arg name="output_dir" default="$(find bee)/mujoco/generated"/>
+  <arg name="control_scene_namespace" default="/bee_grasp/scene"/>
+  <arg name="headless" default="true"/>
+  <arg name="real_time_factor" default="1.0"/>
+  <arg name="render_fps" default="10.0"/>
+  <arg name="param_load_timeout" default="30.0"/>
+  <arg name="startup_delay" default="3.0"/>
+
+  <param name="/use_sim_time" value="true"/>
+  <rosparam param="$(arg control_scene_namespace)">
+    schema_version: 1
+    available: false
+  </rosparam>
+
+  <!-- The prefix prepares XML and waits for vehicle parameters, then execs
+       this backend. roslaunch directly owns the simulator's process. -->
+  <node pkg="mujoco_ros_control" type="mujoco_ros_control" name="mujoco_ros_control"
+        output="screen" required="true"
+        launch-prefix="$(find bee)/script/prepare_mujoco_scene.py --robot-count $(arg robot_count) --scene-config '$(arg scene_config)' --output-dir '$(arg output_dir)' --manifest-namespace '$(arg control_scene_namespace)' --timeout $(arg param_load_timeout) --startup-delay $(arg startup_delay) --">
+    <param name="mujoco_model_path" value="$(arg output_dir)/bee_scene_$(arg robot_count).xml"/>
+    <rosparam param="robot_namespaces" subst_value="true">$(eval ['bee1', 'bee2', 'bee3', 'bee4', 'bee5'][:arg('robot_count')])</rosparam>
+    <param name="headless" value="$(arg headless)"/>
+    <param name="real_time_factor" value="$(arg real_time_factor)"/>
+    <param name="render_fps" value="$(arg render_fps)"/>
+    <param name="vsync" value="false"/>
+    <param name="render_shadows" value="false"/>
+    <param name="render_reflections" value="false"/>
+    <param name="window_width" value="640"/>
+    <param name="window_height" value="480"/>
+  </node>
+</launch>

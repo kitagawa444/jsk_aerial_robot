@@ -389,14 +389,25 @@ namespace aerial_robot_control
   {
     const Eigen::VectorXd target_wrench_acc_cog = getTargetWrenchAccCog();
 
+    // This function runs on a separate thread started during controller
+    // initialization.  A multi-robot launch makes it possible for the thread
+    // to run before the first robot-model update has completed.
+    if(!robot_model_ || !robot_model_->initialized())
+      {
+        prev_est_wrench_timestamp_ = 0;
+        integrate_term_ = Eigen::VectorXd::Zero(6);
+        return;
+      }
+
     if(navigator_->getNaviState() != aerial_robot_navigation::HOVER_STATE &&
        navigator_->getNaviState() != aerial_robot_navigation::LAND_STATE)
       {
         prev_est_wrench_timestamp_ = 0;
         integrate_term_ = Eigen::VectorXd::Zero(6);
         return;
-      }else if(target_wrench_acc_cog.size() == 0){
-        ROS_WARN("Target wrench value for wrench estimation is not setted.");
+      }else if(target_wrench_acc_cog.size() != 6){
+        ROS_WARN_THROTTLE(1.0,
+                          "Six-axis target wrench for wrench estimation is not ready.");
         prev_est_wrench_timestamp_ = 0;
         integrate_term_ = Eigen::VectorXd::Zero(6);
         return;

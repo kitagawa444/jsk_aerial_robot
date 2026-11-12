@@ -1,0 +1,16 @@
+<launch>
+  <!-- Compatibility entry point. New setups use grasp_sim.launch. -->
+  <arg name="scene_config" default="$(find bee)/config/grasp/scene_triangle.yaml"/>
+  <arg name="headless" default="true"/>
+  <arg name="real_time_factor" default="1.0"/>
+  <arg name="control_scene_namespace" default="/bee_grasp/scene"/>
+  <rosparam param="/use_sim_time">true</rosparam>
+  <node pkg="bee" type="mujoco_multi_bringup.py" name="bee_mujoco_multi_bringup" output="screen" required="true">
+    <rosparam command="load" file="$(arg scene_config)"/>
+    <param name="headless" value="$(arg headless)"/>
+    <param name="real_time_factor" value="$(arg real_time_factor)"/>
+    <param name="control_scene_namespace" value="$(arg control_scene_namespace)"/>
+    <param name="param_load_delay" value="3.0"/>
+    <param name="backend_start_delay" value="1.0"/>
+  </node>
+</launch>

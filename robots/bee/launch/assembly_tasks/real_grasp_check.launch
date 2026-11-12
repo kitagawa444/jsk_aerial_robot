@@ -1,0 +1,8 @@
+<launch>
+  <!-- Read-only input preflight. Flight execution requires interactive rosrun. -->
+  <arg name="config" default="$(find bee)/config/real_grasp_demo.yaml"/>
+  <node pkg="bee" type="real_grasp_demo.py" name="bee_real_grasp_demo" output="screen">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="execute" value="false"/>
+  </node>
+</launch>

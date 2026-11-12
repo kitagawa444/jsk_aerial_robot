@@ -1,0 +1,50 @@
+# Central controller uses SI units; all remaining defaults are in types.h.
+controller:
+  distributed_tracking: true
+  # Central velocity-reference generation. Units differ from legacy acceleration gains.
+  reference_z_kp: 0.5
+  reference_z_ki: 0.05
+  reference_z_i_limit: 0.015
+  reference_velocity_limit: 0.08
+  reference_acceleration_limit: 0.1
+  cooperative_admittance: 0.15
+  robot_mass: 1.84199
+  contact_offset: [0.0175, 0.0, -0.161]
+  normal_force_kp: 0.4
+  # Disable tangential position/velocity feedback during contact; retain approach and yaw control.
+  contact_tangent_control_enabled: false
+  # Disable relative contact-height PD before support transfer (send zero Z velocity).
+  z_velocity_kp: 0.0
+  z_velocity_kd: 0.0
+  normal_force_rate: 0.3
+  max_normal_force: 8.0
+  trajectory_velocity: 0.01
+  trajectory_acceleration: 0.03
+  trajectory_jerk: 0.10
+  z_kp: 1.0
+  z_kd: 1.5
+  z_ki: 0.20
+  observer_kp: 0.02
+  # Common-slip feedback remains disabled. relative_z_* below are legacy-path gains;
+  # distributed tracking monitors contact geometry without position restoration.
+  slip_kp: 0.0
+  slip_kd: 0.0
+  relative_z_kp: 8.0
+  relative_z_kd: 0.0
+tracker:
+  velocity_gain_xy: 3.0
+  velocity_gain_z: 3.0
+  external_filter_tau: 0.2
+  input_timeout: 0.3
+  reference_timeout: 0.3
+  maximum_acceleration: 20.0
+  maximum_velocity_error: 0.3
+  velocity_error_duration: 1.0
+safety:
+  input_timeout: 1.0
+  max_acceleration: 20.0
+  max_slip: 0.06
+  max_contact_deviation: 0.04
+  max_drop: 0.03
+control_period: 0.01
+command_timeout: 0.3

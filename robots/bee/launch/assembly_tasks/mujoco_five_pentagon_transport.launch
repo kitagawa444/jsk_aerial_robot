@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <arg name="headless" default="true"/>
+  <arg name="launch_rviz" default="true"/>
+  <arg name="real_time_factor" default="1.0"/>
+  <arg name="object_mass" default="0.80"/>
+  <arg name="object_side" default="0.60"/>
+  <arg name="object_height" default="0.50"/>
+  <arg name="destination_x" default="1.50"/>
+  <arg name="destination_y" default="1.00"/>
+
+  <include file="$(find bee)/launch/assembly_tasks/mujoco_multi_module.launch">
+    <arg name="robot_count" value="5"/>
+    <arg name="headless" value="$(arg headless)"/>
+    <arg name="launch_rviz" value="$(arg launch_rviz)"/>
+    <arg name="real_time_factor" value="$(arg real_time_factor)"/>
+    <arg name="scene_camera_extent" value="3.0"/>
+    <arg name="object_shape" value="pentagonal_prism"/>
+    <arg name="object_pentagon_side" value="$(arg object_side)"/>
+    <arg name="object_height" value="$(arg object_height)"/>
+    <arg name="object_mass" value="$(arg object_mass)"/>
+    <arg name="spawn_destination_pedestal" value="true"/>
+    <arg name="destination_pedestal_x" value="$(arg destination_x)"/>
+    <arg name="destination_pedestal_y" value="$(arg destination_y)"/>
+  </include>
+</launch>

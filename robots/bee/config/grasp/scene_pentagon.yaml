@@ -1,0 +1,8 @@
+robot_count: 5
+object_shape: pentagonal_prism
+object_pentagon_side: 0.60
+object_height: 0.50
+object_mass: 0.80
+spawn_destination_pedestal: true
+destination_pedestal_x: 0.40
+destination_pedestal_y: 1.0

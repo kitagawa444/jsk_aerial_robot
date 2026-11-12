@@ -1,0 +1,13 @@
+<launch>
+  <!-- Run on each robot, alongside its bringup. No central robot list required. -->
+  <arg name="robot_ns"/>
+  <arg name="controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
+  <arg name="base_topic" default="uav/baselink/odom"/>
+  <arg name="allow_empty_base_frame" default="false"/>
+  <node pkg="bee" type="bee_grasp_tracker_node" name="grasp_tracker" ns="$(arg robot_ns)" output="screen">
+    <rosparam command="load" file="$(arg controller_config)"/>
+    <param name="base_topic" value="$(arg base_topic)"/>
+    <param name="allow_empty_base_frame" value="$(arg allow_empty_base_frame)"/>
+    <param name="cog_frame" value="$(arg robot_ns)/cog"/>
+  </node>
+</launch>

@@ -1,0 +1,10 @@
+world_frame: world
+# This repository's MuJoCo ground_truth publisher omits header.frame_id;
+# its position/linear velocity are world and angular velocity is body-local.
+allow_empty_base_frame: true
+scene_namespace: /bee_grasp/scene
+object_pose_topic: /bee1/mujoco/grasp_object_pose
+# Per-robot defaults: /NAME/ground_truth, /NAME/uav/cog/odom,
+# /NAME/estimated_external_wrench, /NAME/flight_state; CoG frame NAME/cog.
+# Overrides: robot_namespaces, base_topics, cog_topics, wrench_topics,
+# state_topics, cog_frames (each a map keyed by logical name in the manifest).

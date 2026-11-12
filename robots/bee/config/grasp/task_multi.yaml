@@ -1,0 +1,10 @@
+# Normal force is calculated from payload mass and robot count for each scene.
+task:
+  automatic_transport: true
+  friction_coefficient: 0.5
+  normal_force_margin: 1.2
+  design_vertical_acceleration: 0.0
+  preload_force_ratio: 0.9
+  lift_height: 0.05
+  transport_speed: 0.02
+  descent_speed: 0.005

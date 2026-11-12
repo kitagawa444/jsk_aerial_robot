@@ -1,0 +1,27 @@
+<launch>
+  <!-- Simulation convenience only. On hardware, run bringup.launch on each robot. -->
+  <arg name="robot_count" default="3"/>
+  <arg name="controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
+  <param name="/use_sim_time" value="true"/>
+
+  <include file="$(find bee)/launch/include/mujoco_vehicle.launch.xml">
+    <arg name="robot_id" value="1"/>
+    <arg name="controller_config" value="$(arg controller_config)"/>
+  </include>
+  <include file="$(find bee)/launch/include/mujoco_vehicle.launch.xml" if="$(eval arg('robot_count') &gt;= 2)">
+    <arg name="robot_id" value="2"/>
+    <arg name="controller_config" value="$(arg controller_config)"/>
+  </include>
+  <include file="$(find bee)/launch/include/mujoco_vehicle.launch.xml" if="$(eval arg('robot_count') &gt;= 3)">
+    <arg name="robot_id" value="3"/>
+    <arg name="controller_config" value="$(arg controller_config)"/>
+  </include>
+  <include file="$(find bee)/launch/include/mujoco_vehicle.launch.xml" if="$(eval arg('robot_count') &gt;= 4)">
+    <arg name="robot_id" value="4"/>
+    <arg name="controller_config" value="$(arg controller_config)"/>
+  </include>
+  <include file="$(find bee)/launch/include/mujoco_vehicle.launch.xml" if="$(eval arg('robot_count') &gt;= 5)">
+    <arg name="robot_id" value="5"/>
+    <arg name="controller_config" value="$(arg controller_config)"/>
+  </include>
+</launch>
