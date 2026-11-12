@@ -77,6 +77,39 @@ TEST(Scene, RejectsInconsistentOrNonFiniteGeometry)
   c.support_ramp_duration = 0;
   EXPECT_THROW(c.validate(), std::invalid_argument);
 }
+TEST(Controller, SupportTransferHoldsCapturedHeight)
+{
+  auto s = scene();
+  auto st = state(s);
+  ControlConfig config;
+  config.distributed_tracking = true;
+  CooperativeGraspController controller(s, config);
+  auto reference = supportReference();
+  const double initial = st.input.object.position.z();
+  controller.step(st, reference, .01);
+  st.input.object.position.z() += .02;
+  const auto output = controller.step(st, reference, .01);
+  EXPECT_NEAR(output.status.reference_z, initial, 1e-12);
+  double mean_vz = 0;
+  for (const auto& command : output.commands) mean_vz += command.velocity.z();
+  EXPECT_LT(mean_vz, 0);
+}
+TEST(Safety, SupportTransferChecksHeightAndSlip)
+{
+  auto s = scene();
+  auto st = state(s);
+  auto reference = supportReference();
+  reference.object_z = st.input.object.position.z();
+  ControlOutput output;
+  output.status.reference_z = st.input.object.position.z();
+  output.commands.resize(3);
+  GraspSafetyMonitor monitor({});
+  st.input.object.position.z() += .04;
+  EXPECT_EQ(monitor.check(st, reference, output, .01), "support transfer height drift limit");
+  st.input.object.position.z() -= .04;
+  output.status.contact_geometry_errors.assign(3, Vec3(0, 0, .10));
+  EXPECT_EQ(monitor.check(st, reference, output, .01), "mean contact slip limit");
+}
 TEST(Estimator, ActionReactionAndMomentTransport)
 {
   auto s = scene();

@@ -368,7 +368,9 @@ namespace mujoco_ros_control
     spinal_interface_.setGroundTruthStates(fc_quat.x(), fc_quat.y(), fc_quat.z(), fc_quat.w(),
                                            gyro.x(), gyro.y(), gyro.z());
 
-    if((!force_site_sensors_.empty() || !grasp_force_site_sensors_.empty() ||
+    // Object tracking is also required by the C++ controller on models without
+    // force/contact sensors. Do not gate its pose on those optional sensors.
+    if((grasp_object_body_id_ >= 0 || !force_site_sensors_.empty() || !grasp_force_site_sensors_.empty() ||
         !grasp_contact_sensors_.empty()) &&
        force_sensor_pub_rate_ > 0.0 &&
        (time - last_force_sensor_time_).toSec() >= force_sensor_pub_rate_)

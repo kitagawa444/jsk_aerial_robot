@@ -19,7 +19,7 @@ std::string GraspSafetyMonitor::check(const GraspState& s, const Reference& r, c
         !c.acceleration.allFinite() || !c.baselink_rpy.allFinite() || !std::isfinite(c.yaw) || !std::isfinite(c.z) ||
         c.acceleration.norm() > config_.max_acceleration)
       return "invalid or excessive command";
-  if (!airborne(r.phase))
+  if (!airborne(r.phase) && r.phase != Phase::SupportTransfer)
   {
     force_loss_time_ = 0;
     return {};
@@ -30,6 +30,9 @@ std::string GraspSafetyMonitor::check(const GraspState& s, const Reference& r, c
   if (s.object_velocity.norm() > config_.max_object_speed ||
       std::abs(s.object_angular_velocity.z()) > config_.max_yaw_rate)
     return "object speed limit";
+  if (r.phase == Phase::SupportTransfer &&
+      std::abs(s.input.object.position.z() - output.status.reference_z) > config_.max_drop)
+    return "support transfer height drift limit";
   if (std::abs(angleError(yaw(s.input.object.orientation) - r.object_yaw)) > .35)
     return "object yaw limit";
   const auto& geometry_errors = output.status.contact_geometry_errors;

@@ -54,6 +54,25 @@ class SceneGeneratorTest(unittest.TestCase):
         robots = generator.build_robot_layout(4)
         self.assertEqual([r['pos'][:2] for r in robots], [[-2., 0.], [-1., 0.], [-2., 1.], [-1., 1.]])
 
+    def test_new_cache_without_configured_feet_is_regenerated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            (base / 'config').mkdir()
+            (base / 'scripts').mkdir()
+            (base / 'mujoco/bee').mkdir(parents=True)
+            (base / 'config/mujoco_model.yaml').write_text('bee:\n  compliant_feet:\n    feet: [{name: front}]\n')
+            (base / 'scripts/mujoco_model_generator.py').write_text('')
+            model = base / 'mujoco/bee/robot.xml'
+            model.write_text('<mujoco/>')
+            generator = MujocoSceneGenerator({}, directory, directory)
+            with patch('mujoco_scene_generator.subprocess.check_call') as generate:
+                generator.ensure_single_robot_model()
+                generate.assert_called_once()
+            model.write_text('<mujoco><geom name="spring_foot_front_ball"/></mujoco>')
+            with patch('mujoco_scene_generator.subprocess.check_call') as generate:
+                generator.ensure_single_robot_model()
+                generate.assert_not_called()
+
     def test_model_and_manifest_written_to_requested_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             generator = self.builder(robot_count=5, object_shape='pentagonal_prism')

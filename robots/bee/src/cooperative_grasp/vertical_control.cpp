@@ -79,7 +79,9 @@ void CooperativeGraspController::updateVertical(const GraspState& s, const Refer
       advanceZReference(r.object_z, r.z_velocity_limit, dt);
     else
     {
-      status_.reference_z = s.input.object.position.z();
+      // Hold the height captured on entering SupportTransfer. Following the
+      // measured height here hides drift caused by imperfect load compensation.
+      status_.reference_z = initial_z_;
       status_.reference_vz = status_.reference_az = 0;
     }
     status_.vertical_force_target = std::max(0.0, scene_.object_mass *

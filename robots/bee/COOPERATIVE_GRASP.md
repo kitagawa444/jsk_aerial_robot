@@ -1,5 +1,18 @@
 # 中央協調把持制御とMuJoCo生成の構成
 
+## RViz付き自動デモ（シミュレーション専用）
+
+3rdpartyの`develop/hwinterface`を更新し、`catkin build bee mujoco_ros_control`後に実行します。
+
+```bash
+source /home/kitagawa/ros/jsk_aerial_robot_ws/devel/setup.bash
+roslaunch bee grasp_demo.launch
+```
+
+MuJoCo・RViz・C++協調制御を起動し、停止状態の全機を確認、ARM、離陸、全台HOVER確認後に中央のstartサービスを呼びます。標準タスクは把持→運搬→載置を自動実行します。Python補助ノードは起動操作のみで、把持制御はC++です。`headless:=false`でMuJoCo画面も表示、`launch_rviz:=false`でRVizなしにできます。
+
+Ctrl-Cまたは起動待ちタイムアウトでシミュレーション全体を終了します。飛行中の機体、旧デモ、別の`grasp_sim.launch`と重ねて起動しないでください。実機用ではありません。
+
 シミュレーションの起動入口は`grasp_sim.launch`です。MuJoCo、各Beeのbringup、中央制御を別々のlaunchに分けています。中央の`bee_cooperative_grasp_node`がphase管理・物体制御・協調参照生成を行い、各Beeの`BeeController`内のgrasp modeへ目標速度・加速度と接触力目標を送ります。grasp modeが自機の速度とobserverを使って追従・外力補償し、既存の飛行制御ループ内でWORLD/COGの加速度・姿勢目標を適用します。標準起動では独立したtrackerノードや自分宛ての`uav/nav`再送はありません。
 
 ```text
@@ -65,6 +78,7 @@ Idle → Staging → Orient → Calibrate → Approach → Preload
 
 - 開始には全台HOVERと有効な入力が必要です。arm/takeoffは中央ノードから送信しません。
 - `SupportTransfer`はobserverで支持力移行を確認し、`Lift`から有限高さ軌道を進めます。
+- 分散追従の`SupportTransfer`では開始時の物体高度を保持し、高度PI速度補正を行います。この段階にも速度・傾斜・接触すべり監視を適用し、保持高度から上下に`max_drop`（標準3 cm）を超えたら中止します。支持完了前の高度ドリフトを基準高度へ取り込まないためです。
 - `Hold`への進入は物体とreferenceの高さ・速度の安定で判断します。
 - `Lift → Hold → Transport`は同じ制御器instanceを継続し、積分・フィルタ・referenceをresetしません。
 - 台座接地を確認すると`Unload`へ移り、接地イベントにより制御器がZ積分と共通slip補正を解除します。

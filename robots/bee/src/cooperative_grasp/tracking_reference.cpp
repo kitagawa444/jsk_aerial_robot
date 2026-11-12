@@ -28,7 +28,7 @@ void CooperativeGraspController::makeTrackingReferences(const GraspState& s, con
   if (r.touchdown)
     status_.reference_velocity_integral = 0;
   double common_vz = 0;
-  if (support_active_ && status_.support_ready && r.phase >= Phase::Lift && r.phase < Phase::Unload)
+  if (support_active_ && r.phase >= Phase::SupportTransfer && r.phase < Phase::Unload)
   {
     const double error = status_.reference_z - s.input.object.position.z();
     status_.reference_velocity_integral = clamp(status_.reference_velocity_integral + p.reference_z_ki * error * dt,
