@@ -52,7 +52,7 @@ install(DIRECTORY bin
   USE_SOURCE_PERMISSIONS
 )
 
-install(DIRECTORY launch scripts
+install(DIRECTORY launch scripts config
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
   USE_SOURCE_PERMISSIONS
 )

@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   diagnostic_msgs
   message_generation
   geometry_msgs
+  sensor_msgs
   roscpp
   nav_msgs
   std_msgs
@@ -74,9 +75,8 @@ add_library(bee_cooperative_grasp
 add_executable(bee_cooperative_grasp_node src/cooperative_grasp/node.cpp)
 target_link_libraries(bee_cooperative_grasp_node bee_cooperative_grasp ${catkin_LIBRARIES} Threads::Threads)
 add_dependencies(bee_cooperative_grasp_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
-add_executable(bee_grasp_tracker_node src/cooperative_grasp/tracker_node.cpp)
-target_link_libraries(bee_grasp_tracker_node bee_cooperative_grasp ${catkin_LIBRARIES})
-add_dependencies(bee_grasp_tracker_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
+add_executable(bee_grasp_joy src/grasp_joy.cpp)
+target_link_libraries(bee_grasp_joy ${catkin_LIBRARIES})
 
 if(CATKIN_ENABLE_TESTING)
   add_executable(reference_tracker_harness EXCLUDE_FROM_ALL test/reference_tracker_harness.cpp)
@@ -89,7 +89,7 @@ if(CATKIN_ENABLE_TESTING)
   endif()
 endif()
 
-install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigation bee_cooperative_grasp bee_cooperative_grasp_node bee_grasp_tracker_node
+install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigation bee_cooperative_grasp bee_cooperative_grasp_node bee_grasp_joy
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -99,7 +99,7 @@ install(DIRECTORY include/bee/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 
-install(DIRECTORY config plugins launch
+install(DIRECTORY config plugins launch robots urdf
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
   USE_SOURCE_PERMISSIONS
   )

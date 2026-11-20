@@ -1,0 +1,32 @@
+<launch>
+  <arg name="robot_ns" default="bee1"/>
+  <group ns="$(arg robot_ns)">
+    <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="pointcloud_to_laserscan">
+      <remap from="cloud_in" to="livox/lidar_orig"/>
+      <remap from="scan" to="livox/scan"/>
+      <rosparam>
+        transform_tolerance: 0.01
+        min_height: -0.1
+        max_height: 0.1
+
+        angle_min: -3.1415
+        angle_max: 3.1415
+        angle_increment: 0.0087 # M_PI/360.0
+        scan_time: 0.1
+        range_min: 0.15
+        range_max: 40.0
+        use_inf: true
+        inf_epsilon: 1.0
+
+        # Concurrency level, affects number of pointclouds queued for processing and number of threads used
+        # 0 : Detect number of cores
+        # 1 : Single threaded
+        # 2->inf : Parallelism level
+        concurrency_level: 1
+      </rosparam>
+      <param name="target_frame" type="string" value="$(arg robot_ns)/lidar_imu"/>
+
+    </node>
+
+  </group>
+</launch>

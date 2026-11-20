@@ -2,8 +2,11 @@
 <launch>
   <arg name="real_machine" default="false" />
   <arg name="simulation" default="false" />
-  <arg name="robot_ns" default="gimbalrotor" />
+  <arg name="robot_ns" default="bee1" />
   <arg name="robot_id" default="1" />
+  <arg name="livox_enable" default="false"/>
+  <arg name="lidar_sim" default="false"/>
+  <arg name="mujoco" default="false"/>
   <group ns="$(arg robot_ns)">
 
     <group if="$(arg real_machine)">
@@ -27,4 +30,9 @@
     <rosparam file="$(find aerial_robot_base)/config/sensors/mocap.yaml" command="load" />
   </group>
 
+  <include file="$(find aerial_robot_base)/launch/external_module/livox_mid360.launch"
+           if="$(eval (arg('real_machine') and not arg('simulation') and arg('livox_enable')) or (arg('simulation') and not arg('real_machine') and not arg('mujoco') and arg('lidar_sim')))">
+    <arg name="robot_ns" value="$(arg robot_ns)"/>
+    <arg name="simulation" value="$(arg simulation)"/>
+  </include>
 </launch>

@@ -1,0 +1,33 @@
+<launch>
+  <!-- Reusable sensor-only entry; no flight, arm or motor commands. -->
+  <arg name="robot_ns" default="bee1"/>
+  <arg name="simulation" default="false"/>
+  <arg name="driver_config" default="$(find livox_ros_driver2)/config/MID360_config.json"/>
+  <group ns="$(arg robot_ns)">
+    <!-- Start only the driver, avoiding the scan-converter side effect in msg_MID360.launch. -->
+    <group unless="$(arg simulation)">
+      <param name="xfer_format" value="1"/>
+      <param name="multi_topic" value="0"/>
+      <param name="data_src" value="0"/>
+      <param name="publish_freq" value="10.0" type="double"/>
+      <param name="output_data_type" value="0"/>
+      <param name="cmdline_str" value="100000000000000" type="string"/>
+      <param name="cmdline_file_path" value="livox_test.lvx" type="string"/>
+      <param name="user_config_path" value="$(arg driver_config)"/>
+      <param name="frame_id" value="$(arg robot_ns)/lidar_imu"/>
+      <param name="enable_lidar_bag" value="true"/>
+      <param name="enable_imu_bag" value="true"/>
+      <node pkg="livox_ros_driver2" type="livox_ros_driver2_node" name="livox_lidar_publisher2"
+            args="100000000000000" required="true" output="screen"/>
+    </group>
+    <include file="$(find fast_lio)/launch/mapping_mid360.launch">
+      <arg name="rviz" value="false"/>
+      <arg name="livox_driver" value="false"/>
+      <arg name="prefix" value="$(arg robot_ns)"/>
+    </include>
+    <rosparam file="$(find aerial_robot_base)/config/sensors/lio/livox_mid360.yaml" command="load"/>
+  </group>
+  <include file="$(find aerial_robot_base)/launch/external_module/livox_scan.launch">
+    <arg name="robot_ns" value="$(arg robot_ns)"/>
+  </include>
+</launch>

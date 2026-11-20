@@ -25,4 +25,7 @@
     <param name="dev" value="/dev/input/js0"/>
     <param name="coalesce_interval" value="0.025"/>
   </node>
+  <node pkg="bee" type="bee_grasp_joy" name="bee_grasp_joy">
+    <remap from="joy" to="$(arg robot_name_1)/joy"/>
+  </node>
 </launch>

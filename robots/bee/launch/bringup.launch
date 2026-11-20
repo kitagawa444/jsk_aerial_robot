@@ -3,25 +3,16 @@
   ###########  launch config  ###########
   <arg name="real_machine" default="True" />
   <arg name="simulation" default="False" />
-  <!-- Opt-in hardware profile for the net-Z-ACC grasp controller. -->
-  <arg name="grasp_gravity_compensation" default="false" />
-  <arg name="grasp_mode" default="false"/>
-  <!-- Legacy standalone tracker, retained for comparison only. -->
-  <arg name="launch_grasp_tracker" default="false"/>
-  <arg name="grasp_controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
   <arg name="force_observer" default="false" />
-  <arg name="gravity_compensation" default="$(arg grasp_gravity_compensation)" />
+  <arg name="gravity_compensation" default="false" />
   <arg name="force_observer_profile" value="$(eval 'simulation' if arg('simulation') else 'hardware')"/>
   <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
   <arg name="reference_tracking_config" default=""/>
-  <arg name="control_mode" default="0" />
   <arg name="estimate_mode"  default= "1" />
   <arg name="sim_estimate_mode"  default= "2" />
   <arg name="headless" default="True" />
   <arg name="worldtype" default="$(find aerial_robot_simulation)/gazebo_model/world/empty.world" />
   <arg name="launch_gazebo" default="True" />
-  <arg name="direct_model" default="False" />
-  <arg name="direct_model_name" />
   <arg name="spawn_x" default="0.0"/>
   <arg name="spawn_y" default="0.0"/>
   <!-- Keep the Gazebo rubber balls above the ground at insertion; the robot
@@ -33,10 +24,10 @@
   <arg name="robot_ns" value="bee$(arg robot_id)" />
   <arg name="mujoco" default="False" />
   <arg name="lidar_sim" default="False" />
+  <arg name="livox_enable" default="false"/>
   <arg name="livox_model_option" default="$(eval 'enable_livox:=true' if arg('lidar_sim') else 'enable_livox:=false')" />
   <arg name="launch_mujoco_backend" default="True" />
   <arg name="launch_mujoco_controller" default="True" />
-  <arg name="launch_rviz" default="True" />
   <arg name="mujoco_render_fps" default="30.0" />
   <arg name="mujoco_vsync" default="false" />
   <arg name="mujoco_render_shadows" default="false" />
@@ -115,6 +106,9 @@
     <arg name="simulation" value="$(arg simulation)" />
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="robot_id" value="$(arg robot_id)"/>
+    <arg name="livox_enable" value="$(arg livox_enable)"/>
+    <arg name="lidar_sim" value="$(arg lidar_sim)"/>
+    <arg name="mujoco" value="$(arg mujoco)"/>
   </include >
 
   ###########  Servo Bridge  ###########
@@ -151,10 +145,5 @@
   </include>
 
 
-  <include file="$(find bee)/launch/grasp_tracker.launch" if="$(eval arg('launch_grasp_tracker') and not arg('grasp_mode'))">
-    <arg name="robot_ns" value="$(arg robot_ns)"/>
-    <arg name="controller_config" value="$(arg grasp_controller_config)"/>
-    <arg name="base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
-    <arg name="allow_empty_base_frame" value="$(arg mujoco)"/>
-  </include>
+
 </launch>

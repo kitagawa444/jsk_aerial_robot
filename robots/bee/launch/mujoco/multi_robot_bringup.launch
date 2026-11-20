@@ -1,0 +1,63 @@
+<launch>
+  <!-- Simulation convenience only. On hardware, run bringup.launch on each robot. -->
+  <arg name="robot_count" default="3"/>
+  <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
+  <arg name="reference_tracking_config" default=""/>
+  <param name="/use_sim_time" value="true"/>
+
+  <include file="$(find bee)/launch/bringup.launch">
+    <arg name="robot_id" value="1"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+  <include file="$(find bee)/launch/bringup.launch" if="$(eval arg('robot_count') &gt;= 2)">
+    <arg name="robot_id" value="2"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+  <include file="$(find bee)/launch/bringup.launch" if="$(eval arg('robot_count') &gt;= 3)">
+    <arg name="robot_id" value="3"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+  <include file="$(find bee)/launch/bringup.launch" if="$(eval arg('robot_count') &gt;= 4)">
+    <arg name="robot_id" value="4"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+  <include file="$(find bee)/launch/bringup.launch" if="$(eval arg('robot_count') &gt;= 5)">
+    <arg name="robot_id" value="5"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="real_machine" value="false"/>
+    <arg name="simulation" value="true"/>
+    <arg name="mujoco" value="true"/>
+    <arg name="headless" value="true"/>
+    <arg name="launch_mujoco_backend" value="false"/>
+    <arg name="launch_mujoco_controller" value="true"/>
+  </include>
+</launch>

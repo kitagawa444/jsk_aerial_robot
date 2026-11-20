@@ -20,9 +20,8 @@
     <arg name="output_dir" value="$(arg output_dir)"/>
   </include>
 
-  <include file="$(find bee)/launch/multi_robot_bringup.launch">
+  <include file="$(find bee)/launch/mujoco/multi_robot_bringup.launch">
     <arg name="robot_count" value="$(arg robot_count)"/>
-    <arg name="controller_config" value="$(arg controller_config)"/>
   </include>
 
   <include file="$(find bee)/launch/cooperative_grasp.launch">
