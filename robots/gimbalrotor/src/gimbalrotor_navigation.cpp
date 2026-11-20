@@ -64,8 +64,21 @@ void GimbalrotorNavigator::targetBaselinkRotCallback(const geometry_msgs::Quater
   }
 }
 
+void GimbalrotorNavigator::setWorldTargetBaselinkRPY(const geometry_msgs::Vector3& rpy)
+{
+  const tf::Vector3 cog = getTargetRPY();
+  const tf::Quaternion world_cog = tf::createQuaternionFromRPY(cog.x(), cog.y(), cog.z());
+  final_target_baselink_rot_ = world_cog.inverse() * tf::createQuaternionFromRPY(rpy.x, rpy.y, rpy.z);
+  target_omega_.setValue(0, 0, 0);
+}
+
 void GimbalrotorNavigator::targetBaselinkRPYCallback(const geometry_msgs::Vector3StampedConstPtr& msg)
 {
+  if (!final_target_world_frame_.empty() && tf::resolve("", msg->header.frame_id) == tf::resolve("", final_target_world_frame_))
+  {
+    setWorldTargetBaselinkRPY(msg->vector);
+    return;
+  }
   final_target_baselink_rot_.setRPY(msg->vector.x, msg->vector.y, msg->vector.z);
   target_omega_.setValue(0, 0, 0);  // for sure to reset the target angular velocity
 }

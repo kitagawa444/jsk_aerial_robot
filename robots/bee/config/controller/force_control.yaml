@@ -1,0 +1,30 @@
+observer_profiles:
+  hardware: &hardware
+    wrench_estimate_flag: false
+    wrench_estimate_update_rate: 100
+    momentum_observer_force_weight: 10.0
+    momentum_observer_torque_weight: 10.0
+  simulation: &simulation
+    wrench_estimate_flag: true
+    wrench_estimate_update_rate: 100
+    momentum_observer_force_weight: 3.0
+    momentum_observer_torque_weight: 2.5
+<<: *$(arg force_observer_profile)
+
+reference_tracking:
+  thrust_limit: 32.0
+  correction_reserve: 3.0
+  force_kp: [0.4, 0.4, 0.4]
+  force_ki: 0.1
+  force_integral_limit: 0.4
+  velocity_damping: 3.0
+  force_filter_tau: 0.0
+  external_filter_tau: 0.2
+  observer_force_scale: 1.0
+  calibration_duration: 2.0
+  calibration_min_samples: 20
+  input_timeout: 0.3
+  reference_timeout: 0.3
+  maximum_acceleration: 20.0
+  maximum_velocity_error: 0.3
+  velocity_error_duration: 1.0

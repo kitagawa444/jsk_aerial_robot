@@ -1,4 +1,21 @@
 #include <bee/control/bee_controller.h>
+#include <std_srvs/SetBool.h>
+#include <std_msgs/Bool.h>
+#include <mutex>
+#include <bee/BeeCommand.h>
+#include <bee/ControllerStatus.h>
+#include <bee/ForceFeedback.h>
+#include <bee/SetForceControlParameters.h>
+#include <bee/ObserverCalibrationStatus.h>
+#include <std_msgs/Empty.h>
+#include <memory>
+#include <geometry_msgs/Vector3Stamped.h>
+#include <geometry_msgs/WrenchStamped.h>
+#include <nav_msgs/Odometry.h>
+#include <std_msgs/UInt8.h>
+#include <ros/ros.h>
+#include <chrono>
+#include <array>
 
 namespace aerial_robot_control
 {
@@ -85,12 +102,15 @@ void BeeController::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
   pid_reconf_servers_.back()->setCallback(boost::bind(&BeeController::cfgPidCallback, this, _1, _2, indices));
 
   prev_comp_update_time_ = -1;
-  bool grasp_enabled = false;
-  bool grasp_interface_enabled = true;
-  nh_.param("controller/grasp_mode", grasp_enabled, false);
-  nh_.param("controller/grasp_interface_enabled", grasp_interface_enabled, true);
-  if(grasp_interface_enabled)
-    grasp_mode_.reset(new bee::grasp::GraspMode(nh_, ros::NodeHandle(nh_, "grasp"), grasp_enabled));
+  bool reference_enabled = true;
+  nh_.param("controller/reference_enabled", reference_enabled, true);
+  // getMass() is not initialized until the first model/joint-state update.
+  // Derive startup mass from the same robot_description instead of a constant.
+  std::string model_xml;
+  if (!nh_.getParam("robot_description", model_xml))
+    throw std::invalid_argument("Bee reference tracking requires robot_description");
+  reference_tracker_.reset(new bee::control::ReferenceTracker(
+      nh_, ros::NodeHandle(nh_, "controller/reference_tracking"), bee::control::modelMass(model_xml), reference_enabled));
   // PoseLinearController starts the observer thread and ros_control may start
   // calling update() before the most-derived initialize() has returned.  Only
   // publish this flag after all Gimbalrotor/Bee vectors and publishers exist.
@@ -108,9 +128,9 @@ bool BeeController::update()
   aerial_robot_msgs::FlightNav command;
   geometry_msgs::Vector3Stamped attitude;
   bool release = false;
-  if(grasp_mode_ && grasp_mode_->takeCommand(command, attitude, release,
+  if(reference_tracker_ && reference_tracker_->update(command, attitude, release,
                                                bee_navigator_->getModuleState() == SEPARATED))
-    bee_navigator_->applyGraspCommand(command, attitude, release);
+    bee_navigator_->applyBeeCommand(command, attitude, release);
   return GimbalrotorController::update();
 }
 
@@ -581,6 +601,583 @@ void BeeController::ffInterWrenchCallback(const beetle::TaggedWrench& msg)
 }
 
 }  // namespace aerial_robot_control
+
+namespace bee::control
+{
+void ForceConfig::validate() const
+{
+  for (double x : {mass, gravity, thrust_limit})
+    if (!std::isfinite(x) || x <= 0) throw std::invalid_argument("invalid force-control limit");
+  if (!kp.allFinite() || kp.minCoeff() < 0 || correction_reserve >= thrust_limit)
+    throw std::invalid_argument("invalid force gain or thrust reserve");
+  for (double x : {ki, damping, filter_tau, correction_reserve, integral_limit})
+    if (!std::isfinite(x) || x < 0) throw std::invalid_argument("invalid force-control gain");
+}
+
+Vec3 limitThrust(const Vec3& acceleration, const ForceConfig& p)
+{
+  const Vec3 gravity(0, 0, -p.gravity);
+  Vec3 thrust = p.mass * (acceleration - gravity);
+  if (thrust.lpNorm<1>() > p.thrust_limit) thrust *= p.thrust_limit / thrust.lpNorm<1>();
+  return gravity + thrust / p.mass;
+}
+// Observer reports force ON the Bee; target is force BY the Bee. FF and
+// relative-velocity damping bypass the optional force-PI output low-pass filter.
+Vec3 forceTrackingAcceleration(const Vec3& own_acceleration, const Vec3& velocity_error,
+    const Vec3& target, const Vec3& external, const Eigen::Matrix3d& axes,
+    const Vec3& lower, const Vec3& upper, bool bounded,
+    ForceTrackingState& state, double dt, const ForceConfig& p, bool integrate)
+{
+  if (!integrate) state.integral.setZero();
+  const Vec3 error = target + external;
+  Vec3 candidate = state.integral + (integrate ? p.ki * dt : 0) * error;
+  candidate = candidate.cwiseMax(-p.integral_limit).cwiseMin(p.integral_limit);
+  state.unfiltered = axes * p.kp.asDiagonal() * axes.transpose() * error + candidate;
+  if (p.filter_tau > 0)
+    state.filtered += dt / (p.filter_tau + dt) * (state.unfiltered - state.filtered);
+  else state.filtered = state.unfiltered;
+  Vec3 correction = state.filtered + p.damping * velocity_error;
+  const double force = p.mass * correction.lpNorm<1>();
+  state.correction_saturated = force > p.correction_reserve;
+  if (state.correction_saturated) correction *= p.correction_reserve / force;
+  const Vec3 raw = own_acceleration + target / p.mass + correction;
+  Vec3 acceleration = raw;
+  if (bounded) acceleration = axes * (axes.transpose() * raw).cwiseMax(lower).cwiseMin(upper);
+  acceleration = limitThrust(acceleration, p);
+  state.acceleration_limited = (raw - acceleration).norm() >= 1e-9;
+  if (!state.correction_saturated && !state.acceleration_limited) state.integral = candidate;
+  return acceleration;
+}
+
+namespace
+{
+struct Wrench { Vec3 force = Vec3::Zero(), moment = Vec3::Zero(); };
+struct Pose { Vec3 position = Vec3::Zero(); Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity(); };
+
+// Owned by BeeController's generic reference tracker. The ROS callback only
+// queues a request; update/applied are called under the owner's control-loop lock.
+class ObserverCalibration
+{
+public:
+  ObserverCalibration(ros::NodeHandle nh, ros::NodeHandle parameters,
+                      const std::string& cog_frame, const std::string& world_frame)
+  {
+    parameters.param("calibration_duration", duration_, 2.0);
+    parameters.param("calibration_min_samples", min_samples_, 20);
+    if (!std::isfinite(duration_) || duration_ <= 0 || min_samples_ < 2)
+      throw std::invalid_argument("invalid observer calibration duration/sample count");
+    status_.header.frame_id = cog_frame;
+    status_.world_frame = world_frame;
+    pub_ = nh.advertise<bee::ObserverCalibrationStatus>("controller/observer_calibration", 1, true);
+    sub_ = nh.subscribe<std_msgs::Empty>("controller/calibrate_observer", 1,
+        [this](const std_msgs::Empty::ConstPtr&) { requested_.store(true); });
+    publish(bee::ObserverCalibrationStatus::IDLE, "waiting for calibration request");
+  }
+
+  // Returns true exactly once when a manual collection succeeds. No navigation,
+  // mode change, arming, flight-state or contact-state requirement is introduced here.
+  bool update(double wall, double now, double timeout, double wrench_receipt, double wrench_stamp, const Wrench& raw,
+              double cog_receipt, double cog_stamp, const Eigen::Quaterniond& orientation,
+              Wrench& baseline, Vec3& world_baseline)
+  {
+    const auto fresh = [&](double receipt, double stamp) {
+      return receipt > 0 && wall - receipt <= timeout && stamp > 0 &&
+             now - stamp <= timeout && stamp - now <= .05;
+    };
+    const bool valid = fresh(wrench_receipt, wrench_stamp) && fresh(cog_receipt, cog_stamp) &&
+        std::abs(wrench_stamp - cog_stamp) <= timeout && raw.force.allFinite() &&
+        raw.moment.allFinite() && orientation.coeffs().allFinite() &&
+        std::abs(orientation.squaredNorm() - 1) < .05;
+    if (requested_.exchange(false))
+    {
+      if (collecting_)
+        publish(bee::ObserverCalibrationStatus::REJECTED, "calibration already collecting; original request continues");
+      else if (!valid)
+        publish(bee::ObserverCalibrationStatus::REJECTED, "fresh cog odometry and observer wrench required");
+      else
+      {
+        collecting_ = true; start_wall_ = wall; start_ros_ = now;
+        last_stamp_ = wrench_stamp; first_stamp_ = 0;
+        sum_ = Wrench{}; world_sum_.setZero(); samples_ = 0;
+        status_.samples = 0;
+        publish(bee::ObserverCalibrationStatus::COLLECTING, "collecting observer zero-reference samples");
+      }
+    }
+    if (!collecting_) return false;
+    if (!valid || now < start_ros_ || wrench_stamp < last_stamp_ ||
+        wall - start_wall_ > std::max(5 * duration_, duration_ + timeout))
+    {
+      collecting_ = false;
+      publish(bee::ObserverCalibrationStatus::FAILED,
+              "calibration input stale, invalid or clock moved backwards");
+      return false;
+    }
+    if (wrench_stamp > last_stamp_)
+    {
+      if (!samples_) first_stamp_ = wrench_stamp;
+      sum_.force += raw.force; sum_.moment += raw.moment;
+      world_sum_ += orientation.normalized() * raw.force;
+      last_stamp_ = wrench_stamp; ++samples_;
+      status_.samples = samples_;
+    }
+    if (now - start_ros_ < duration_) return false;
+    collecting_ = false;
+    if (samples_ < min_samples_ || last_stamp_ - first_stamp_ < duration_ - timeout)
+    {
+      publish(bee::ObserverCalibrationStatus::FAILED, "insufficient distinct samples or source-time coverage");
+      return false;
+    }
+    baseline.force = sum_.force / samples_;
+    baseline.moment = sum_.moment / samples_;
+    world_baseline = world_sum_ / samples_;
+    if (!baseline.force.allFinite() || !baseline.moment.allFinite() || !world_baseline.allFinite())
+    {
+      publish(bee::ObserverCalibrationStatus::FAILED, "nonfinite calibration average");
+      return false;
+    }
+    // The owner commits first, then calls applied() to publish the shared result.
+    return true;
+  }
+
+  void applied(const Wrench& baseline, const Vec3& world_baseline, unsigned samples,
+               const std::string& detail)
+  {
+    collecting_ = false;
+    status_.calibration_stamp = ros::Time::now();
+    status_.calibration_start_stamp = ros::Time(start_ros_);
+    status_.baseline_cog.force = message(baseline.force);
+    status_.baseline_cog.torque = message(baseline.moment);
+    status_.baseline_world_force = message(world_baseline);
+    status_.samples = samples;
+    publish(bee::ObserverCalibrationStatus::SUCCEEDED, detail);
+  }
+  unsigned samples() const { return samples_; }
+
+private:
+  static geometry_msgs::Vector3 message(const Vec3& v)
+  {
+    geometry_msgs::Vector3 m; m.x = v.x(); m.y = v.y(); m.z = v.z(); return m;
+  }
+  void publish(uint8_t state, const std::string& detail)
+  {
+    status_.header.stamp = ros::Time::now(); status_.state = state; status_.detail = detail;
+    pub_.publish(status_);
+  }
+  ros::Publisher pub_;
+  ros::Subscriber sub_;
+  bee::ObserverCalibrationStatus status_;
+  std::atomic<bool> requested_{false};
+  bool collecting_ = false;
+  double duration_, start_wall_ = 0, start_ros_ = 0, first_stamp_ = 0, last_stamp_ = 0;
+  int min_samples_;
+  unsigned samples_ = 0;
+  Wrench sum_;
+  Vec3 world_sum_ = Vec3::Zero();
+};
+
+double steadyNow()
+{
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+Vec3 vec(const geometry_msgs::Vector3& v) { return Vec3(v.x, v.y, v.z); }
+geometry_msgs::Vector3 message(const Vec3& v)
+{
+  geometry_msgs::Vector3 m;
+  m.x = v.x(); m.y = v.y(); m.z = v.z();
+  return m;
+}
+std::string frame(std::string value)
+{
+  while (!value.empty() && value.front() == '/') value.erase(value.begin());
+  return value;
+}
+}
+
+// One instance per Bee. No access to other robots or the object pose topic.
+// It receives generic references and uses only local odometry/observer data.
+class ReferenceTracker::Impl
+{
+public:
+  Impl(ros::NodeHandle nh, ros::NodeHandle parameters, double model_mass, bool enabled)
+    : nh_(nh), priv_(parameters), enabled_(enabled)
+  {
+    config_.mass = model_mass;
+    priv_.setParam("model_mass", config_.mass);  // Diagnostic; never read as configuration.
+    priv_.setParam("gravity", config_.gravity);
+    priv_.param("thrust_limit", config_.thrust_limit, config_.thrust_limit);
+    priv_.param("correction_reserve", config_.correction_reserve, config_.correction_reserve);
+    std::vector<double> kp;
+    if (priv_.getParam("force_kp", kp))
+    {
+      if (kp.size() != 3) throw std::invalid_argument("force_kp must have 3 entries");
+      config_.kp = Vec3(kp[0], kp[1], kp[2]);
+    }
+    priv_.param("force_ki", config_.ki, config_.ki);
+    priv_.param("force_integral_limit", config_.integral_limit, config_.integral_limit);
+    priv_.param("velocity_damping", config_.damping, config_.damping);
+    priv_.param("force_filter_tau", config_.filter_tau, config_.filter_tau);
+    config_.validate();
+    priv_.param("external_filter_tau", external_tau_, .2);
+    priv_.param("observer_force_scale", observer_force_scale_, 1.0);
+    priv_.param("input_timeout", input_timeout_, .3);
+    priv_.param("reference_timeout", reference_timeout_, .3);
+    priv_.param("maximum_acceleration", max_acceleration_, 20.0);
+    priv_.param("maximum_velocity_error", max_velocity_error_, .3);
+    priv_.param("velocity_error_duration", velocity_error_duration_, 1.0);
+    priv_.param("allow_empty_base_frame", allow_empty_base_frame_, false);
+    priv_.param("world_frame", world_, std::string("world"));
+    priv_.param("cog_frame", cog_frame_, frame(nh_.getNamespace()) + "/cog");
+    if (!std::isfinite(external_tau_) || external_tau_ < 0)
+      throw std::invalid_argument("invalid external filter time constant");
+    for (double value : {input_timeout_, reference_timeout_, max_acceleration_,
+                         max_velocity_error_, velocity_error_duration_})
+      if (!std::isfinite(value) || value <= 0) throw std::invalid_argument("invalid tracking gain or limit");
+    if (!std::isfinite(observer_force_scale_) || observer_force_scale_ == 0)
+      throw std::invalid_argument("invalid observer force scale");
+    std::string base_topic, cog_topic;
+    priv_.param("base_topic", base_topic, std::string("uav/baselink/odom"));
+    priv_.param("cog_topic", cog_topic, std::string("uav/cog/odom"));
+    base_sub_ = nh_.subscribe<nav_msgs::Odometry>(base_topic, 1, [this](const nav_msgs::Odometry::ConstPtr& m) {
+      odometry(*m, false);
+    });
+    cog_sub_ = nh_.subscribe<nav_msgs::Odometry>(cog_topic, 1, [this](const nav_msgs::Odometry::ConstPtr& m) {
+      odometry(*m, true);
+    });
+    wrench_sub_ = nh_.subscribe<geometry_msgs::WrenchStamped>("estimated_external_wrench", 1,
+        [this](const geometry_msgs::WrenchStamped::ConstPtr& m) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      raw_force_ = vec(m->wrench.force);
+      raw_moment_ = vec(m->wrench.torque);
+      accept(2, m->header.stamp, raw_force_.allFinite() && frame(m->header.frame_id) == frame(cog_frame_));
+    });
+    state_sub_ = nh_.subscribe<std_msgs::UInt8>("flight_state", 1, [this](const std_msgs::UInt8::ConstPtr& m) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      flight_state_ = m->data; receipt_[3] = steadyNow();
+    });
+    emergency_sub_ = nh_.subscribe<std_msgs::Empty>("/bee_cooperative_grasp/emergency_stop", 1,
+        [this](const std_msgs::Empty::ConstPtr&) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (enabled_ && fault_.empty()) fail("operator emergency stop");
+        });
+    ref_sub_ = nh_.subscribe("command", 1, &Impl::reference, this);
+    mode_service_ = nh_.advertiseService("controller/set_reference_mode", &Impl::setMode, this);
+    mode_pub_ = nh_.advertise<std_msgs::Bool>("controller/reference_enabled", 1, true);
+    publishMode();
+    status_pub_ = nh_.advertise<bee::ControllerStatus>("controller/tracking_status", 1);
+    feedback_pub_ = nh_.advertise<bee::ForceFeedback>("controller/force_feedback", 1);
+    parameters_pub_ = nh_.advertise<bee::ForceControlParameters>("controller/force_control_parameters", 1, true);
+    parameters_service_ = nh_.advertiseService("controller/set_force_control_parameters", &Impl::setForceParameters, this);
+    parameters_pub_.publish(forceParameters());
+    calibration_ = std::make_unique<ObserverCalibration>(nh_, priv_, cog_frame_, world_);
+
+  }
+  ~Impl() = default;
+  bool update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude, bool& release, bool available)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    controller_available_ = available;
+    // One update path: the existing BeeController loop also advances force feedback.
+    tick();
+    if (!pending_) return false;
+    nav = command_; attitude = attitude_; release = release_;
+    pending_ = false;
+    return true;
+  }
+private:
+  bee::ForceControlParameters forceParameters() const
+  {
+    bee::ForceControlParameters p;
+    p.force_kp = message(config_.kp); p.force_ki = config_.ki;
+    p.force_integral_limit = config_.integral_limit; p.velocity_damping = config_.damping;
+    p.force_filter_tau = config_.filter_tau; p.external_filter_tau = external_tau_;
+    return p;
+  }
+  bool setForceParameters(bee::SetForceControlParameters::Request& req,
+                          bee::SetForceControlParameters::Response& res)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto& p = req.parameters;
+    ForceConfig candidate = config_;
+    candidate.kp = vec(p.force_kp); candidate.ki = p.force_ki;
+    candidate.integral_limit = p.force_integral_limit; candidate.damping = p.velocity_damping;
+    candidate.filter_tau = p.force_filter_tau;
+    try
+    {
+      candidate.validate();
+      if (!std::isfinite(p.external_filter_tau) || p.external_filter_tau < 0)
+        throw std::invalid_argument("invalid external filter time constant");
+    }
+    catch (const std::invalid_argument& e)
+    {
+      res.success = false; res.message = e.what(); res.applied = forceParameters();
+      return true;  // Transport succeeded; rejected settings have no side effects.
+    }
+    config_ = candidate; external_tau_ = p.external_filter_tau;
+    if (req.reset_force_feedback) force_state_.reset();
+    else
+    {
+      // I stores an acceleration contribution, not the unscaled error integral.
+      // Preserve it across gain changes, clamp to a reduced limit, and clear
+      // it when I is disabled. Retain both LPF outputs to avoid resetting them.
+      force_state_.integral = force_state_.integral.cwiseMax(-config_.integral_limit)
+          .cwiseMin(config_.integral_limit);
+      if (config_.ki == 0) force_state_.integral.setZero();
+    }
+    res.success = true; res.message = "force parameters applied; used on the next control update";
+    res.applied = forceParameters(); parameters_pub_.publish(res.applied);
+    return true;
+  }
+  void publishMode()
+  {
+    std_msgs::Bool m; m.data = enabled_; mode_pub_.publish(m);
+    nh_.setParam("controller/reference_enabled", enabled_);
+  }
+  bool setMode(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (req.data != enabled_)
+    {
+      if (!req.data) stop();
+      enabled_ = req.data;
+      active_ = false;  // Calibration persists until explicitly replaced.
+      error_time_ = 0;
+      // An explicit off/on cycle starts a new session; a reference alone cannot
+      // clear a fault or revive an interrupted reference stream.
+      if (enabled_) { fault_.clear(); reference_receipt_ = 0; }
+      publishMode();
+    }
+    res.success = true;
+    res.message = enabled_ ? "reference tracking enabled; waiting for fresh references" : "reference tracking disabled";
+    return true;
+  }
+  void accept(int i, const ros::Time& stamp, bool good)
+  {
+    receipt_[i] = good ? steadyNow() : 0;
+    source_[i] = stamp.toSec();
+  }
+  void odometry(const nav_msgs::Odometry& m, bool cog)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Pose p;
+    p.position = Vec3(m.pose.pose.position.x, m.pose.pose.position.y, m.pose.pose.position.z);
+    p.orientation = Eigen::Quaterniond(m.pose.pose.orientation.w, m.pose.pose.orientation.x,
+                                      m.pose.pose.orientation.y, m.pose.pose.orientation.z);
+    const bool valid = p.position.allFinite() && p.orientation.coeffs().allFinite() &&
+        std::abs(p.orientation.squaredNorm() - 1) < .05 && vec(m.twist.twist.linear).allFinite() &&
+        vec(m.twist.twist.angular).allFinite() &&
+        (frame(m.header.frame_id) == frame(world_) || (!cog && allow_empty_base_frame_ && m.header.frame_id.empty())) &&
+        (!cog || frame(m.child_frame_id) == frame(cog_frame_));
+    accept(cog ? 1 : 0, m.header.stamp, valid);
+    if (!valid) return;
+    p.orientation.normalize();
+    if (cog) cog_ = p;
+    else
+    {
+      base_ = p;
+      velocity_ = vec(m.twist.twist.linear);
+      omega_ = vec(m.twist.twist.angular);
+    }
+  }
+  bool inputsReady(bool enable_force_control) const
+  {
+    const double now = steadyNow(), sim = ros::Time::now().toSec();
+    if (!controller_available_) return false;
+    for (int i = 0; i < 4; ++i)
+    {
+      if (i == 2 && !enable_force_control) continue;
+      if (receipt_[i] <= 0 || now - receipt_[i] > input_timeout_ ||
+          (i < 3 && (source_[i] <= 0 || sim - source_[i] > input_timeout_ || source_[i] - sim > .05)))
+        return false;
+    }
+    return flight_state_ == 5;
+  }
+  void reference(const bee::BeeCommand::ConstPtr& m)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!enabled_) return;
+    if (m->stop)
+    {
+      stop(); active_ = false;
+      return;
+    }
+    if (!fault_.empty()) return;  // restart required after a liveness/safety fault
+    const auto& n = m->navigation;
+    const auto translationMode = [](int mode) { return mode >= 0 && mode <= 4; };
+    bool finite = true;
+    for (double x : {n.target_pos_x, n.target_pos_y, double(n.target_pos_z), double(n.target_pos_diff_z),
+          double(n.target_vel_x), double(n.target_vel_y), double(n.target_vel_z),
+          double(n.target_acc_x), double(n.target_acc_y), double(n.target_acc_z),
+          double(n.target_roll), double(n.target_pitch), double(n.target_yaw),
+          double(n.target_omega_x), double(n.target_omega_y), double(n.target_omega_z)})
+      finite = finite && std::isfinite(x);
+    const Eigen::Quaterniond q(m->acceleration_orientation.w, m->acceleration_orientation.x,
+                              m->acceleration_orientation.y, m->acceleration_orientation.z);
+    const Vec3 input_acceleration(n.pos_xy_nav_mode == n.ACC_MODE ? n.target_acc_x : 0,
+        n.pos_xy_nav_mode == n.ACC_MODE ? n.target_acc_y : 0,
+        n.pos_z_nav_mode == n.ACC_MODE ? n.target_acc_z : 0);
+    const bool valid = input_acceleration.norm() <= max_acceleration_ && frame(m->header.frame_id) == frame(world_) && finite &&
+        vec(m->velocity).allFinite() && vec(m->velocity_point).allFinite() &&
+        vec(m->baselink_rpy).allFinite() && vec(m->force).allFinite() &&
+        translationMode(n.pos_xy_nav_mode) && translationMode(n.pos_z_nav_mode) &&
+        n.yaw_nav_mode == n.NO_NAVIGATION && n.roll_nav_mode == n.NO_NAVIGATION && n.pitch_nav_mode == n.NO_NAVIGATION &&
+        (n.control_frame == n.WORLD_FRAME || (!m->enable_force_control && n.control_frame == n.LOCAL_FRAME)) &&
+        (n.target == n.COG || (!m->enable_force_control && n.target == n.BASELINK)) &&
+        (!m->enable_force_control || ((n.pos_xy_nav_mode == n.ACC_MODE || n.pos_xy_nav_mode == n.POS_VEL_MODE) &&
+          (n.pos_z_nav_mode == n.ACC_MODE || n.pos_z_nav_mode == n.POS_MODE))) &&
+        (!m->acceleration_bounds || (q.coeffs().allFinite() && std::abs(q.squaredNorm()-1) < 1e-3 &&
+            vec(m->acceleration_min).allFinite() && vec(m->acceleration_max).allFinite() &&
+            (vec(m->acceleration_min).array() <= vec(m->acceleration_max).array()).all()));
+    if (!valid) { fail("invalid reference"); return; }
+    if (!active_) last_time_ = ros::Time::now().toSec();
+    reference_ = *m;
+    reference_receipt_ = steadyNow();
+    active_ = true;
+  }
+  void stop()
+  {
+    force_state_.reset(); force_control_active_ = false;
+    if (!active_) return;
+    aerial_robot_msgs::FlightNav m;
+    m.header.stamp = ros::Time::now(); m.target = m.COG; m.control_frame = m.WORLD_FRAME;
+    m.pos_xy_nav_mode = m.pos_z_nav_mode = m.VEL_MODE;
+    command_ = m; pending_ = true; release_ = true;
+  }
+  void fail(const std::string& reason)
+  {
+    if (fault_.empty()) ROS_ERROR_STREAM("Bee reference tracking: " << reason);
+    fault_ = reason;
+    stop(); active_ = false;
+  }
+  void tick()
+  {
+    const double now = ros::Time::now().toSec();
+    Wrench baseline;
+    Vec3 world_baseline;
+    if (calibration_->update(steadyNow(), now, input_timeout_,
+          receipt_[2], source_[2], Wrench{raw_force_, raw_moment_},
+          receipt_[1], source_[1], cog_.orientation, baseline, world_baseline))
+    {
+      bias_ = baseline.force; calibrated_ = true;
+      external_.setZero(); force_state_.reset();
+      calibration_->applied(baseline, world_baseline, calibration_->samples(), "topic calibration applied");
+    }
+    const bool ready = inputsReady(active_ && reference_.enable_force_control);
+    bee::ControllerStatus status = last_status_;
+    status.header.stamp = ros::Time::now(); status.header.frame_id = world_;
+    if (active_)
+    {
+      const double age = now - reference_.header.stamp.toSec();
+      if (!ready) fail("local state missing, stale or not HOVER");
+      else if (steadyNow() - reference_receipt_ > reference_timeout_ || age > reference_timeout_ || age < -.05)
+        fail("central reference timeout");
+      else if (now < last_time_ || now - last_time_ > input_timeout_) fail("control clock discontinuity");
+      else if (now > last_time_)
+      {
+        const double dt = std::min(.05, now - last_time_);
+        last_time_ = now;
+        control(dt, status);
+      }
+    }
+    status.ready = enabled_ && ready && fault_.empty(); status.active = active_;
+    status.calibrated = calibrated_; status.fault = fault_;
+    last_status_ = status; status_pub_.publish(status);
+  }
+  void control(double dt, bee::ControllerStatus& status)
+  {
+    const auto& r = reference_;
+    auto nav = r.navigation;
+    nav.header.stamp = ros::Time::now();
+    if (receipt_[2] > 0 && steadyNow() - receipt_[2] <= input_timeout_)
+    {
+      const Vec3 measured = observer_force_scale_ * (cog_.orientation * (raw_force_ - bias_));
+      external_ += dt / (external_tau_ + dt) * (measured - external_);
+    }
+    if (r.enable_force_control)
+    {
+      if (!force_control_active_ || r.reset_force_feedback) force_state_.reset();
+      const Vec3 offset = base_.orientation * vec(r.velocity_point);
+      const Vec3 point_velocity = velocity_ + (base_.orientation * omega_).cross(offset);
+      const Vec3 error = vec(r.velocity) - point_velocity;
+      Eigen::Matrix3d axes = Eigen::Matrix3d::Identity();
+      if (r.acceleration_bounds)
+        axes = Eigen::Quaterniond(r.acceleration_orientation.w, r.acceleration_orientation.x,
+            r.acceleration_orientation.y, r.acceleration_orientation.z).normalized().toRotationMatrix();
+      const Vec3 acceleration = forceTrackingAcceleration(
+          Vec3(nav.pos_xy_nav_mode == nav.ACC_MODE ? nav.target_acc_x : 0.0,
+               nav.pos_xy_nav_mode == nav.ACC_MODE ? nav.target_acc_y : 0.0, nav.pos_z_nav_mode == nav.ACC_MODE ? nav.target_acc_z : 0.0),
+          error, vec(r.force), external_,
+          axes, vec(r.acceleration_min), vec(r.acceleration_max), r.acceleration_bounds,
+          force_state_, dt, config_, r.force_integral_enabled);
+      bee::ForceFeedback diagnostic;
+      diagnostic.header = nav.header; diagnostic.header.frame_id = world_;
+      diagnostic.force_error = message(vec(r.force) + external_);
+      diagnostic.pi_unfiltered = message(force_state_.unfiltered);
+      diagnostic.pi_filtered = message(force_state_.filtered);
+      diagnostic.integral = message(force_state_.integral);
+      diagnostic.velocity_damping = message(config_.damping * error);
+      diagnostic.correction_saturated = force_state_.correction_saturated;
+      diagnostic.acceleration_limited = force_state_.acceleration_limited;
+      diagnostic.state_reset = r.reset_force_feedback;
+      feedback_pub_.publish(diagnostic);
+      if (r.reset_force_feedback) force_state_.reset();
+      nav.target_acc_x = acceleration.x(); nav.target_acc_y = acceleration.y(); nav.target_acc_z = acceleration.z();
+      error_time_ = error.norm() > max_velocity_error_ ? error_time_ + dt : 0;
+      if (!acceleration.allFinite() || acceleration.norm() > max_acceleration_ || error_time_ > velocity_error_duration_)
+      { fail("excessive acceleration or persistent velocity error"); return; }
+      status.velocity = message(point_velocity); status.velocity_error = message(error);
+      status.external_force = message(external_); status.commanded_acceleration = message(acceleration);
+    }
+    else
+    {
+      error_time_ = 0; force_state_.reset();
+      if (nav.pos_z_nav_mode == nav.POS_MODE) nav.target_acc_z = 0;
+      if (nav.pos_xy_nav_mode == nav.POS_VEL_MODE) nav.target_acc_x = nav.target_acc_y = 0;
+      status.velocity = message(velocity_); status.velocity_error = geometry_msgs::Vector3{};
+      status.external_force = message(external_);
+      status.commanded_acceleration = message(Vec3(nav.target_acc_x, nav.target_acc_y, nav.target_acc_z));
+    }
+    force_control_active_ = r.enable_force_control;
+    geometry_msgs::Vector3Stamped attitude;
+    attitude.header = nav.header; attitude.header.frame_id = world_; attitude.vector = r.baselink_rpy;
+    command_ = nav; attitude_ = attitude; pending_ = true; release_ = false;
+  }
+  ros::NodeHandle nh_, priv_;
+  ros::Subscriber base_sub_, cog_sub_, wrench_sub_, state_sub_, ref_sub_, emergency_sub_;
+  ros::Publisher status_pub_, mode_pub_, feedback_pub_, parameters_pub_;
+  ros::ServiceServer mode_service_, parameters_service_;
+  std::mutex mutex_;
+  bool enabled_ = false, pending_ = false, release_ = false, controller_available_ = false;
+  aerial_robot_msgs::FlightNav command_;
+  geometry_msgs::Vector3Stamped attitude_;
+  bool force_control_active_ = false;
+  ForceTrackingState force_state_;
+  std::unique_ptr<ObserverCalibration> calibration_;
+  ForceConfig config_;
+  bee::ControllerStatus last_status_;
+  bee::BeeCommand reference_;
+  Pose base_, cog_;
+  Vec3 velocity_ = Vec3::Zero(), omega_ = Vec3::Zero(), raw_force_ = Vec3::Zero();
+  Vec3 bias_ = Vec3::Zero();
+  Vec3 external_ = Vec3::Zero(), raw_moment_ = Vec3::Zero();
+  std::array<double, 4> receipt_{};
+  std::array<double, 3> source_{};
+  std::string world_, cog_frame_, fault_;
+  bool allow_empty_base_frame_ = false, active_ = false, calibrated_ = false;
+  int flight_state_ = 0;
+  double reference_receipt_ = 0, last_time_ = 0, error_time_ = 0;
+  double external_tau_, observer_force_scale_, input_timeout_, reference_timeout_, max_acceleration_;
+  double max_velocity_error_, velocity_error_duration_;
+};
+
+ReferenceTracker::ReferenceTracker(ros::NodeHandle nh, ros::NodeHandle parameters, double model_mass, bool enabled)
+  : impl_(new Impl(nh, parameters, model_mass, enabled)) {}
+ReferenceTracker::~ReferenceTracker() = default;
+bool ReferenceTracker::update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude,
+                            bool& release, bool available)
+{
+  return impl_->update(nav, attitude, release, available);
+}
+}
 
 /* plugin registration */
 #include <pluginlib/class_list_macros.h>

@@ -1,6 +1,7 @@
 // -*- mode: c++ -*-
 
 #include <bee/bee_navigation.h>
+#include <algorithm>
 #include <aerial_robot_control/util/joy_parser.h>
 
 using namespace aerial_robot_model;
@@ -36,6 +37,7 @@ void BeeNavigator::initialize(ros::NodeHandle nh, ros::NodeHandle nhp,
                               boost::shared_ptr<aerial_robot_model::RobotModel> robot_model,
                               boost::shared_ptr<aerial_robot_estimation::StateEstimator> estimator, double loop_du)
 {
+  nh.param("controller/reference_tracking/world_frame", final_target_world_frame_, std::string("world"));
   GimbalrotorNavigator::initialize(nh, nhp, robot_model, estimator, loop_du);
   nh_ = nh;
   nhp_ = nhp;
@@ -58,12 +60,6 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
 {
   auto copied_joy_msg = boost::make_shared<sensor_msgs::Joy>(*joy_msg);
 
-  if (joy_duplicated_flag_)
-  {
-    BaseNavigator::joyStickControl(copied_joy_msg);
-    return;
-  }
-
   sensor_msgs::Joy joy_cmd = joyParse(*joy_msg);
   if (joy_cmd.axes.size() == 0 || joy_cmd.buttons.size() == 0)
   {
@@ -72,16 +68,29 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
     return;
   }
 
-  if (joy_cmd.buttons[JOY_BUTTON_REAR_LEFT_1] == 1 && joy_cmd.buttons[JOY_BUTTON_REAR_RIGHT_1] == 1)
+  if (joy_cmd.buttons[JOY_BUTTON_STICK_LEFT] == 1 && joy_cmd.buttons[JOY_BUTTON_STICK_RIGHT] == 1)
   {
-    tf::Vector3 target_roll_pitch;
-    target_roll_pitch.setX(0.0);
-    target_roll_pitch.setY(0.0);
-    setFinalTargetBaselinkRPY(target_roll_pitch);
-    ROS_INFO_STREAM("Set target base link rot to horizontal pose.");
+    if (std::count(joy_cmd.buttons.begin(), joy_cmd.buttons.end(), 1) != 2)
+    {
+      BaseNavigator::joyStickControl(copied_joy_msg);
+      return;
+    }
+    std::lock_guard<std::mutex> lock(reference_command_mutex_);
+    if (getNaviState() == HOVER_STATE && getModuleState() == SEPARATED && !reference_command_active_)
+    {
+      geometry_msgs::Vector3 level;
+      level.z = estimator_->getEuler(Frame::BASELINK, estimate_mode_).z();
+      setWorldTargetBaselinkRPY(level);
+    }
     return;
   }
-  else if (joy_cmd.buttons[JOY_BUTTON_REAR_LEFT_1] == 1)
+  if (joy_duplicated_flag_)
+  {
+    BaseNavigator::joyStickControl(copied_joy_msg);
+    return;
+  }
+
+  if (joy_cmd.buttons[JOY_BUTTON_REAR_LEFT_1] == 1 && !joy_cmd.buttons[JOY_BUTTON_REAR_RIGHT_1])
   {
     tf::Vector3 target_roll_pitch = getFinalTargetBaselinkRPY();
 
@@ -149,25 +158,40 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
 
 void BeeNavigator::naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg)
 {
-  std::lock_guard<std::mutex> lock(grasp_command_mutex_);
-  if (grasp_command_active_) return;
+  std::lock_guard<std::mutex> lock(reference_command_mutex_);
+  if (reference_command_active_) return;
   processNavigationCommand(msg);
 }
 
-void BeeNavigator::applyGraspCommand(const aerial_robot_msgs::FlightNav& command,
+void BeeNavigator::applyBeeCommand(const aerial_robot_msgs::FlightNav& command,
                                      const geometry_msgs::Vector3Stamped& attitude, bool release)
 {
-  std::lock_guard<std::mutex> lock(grasp_command_mutex_);
-  // Never overwrite takeoff, landing or disarmed navigation with a grasp command.
+  std::lock_guard<std::mutex> lock(reference_command_mutex_);
+  // Never overwrite takeoff, landing or disarmed navigation with an upper-level reference.
   if (getNaviState() != HOVER_STATE || getModuleState() != SEPARATED)
   {
-    grasp_command_active_ = false;
+    reference_command_active_ = false;
     return;
   }
-  grasp_command_active_ = !release;
+  if (release)
+  {
+    reference_command_active_ = false;
+    gps_waypoint_ = vel_based_waypoint_ = trajectory_mode_ = false;
+    setTargetXyFromCurrentState();
+    setTargetZFromCurrentState();
+    setTargetYawFromCurrentState();
+    return;
+  }
+  reference_command_active_ = true;
   processNavigationCommand(boost::make_shared<aerial_robot_msgs::FlightNav>(command));
-  if (!release)
-    setFinalTargetBaselinkRPY(tf::Vector3(attitude.vector.x, attitude.vector.y, attitude.vector.z));
+  if (command.pos_xy_nav_mode == command.POS_VEL_MODE)
+  {
+    setTargetAccX(command.target_acc_x);
+    setTargetAccY(command.target_acc_y);
+  }
+  if (command.pos_z_nav_mode == command.POS_MODE)
+    setTargetAccZ(command.target_acc_z);
+  setWorldTargetBaselinkRPY(attitude.vector);
 }
 
 void BeeNavigator::processNavigationCommand(const aerial_robot_msgs::FlightNavConstPtr& msg)

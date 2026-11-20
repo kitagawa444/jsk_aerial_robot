@@ -1,4 +1,29 @@
 #include <bee/model/bee_robot_model.h>
+#include <urdf/model.h>
+#include <cmath>
+#include <stdexcept>
+
+namespace bee::control
+{
+// Match RobotModel/KDL: the dummy root link's inertia is not supported by KDL.
+// Fixed and moving child links both contribute, including any modelled feet.
+double modelMass(const std::string& xml)
+{
+  urdf::Model model;
+  if (!model.initString(xml)) throw std::invalid_argument("invalid robot_description");
+  double mass = 0;
+  for (const auto& entry : model.links_)
+  {
+    const auto& link = entry.second;
+    if (link == model.getRoot() || !link->inertial) continue;
+    const double m = link->inertial->mass;
+    if (!std::isfinite(m) || m < 0) throw std::invalid_argument("invalid URDF link mass");
+    mass += m;
+  }
+  if (!std::isfinite(mass) || mass <= 0) throw std::invalid_argument("URDF has no positive body mass");
+  return mass;
+}
+}
 
 BeeRobotModel::BeeRobotModel(bool init_with_rosparam, bool verbose, double fc_t_min_thre, double epsilon) :
   GimbalrotorRobotModel(init_with_rosparam, verbose, fc_t_min_thre, epsilon)

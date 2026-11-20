@@ -1,4 +1,5 @@
 #include <aerial_robot_model/model/aerial_robot_model.h>
+#include <aerial_robot_model/model/gravity.h>
 
 namespace aerial_robot_model {
 
@@ -24,9 +25,9 @@ namespace aerial_robot_model {
   // Ref: Fundamental Gravity Value in Japan
   // https://www.jstage.jst.go.jp/article/sokuchi1954/16/3/16_3_169/_pdf/-char/en
   gravity_.resize(6);
-  gravity_ << 0, 0, 9.798015, 0, 0, 0;
+  gravity_ << 0, 0, kGravity, 0, 0, 0;
   gravity_3d_.resize(3);
-  gravity_3d_ << 0, 0, 9.798015;
+  gravity_3d_ << 0, 0, kGravity;
 
   kinematicsInit();
   stabilityInit();

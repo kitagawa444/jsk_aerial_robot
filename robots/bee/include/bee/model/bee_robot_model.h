@@ -4,6 +4,11 @@
 
 #include <gimbalrotor/model/gimbalrotor_robot_model.h>
 
+namespace bee::control
+{
+double modelMass(const std::string& xml);
+}
+
 using namespace aerial_robot_model;
 
 enum module_state

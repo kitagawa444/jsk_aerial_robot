@@ -17,12 +17,15 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   std_msgs
   std_srvs
+  tf2_ros
+  urdf
   )
 
 find_package(Eigen3 REQUIRED)
 find_package(Threads REQUIRED)
 
-add_message_files(FILES GraspReference.msg GraspTrackingStatus.msg)
+add_message_files(FILES GraspReference.msg GraspTrackingStatus.msg BeeCommand.msg ControllerStatus.msg ForceFeedback.msg ObserverCalibrationStatus.msg ForceControlParameters.msg)
+add_service_files(FILES SetForceControlParameters.srv)
 generate_messages(
   DEPENDENCIES
   std_msgs
@@ -46,8 +49,8 @@ add_library(bee_sensor_pluginlib  src/sensor/imu.cpp)
 target_link_libraries(bee_sensor_pluginlib ${catkin_LIBRARIES})
 add_dependencies(bee_sensor_pluginlib aerial_robot_msgs_generate_messages_cpp spinal_generate_messages_cpp)
 
-add_library(bee_controller src/control/bee_controller.cpp src/control/grasp_mode.cpp)
-target_link_libraries(bee_controller bee_sensor_pluginlib bee_robot_model bee_navigation bee_cooperative_grasp ${catkin_LIBRARIES})
+add_library(bee_controller src/control/bee_controller.cpp)
+target_link_libraries(bee_controller bee_robot_model bee_navigation ${catkin_LIBRARIES})
 add_dependencies(bee_controller ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 add_library(bee_robot_model src/model/bee_robot_model.cpp)
@@ -76,6 +79,9 @@ target_link_libraries(bee_grasp_tracker_node bee_cooperative_grasp ${catkin_LIBR
 add_dependencies(bee_grasp_tracker_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 if(CATKIN_ENABLE_TESTING)
+  add_executable(reference_tracker_harness EXCLUDE_FROM_ALL test/reference_tracker_harness.cpp)
+  target_link_libraries(reference_tracker_harness bee_controller ${catkin_LIBRARIES})
+  add_dependencies(reference_tracker_harness ${${PROJECT_NAME}_EXPORTED_TARGETS})
   catkin_add_gtest(test_cooperative_grasp test/test_cooperative_grasp.cpp)
   if(TARGET test_cooperative_grasp)
     target_link_libraries(test_cooperative_grasp bee_cooperative_grasp)
@@ -89,7 +95,7 @@ install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigati
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(DIRECTORY include/bee/cooperative_grasp include/bee/control
+install(DIRECTORY include/bee/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 

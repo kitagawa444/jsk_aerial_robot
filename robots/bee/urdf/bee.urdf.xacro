@@ -67,6 +67,17 @@
       <axis xyz="0 0 1"/>
     </joint>
 
+    <!-- Geometry-only frame, published by robot_state_publisher even without
+         the grasp controller. No mass, collision or visual geometry. -->
+    <xacro:property name="grasp_geometry" value="${xacro.load_yaml('$(find bee)/config/contact_point.yaml')}"/>
+    <xacro:property name="grasp_offset" value="${grasp_geometry['contact_offset']}"/>
+    <link name="grasp_contact_point"/>
+    <joint name="grasp_contact_point_joint" type="fixed">
+      <parent link="fc"/>
+      <child link="grasp_contact_point"/>
+      <origin xyz="${grasp_offset[0]} ${grasp_offset[1]} ${grasp_offset[2]}" rpy="0 0 0"/>
+    </joint>
+
     ## rotor arms
     <link name="rotor_arm${child1}">
       <inertial>

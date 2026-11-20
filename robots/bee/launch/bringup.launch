@@ -9,6 +9,11 @@
   <!-- Legacy standalone tracker, retained for comparison only. -->
   <arg name="launch_grasp_tracker" default="false"/>
   <arg name="grasp_controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
+  <arg name="force_observer" default="false" />
+  <arg name="gravity_compensation" default="$(arg grasp_gravity_compensation)" />
+  <arg name="force_observer_profile" value="$(eval 'simulation' if arg('simulation') else 'hardware')"/>
+  <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
+  <arg name="reference_tracking_config" default=""/>
   <arg name="control_mode" default="0" />
   <arg name="estimate_mode"  default= "1" />
   <arg name="sim_estimate_mode"  default= "2" />
@@ -41,13 +46,11 @@
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
-    <param name="controller/grasp_mode" value="$(arg grasp_mode)"/>
-    <param name="controller/grasp_interface_enabled"
-           value="$(eval arg('grasp_mode') or not arg('launch_grasp_tracker'))"/>
-    <rosparam command="load" file="$(arg grasp_controller_config)" ns="grasp"/>
-    <param name="grasp/base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
-    <param name="grasp/allow_empty_base_frame" value="$(arg mujoco)"/>
-    <param name="grasp/cog_frame" value="$(arg robot_ns)/cog"/>
+    <rosparam command="load" file="$(arg force_control_config)" ns="controller" subst_value="true"/>
+    <rosparam if="$(eval arg('reference_tracking_config') != '')" command="load" file="$(arg reference_tracking_config)" ns="controller/reference_tracking"/>
+    <param name="controller/reference_tracking/base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
+    <param name="controller/reference_tracking/allow_empty_base_frame" value="$(arg mujoco)"/>
+    <param name="controller/reference_tracking/cog_frame" value="$(arg robot_ns)/cog"/>
 
     # EGOMOTION_ESTIMATE = 0
     # EXPERIMENT_ESTIMATE = 1. for unstable mocap, use this mode
@@ -72,8 +75,10 @@
    ###########  Control  ###########
    <rosparam file="$(arg config_dir)/BeeControl.yaml" command="load" if="$(eval not simulation)"/>
    <rosparam file="$(arg config_dir)/BeeControl_sim.yaml" command="load" if="$(eval simulation)"/>
+   <param name="controller/wrench_estimate_flag" value="true"
+          if="$(eval arg('force_observer') and not arg('simulation'))"/>
    <param name="controller/gravity_compensation" value="true"
-          if="$(eval arg('grasp_gravity_compensation') and not arg('simulation'))"/>
+          if="$(eval arg('gravity_compensation') and not arg('simulation'))"/>
    ###########  Sensor Fusion  ###########
    <rosparam file="$(arg config_dir)/StateEstimation.yaml" command="load" />
    <rosparam file="$(arg config_dir)/Simulation.yaml" command="load" if="$(eval arg('simulation') and not arg('real_machine'))"/>

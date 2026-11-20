@@ -1,0 +1,9 @@
+# Atomically replace the full set; independent of reference mode/contact/phase.
+bee/ForceControlParameters parameters
+# Clear PI integral/output-filter state. Observer baseline/filter are retained.
+bool reset_force_feedback
+---
+bool success
+string message
+# Actual active values, including on rejection (previous set remains active).
+bee/ForceControlParameters applied

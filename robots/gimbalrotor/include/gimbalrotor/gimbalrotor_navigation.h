@@ -38,6 +38,8 @@ public:
   void forceSetTargetBaselinkRPY(tf::Vector3 target_baselink_rpy);
 
 protected:
+  std::string final_target_world_frame_;
+  void setWorldTargetBaselinkRPY(const geometry_msgs::Vector3& rpy);
   void rosParamInit() override;
   virtual void setFinalTargetBaselinkRotCallback(const spinal::DesireCoordConstPtr& msg);
   virtual void naviCallback(const aerial_robot_msgs::FlightNavConstPtr& msg) override;

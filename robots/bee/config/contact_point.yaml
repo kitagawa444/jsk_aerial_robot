@@ -1,0 +1,4 @@
+# Geometry shared by the URDF and central grasp controller. Units: metres.
+# From flight baselink fc to the nominal mean of the four uncompressed ball
+# centres. Not the ball surface, a measured contact point, or a CoP.
+contact_offset: [0.0175, 0.0, -0.161]
