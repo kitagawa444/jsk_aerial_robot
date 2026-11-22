@@ -2,6 +2,9 @@
 
   <arg name="robot_id" default="1"/>
 
+  <arg name="child_frame" default="baselink"/>
+  <arg name="pose_topic" default="mocap/pose"/>
+
   <node pkg="mocap_optitrack"
     type="mocap_node"
     name="mocap_node"
@@ -12,7 +15,7 @@
          '$(arg robot_id)':
                pose: mocap/pose
                pose2d: mocap/ground_pose
-               child_frame_id: baselink
+               child_frame_id: $(arg child_frame)
                parent_frame_id: world
       optitrack_config:
          enable_optitrack: true
@@ -20,7 +23,7 @@
          command_port: 1510
          data_port: 1511
     </rosparam>
-    <remap from="~mocap/pose" to="mocap/pose" />
+    <remap from="~mocap/pose" to="$(arg pose_topic)" />
   </node>
 
 </launch>

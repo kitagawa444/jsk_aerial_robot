@@ -68,6 +68,28 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
     return;
   }
 
+  std::lock_guard<std::mutex> lock(reference_command_mutex_);
+  if (reference_command_active_)
+  {
+    if (joy_cmd.buttons[JOY_BUTTON_STOP] ||
+        (joy_cmd.buttons[JOY_BUTTON_CROSS_RIGHT] && joy_cmd.buttons[JOY_BUTTON_ACTION_SQUARE]))
+    {
+      const bool stop = joy_cmd.buttons[JOY_BUTTON_STOP];
+      auto safety = boost::make_shared<sensor_msgs::Joy>(joy_cmd);
+      std::fill(safety->axes.begin(), safety->axes.end(), 0.0f);
+      std::fill(safety->buttons.begin(), safety->buttons.end(), 0);
+      if (stop) safety->buttons[JOY_BUTTON_STOP] = 1;
+      else safety->buttons[JOY_BUTTON_CROSS_RIGHT] = safety->buttons[JOY_BUTTON_ACTION_SQUARE] = 1;
+      BaseNavigator::joyStickControl(safety);
+    }
+    else
+    {
+      joy_stick_heart_beat_ = true;
+      joy_stick_prev_time_ = ros::Time::now().toSec();
+      force_landing_start_time_ = joy_cmd.header.stamp;
+    }
+    return;
+  }
   if (joy_cmd.buttons[JOY_BUTTON_STICK_LEFT] == 1 && joy_cmd.buttons[JOY_BUTTON_STICK_RIGHT] == 1)
   {
     if (std::count(joy_cmd.buttons.begin(), joy_cmd.buttons.end(), 1) != 2)
@@ -75,8 +97,7 @@ void BeeNavigator::joyStickControl(const sensor_msgs::JoyConstPtr& joy_msg)
       BaseNavigator::joyStickControl(copied_joy_msg);
       return;
     }
-    std::lock_guard<std::mutex> lock(reference_command_mutex_);
-    if (getNaviState() == HOVER_STATE && getModuleState() == SEPARATED && !reference_command_active_)
+    if (getNaviState() == HOVER_STATE && getModuleState() == SEPARATED)
     {
       geometry_msgs::Vector3 level;
       level.z = estimator_->getEuler(Frame::BASELINK, estimate_mode_).z();
@@ -178,6 +199,11 @@ void BeeNavigator::applyBeeCommand(const aerial_robot_msgs::FlightNav& command,
     reference_command_active_ = false;
     gps_waypoint_ = vel_based_waypoint_ = trajectory_mode_ = false;
     setTargetXyFromCurrentState();
+    if (command.pos_xy_nav_mode == command.POS_MODE)
+    {
+      setTargetPosX(command.target_pos_x);
+      setTargetPosY(command.target_pos_y);
+    }
     setTargetZFromCurrentState();
     setTargetYawFromCurrentState();
     return;
@@ -758,6 +784,13 @@ void BeeNavigator::calcCenterOfMoving()
 
 void BeeNavigator::convertTargetPosFromCoG2CoM()
 {
+  if (!getCurrentAssembled())
+  {
+    pre_target_pos_ = getTargetPos();
+    pre_assembled_ = false;
+    return;
+  }
+
   tf::Transform cog2com_tf;
   tf::transformKDLToTF(getCog2CoM<KDL::Frame>(), cog2com_tf);
   tf::Matrix3x3 cog_orientation_tf;
@@ -769,15 +802,7 @@ void BeeNavigator::convertTargetPosFromCoG2CoM()
 
   KDL::Frame empty_frame;
 
-  if (pre_assembled_ && !current_assembled)
-  {
-    setTargetPosCandX(getTargetPos().x());
-    setTargetPosCandY(getTargetPos().y());
-    setTargetPosCandZ(getTargetPos().z());
-    ROS_INFO("switched");
-    pre_assembled_ = current_assembled;
-  }
-  else if ((!pre_assembled_ && current_assembled) || (current_assembled && reconfig_flag))
+  if (!pre_assembled_ || reconfig_flag)
   {
     int my_id = getMyID();
     tf::Vector3 pos_cog = estimator_->getPos(Frame::COG, estimate_mode_);

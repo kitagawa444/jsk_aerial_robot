@@ -5,6 +5,7 @@ int main(int argc, char** argv)
   ros::init(argc, argv, "reference_tracker_harness");
   ros::NodeHandle nh, parameters("~");
   // Explicit synthetic model mass; production passes the mass derived from robot_description.
+  double acc_hover_trim = 0.0;
   bee::control::ReferenceTracker mode(nh, parameters, 1.84199, false);
   auto nav_pub = parameters.advertise<aerial_robot_msgs::FlightNav>("observed_nav", 1);
   auto attitude_pub = parameters.advertise<geometry_msgs::Vector3Stamped>("observed_attitude", 1);
@@ -12,7 +13,7 @@ int main(int argc, char** argv)
     aerial_robot_msgs::FlightNav nav;
     geometry_msgs::Vector3Stamped attitude;
     bool release;
-    if (mode.update(nav, attitude, release, true))
+    if (mode.update(nav, attitude, release, true, std::nullopt, acc_hover_trim))
     {
       nav_pub.publish(nav); attitude_pub.publish(attitude);
     }

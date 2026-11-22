@@ -14,6 +14,8 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   geometry_msgs
   sensor_msgs
+  smach_msgs
+  visualization_msgs
   roscpp
   nav_msgs
   std_msgs
@@ -23,9 +25,10 @@ find_package(catkin REQUIRED COMPONENTS
   )
 
 find_package(Eigen3 REQUIRED)
+find_package(OsqpEigen REQUIRED)
 find_package(Threads REQUIRED)
 
-add_message_files(FILES GraspReference.msg GraspTrackingStatus.msg BeeCommand.msg ControllerStatus.msg ForceFeedback.msg ObserverCalibrationStatus.msg ForceControlParameters.msg)
+add_message_files(FILES BeeCommand.msg ControllerStatus.msg ForceFeedback.msg ObserverCalibrationStatus.msg ForceControlParameters.msg)
 add_service_files(FILES SetForceControlParameters.srv)
 generate_messages(
   DEPENDENCIES
@@ -37,7 +40,8 @@ generate_messages(
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES bee_robot_model bee_controller bee_navigation bee_cooperative_grasp
-  CATKIN_DEPENDS aerial_robot_control aerial_robot_model aerial_robot_msgs pluginlib roscpp gimbalrotor beetle diagnostic_msgs message_runtime geometry_msgs nav_msgs std_msgs std_srvs
+  DEPENDS OsqpEigen
+  CATKIN_DEPENDS aerial_robot_control aerial_robot_model aerial_robot_msgs pluginlib roscpp gimbalrotor beetle diagnostic_msgs message_runtime geometry_msgs nav_msgs std_msgs std_srvs tf2_ros urdf
 )
 
 include_directories(
@@ -45,10 +49,6 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   )
-
-add_library(bee_sensor_pluginlib  src/sensor/imu.cpp)
-target_link_libraries(bee_sensor_pluginlib ${catkin_LIBRARIES})
-add_dependencies(bee_sensor_pluginlib aerial_robot_msgs_generate_messages_cpp spinal_generate_messages_cpp)
 
 add_library(bee_controller src/control/bee_controller.cpp)
 target_link_libraries(bee_controller bee_robot_model bee_navigation ${catkin_LIBRARIES})
@@ -61,22 +61,20 @@ add_library(bee_navigation src/bee_navigation.cpp)
 target_link_libraries(bee_navigation bee_robot_model ${catkin_LIBRARIES})
 
 add_library(bee_cooperative_grasp
-  src/cooperative_grasp/config.cpp
-  src/cooperative_grasp/state_estimator.cpp
+  src/cooperative_grasp/grasp_state_estimator.cpp
   src/cooperative_grasp/phase_manager.cpp
-  src/cooperative_grasp/controller.cpp
-  src/cooperative_grasp/normal_force_control.cpp
-  src/cooperative_grasp/vertical_control.cpp
-  src/cooperative_grasp/attitude_control.cpp
-  src/cooperative_grasp/tracking_reference.cpp
-  src/cooperative_grasp/safety_monitor.cpp
+  src/cooperative_grasp/grasp_controller.cpp
+  src/cooperative_grasp/wrench_allocator.cpp
 )
 
-add_executable(bee_cooperative_grasp_node src/cooperative_grasp/node.cpp)
-target_link_libraries(bee_cooperative_grasp_node bee_cooperative_grasp ${catkin_LIBRARIES} Threads::Threads)
-add_dependencies(bee_cooperative_grasp_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
+target_link_libraries(bee_cooperative_grasp PUBLIC OsqpEigen::OsqpEigen)
+
 add_executable(bee_grasp_joy src/grasp_joy.cpp)
 target_link_libraries(bee_grasp_joy ${catkin_LIBRARIES})
+
+add_executable(bee_cooperative_grasp_node src/cooperative_grasp/grasp_node.cpp)
+target_link_libraries(bee_cooperative_grasp_node bee_cooperative_grasp bee_robot_model ${catkin_LIBRARIES} Threads::Threads)
+add_dependencies(bee_cooperative_grasp_node ${catkin_EXPORTED_TARGETS} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 
 if(CATKIN_ENABLE_TESTING)
   add_executable(reference_tracker_harness EXCLUDE_FROM_ALL test/reference_tracker_harness.cpp)
@@ -84,12 +82,13 @@ if(CATKIN_ENABLE_TESTING)
   add_dependencies(reference_tracker_harness ${${PROJECT_NAME}_EXPORTED_TARGETS})
   catkin_add_gtest(test_cooperative_grasp test/test_cooperative_grasp.cpp)
   if(TARGET test_cooperative_grasp)
-    target_link_libraries(test_cooperative_grasp bee_cooperative_grasp)
+    target_link_libraries(test_cooperative_grasp bee_cooperative_grasp bee_controller bee_robot_model ${catkin_LIBRARIES})
+    add_dependencies(test_cooperative_grasp ${${PROJECT_NAME}_EXPORTED_TARGETS})
     target_compile_definitions(test_cooperative_grasp PRIVATE BEE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test")
   endif()
 endif()
 
-install(TARGETS bee_sensor_pluginlib bee_robot_model bee_controller bee_navigation bee_cooperative_grasp bee_cooperative_grasp_node bee_grasp_joy
+install(TARGETS bee_grasp_joy bee_robot_model bee_controller bee_navigation bee_cooperative_grasp bee_cooperative_grasp_node
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

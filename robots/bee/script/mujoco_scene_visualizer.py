@@ -10,6 +10,7 @@ import tf2_ros
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker, MarkerArray
+from grasp_geometry import extra_shape_geometry, surface_triangles
 
 
 class MujocoSceneVisualizer(object):
@@ -36,6 +37,16 @@ class MujocoSceneVisualizer(object):
         self.object_height = rospy.get_param("~object_height", 0.60)
         self.object_size_x = rospy.get_param("~object_size_x", 0.60)
         self.object_size_y = rospy.get_param("~object_size_y", 0.60)
+        self.extra_geometry = extra_shape_geometry(dict(
+            object_shape=self.object_shape, object_height=self.object_height,
+            object_radius=rospy.get_param('~object_radius', .3),
+            object_radius_bottom=rospy.get_param('~object_radius_bottom', .34),
+            object_radius_top=rospy.get_param('~object_radius_top', .26),
+            object_length=rospy.get_param('~object_length', 1.0),
+            contact_height=rospy.get_param('~contact_height', 0.0)))
+        # Cache immutable mesh vertices; only pose/stamp change at 20 Hz.
+        self.extra_points = ([self.point(v) for v in surface_triangles(self.extra_geometry)]
+                             if self.object_shape in ('frustum', 'capsule', 'rock') else [])
         self.triangle_side = rospy.get_param("~object_triangle_side", 0.60)
         self.pentagon_side = rospy.get_param("~object_pentagon_side", 0.60)
         self.inner_triangle_side = rospy.get_param(
@@ -60,7 +71,8 @@ class MujocoSceneVisualizer(object):
         self.object_pose.pose.position.x = self.object_x
         self.object_pose.pose.position.y = self.object_y
         self.object_pose.pose.position.z = (
-            support_height + self.ground_clearance + self.object_height / 2.0
+            support_height + self.ground_clearance +
+            (self.extra_geometry['bottom'] if self.extra_geometry else self.object_height / 2.0)
         )
         self.object_pose.pose.orientation.z = math.sin(self.object_yaw / 2.0)
         self.object_pose.pose.orientation.w = math.cos(self.object_yaw / 2.0)
@@ -285,6 +297,20 @@ class MujocoSceneVisualizer(object):
         return marker
 
     def object_marker(self, stamp, pose):
+        if self.extra_geometry:
+            marker = self.box_marker(stamp, pose)
+            if self.object_shape == 'cylinder':
+                marker.type = Marker.CYLINDER
+                marker.scale.x = marker.scale.y = 2 * self.extra_geometry['radius']
+            else:
+                marker.type = Marker.TRIANGLE_LIST
+                marker.scale.x = marker.scale.y = marker.scale.z = 1.0
+                marker.points = self.extra_points
+            return marker
+        if self.object_shape in ("sphere", "ellipsoid"):
+            marker = self.box_marker(stamp, pose)
+            marker.type = Marker.SPHERE
+            return marker
         if self.object_shape in ("box", "rectangular_prism"):
             return self.box_marker(stamp, pose)
         if self.object_shape == "pentagonal_prism":

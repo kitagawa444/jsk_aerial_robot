@@ -1,23 +1,45 @@
-# Central controller uses SI units; all remaining defaults are in types.h.
+# Central controller uses SI units; all remaining control defaults are in grasp_state_estimator.h.
 controller:
   distributed_tracking: true
+  wrench_control: true
+  # Object PID outputs desired acceleration, converted to a contact wrench.
+  object_kp: 0.5
+  object_kd: 1.4
+  object_ki: 0.04
+  object_i_limit: 0.08
+  object_rotation_kp: 1.0
+  object_rotation_kd: 1.8
+  allocation_mu: 1.0
+  allocation_force_rate: 20.0
+  allocation_thrust_limit: 32.0
+  # Fixed simulation design bounds [N], not identified hardware guarantees.
+  # up = projected world Z; side = the other contact tangent.
+  allocation_normal_error: 0.5
+  allocation_tangent_up_error: 0.1
+  allocation_tangent_side_error: 0.1
+  allocation_observer_normal_error: 0.5
+  # Reserved world L1 force; also caps the Bee's combined P/I/damping correction.
+  allocation_thrust_reserve: 3.0
+  # Bee force PI/filter/calibration settings: config/controller/force_control.yaml.
   # Central velocity-reference generation. Units differ from legacy acceleration gains.
   reference_z_kp: 0.5
   reference_z_ki: 0.05
   reference_z_i_limit: 0.015
   reference_velocity_limit: 0.08
-  reference_acceleration_limit: 0.1
+  # Total object-following acceleration envelope, including PID correction [m/s^2].
+  # The nominal trajectory keeps its separate acceleration limit below.
+  reference_acceleration_limit: 1.0
   cooperative_admittance: 0.15
-  robot_mass: 1.84199
-  contact_offset: [0.0175, 0.0, -0.161]
+  # Robot mass is read from each vehicle's robot_description at startup.
+  # contact_offset is model geometry: launch loads config/contact_point.yaml.
   normal_force_kp: 0.4
   # Disable tangential position/velocity feedback during contact; retain approach and yaw control.
   contact_tangent_control_enabled: false
   # Disable relative contact-height PD before support transfer (send zero Z velocity).
   z_velocity_kp: 0.0
   z_velocity_kd: 0.0
-  normal_force_rate: 0.3
-  max_normal_force: 8.0
+  normal_force_rate: 0.6
+  max_normal_force: 10.0
   trajectory_velocity: 0.01
   trajectory_acceleration: 0.03
   trajectory_jerk: 0.10
@@ -34,12 +56,7 @@ controller:
 tracker:
   velocity_gain_xy: 3.0
   velocity_gain_z: 3.0
-  external_filter_tau: 0.2
-  input_timeout: 0.3
-  reference_timeout: 0.3
-  maximum_acceleration: 20.0
-  maximum_velocity_error: 0.3
-  velocity_error_duration: 1.0
+
 safety:
   input_timeout: 1.0
   max_acceleration: 20.0

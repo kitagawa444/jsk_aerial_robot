@@ -1,0 +1,19 @@
+# Same sphere/mission/gains as scene_sphere, contacting below its equator.
+# This is lower-hemisphere grasping, NOT a platform directly under the sphere.
+robot_count: 4
+object_shape: sphere
+object_size_x: 0.60
+object_size_y: 0.60
+object_height: 0.60
+object_mass: 0.50
+object_x: 0.0
+object_y: 1.0
+contact_height: -0.12
+spawn_object_pedestal: true
+object_pedestal_height: 0.65
+spawn_destination_pedestal: true
+destination_pedestal_x: 1.50
+destination_pedestal_y: 1.0
+destination_pedestal_height: 0.65
+object_sliding_friction: 1.0
+grasp_staging_clearance: 0.80

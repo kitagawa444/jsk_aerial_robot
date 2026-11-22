@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <optional>
 #include <aerial_robot_control/control/base/pose_linear_controller.h>
 #include <aerial_robot_control/control/fully_actuated_controller.h>
 #include <aerial_robot_estimation/state_estimation.h>
@@ -74,6 +75,9 @@ private:
   void sendTorqueAllocationMatrixInv();
 
 protected:
+  std::optional<double> hover_z_residual_;
+  double acc_hover_trim_ = 0.0;  // world Z, m/s^2
+
   static double calculateMaxYawScale(const Eigen::MatrixXd& integrated_map_inv_rot);
 
   bool gimbal_calc_in_fc_;
@@ -81,6 +85,7 @@ protected:
   ros::Publisher rpy_gain_pub_;             // for spinal
   ros::Subscriber send_att_gains_cmd_sub_;  // for spinal
   Eigen::VectorXd additional_wrench_acc_cog_term_;
+  Eigen::Vector3d force_point_torque_cog_ = Eigen::Vector3d::Zero();
 
   virtual void reset() override;
   virtual void setAttitudeGains();

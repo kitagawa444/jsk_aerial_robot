@@ -12,6 +12,7 @@ BaseNavigator::BaseNavigator():
   target_omega_(0, 0, 0),
   target_ang_acc_(0, 0, 0),
   init_height_(0), land_height_(0),
+  joy_duplicated_flag_(false),
   force_att_control_flag_(false),
   trajectory_mode_(false),
   trajectory_reset_time_(0),

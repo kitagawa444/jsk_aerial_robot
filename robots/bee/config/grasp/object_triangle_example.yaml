@@ -1,0 +1,23 @@
+# Example design values. Replace with measured geometry, mass and CAD/measured inertia.
+schema_version: 1
+robot_names: [bee1, bee2, bee3]
+object_shape: triangular_prism
+object_mass: 0.50
+object_height: 0.60
+# About the CoM in object axes, kg m^2, row-major.
+object_inertia: [0.026151, 0.0, 0.0, 0.0, 0.026151, 0.0, 0.0, 0.0, 0.022302]
+face_angles: [1.0471975512, 3.1415926536, 5.2359877560]
+face_radii: [0.1732050808, 0.1732050808, 0.1732050808]
+marker_to_model_xyz: [0.0, 0.0, 0.0]
+marker_to_model_rpy: [0.0, 0.0, 0.0]
+contact_height: 0.0
+staging_clearance: 0.80
+object_position: [0.0, 1.0, 0.95]
+has_destination: true
+destination_position: [1.5, 1.0, 0.95]
+# CAD import (uncomment object_mesh after supplying the actual file).
+# object_mesh: package://bee/meshes/payload/triangle.obj
+# mesh_scale: [1.0, 1.0, 1.0]
+# mesh_xyz: [0.0, 0.0, 0.0]
+# mesh_rpy: [0.0, 0.0, 0.0]
+# object_bottom_offset: 0.30

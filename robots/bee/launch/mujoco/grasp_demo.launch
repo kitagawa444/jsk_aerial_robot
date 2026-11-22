@@ -1,0 +1,50 @@
+<launch>
+  <!-- Simulation-only automatic startup. Control remains in the C++ nodes. -->
+  <arg name="robot_count" default="3"/>
+  <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
+  <arg name="reference_tracking_config" default=""/>
+  <arg name="world" default="default"/>
+  <arg name="headless" default="true"/>
+  <arg name="launch_rviz" default="true"/>
+  <arg name="auto_start" default="true"/>
+  <arg name="launch_smach" default="$(arg launch_rviz)"/>
+  <node if="$(arg launch_smach)" pkg="smach_viewer" type="smach_viewer.py" name="bee_grasp_smach_viewer" args="--auto-focus"/>
+  <arg name="output_dir" default="$(find bee)/mujoco/generated"/>
+  <arg name="real_time_factor" default="1.0"/>
+  <arg name="scene_config" default="$(eval find('bee') + '/config/mujoco/scene_' + {3: 'triangle', 4: 'box', 5: 'pentagon'}[arg('robot_count')] + '.yaml')"/>
+  <arg name="object_model" default="$(eval find('bee') + '/config/grasp/object_triangle_real.yaml' if arg('robot_count') == 3 and arg('scene_config') == find('bee') + '/config/mujoco/scene_triangle.yaml' else '')"/>
+  <include file="$(find bee)/launch/mujoco/grasp_sim.launch">
+    <arg name="object_model" value="$(arg object_model)"/>
+    <arg name="force_control_config" value="$(arg force_control_config)"/>
+    <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="robot_count" value="$(arg robot_count)"/>
+    <arg name="world" value="$(arg world)"/>
+    <arg name="headless" value="$(arg headless)"/>
+    <arg name="scene_config" value="$(arg scene_config)"/>
+    <arg name="execute" value="true"/>
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="real_time_factor" value="$(arg real_time_factor)"/>
+  </include>
+  <group if="$(eval arg('robot_count') == 3 and arg('object_model') == find('bee') + '/config/grasp/object_triangle_real.yaml')">
+    <arg name="triangle_thrust_limit" value="36.0"/>
+    <param name="/bee_cooperative_grasp/controller/allocation_thrust_limit" value="$(arg triangle_thrust_limit)"/>
+    <param name="/bee1/controller/reference_tracking/thrust_limit" value="$(arg triangle_thrust_limit)"/>
+    <param name="/bee2/controller/reference_tracking/thrust_limit" value="$(arg triangle_thrust_limit)"/>
+    <param name="/bee3/controller/reference_tracking/thrust_limit" value="$(arg triangle_thrust_limit)"/>
+    <param name="/bee1/controller/reference_tracking/force_at_velocity_point" value="true"/>
+    <param name="/bee2/controller/reference_tracking/force_at_velocity_point" value="true"/>
+    <param name="/bee3/controller/reference_tracking/force_at_velocity_point" value="true"/>
+  </group>
+  <group if="$(arg launch_rviz)">
+    <node pkg="bee" type="mujoco_scene_visualizer.py" name="bee_mujoco_scene_visualizer" output="screen">
+      <rosparam command="load" file="$(arg scene_config)"/>
+      <param if="$(eval bool(arg('object_model')))" name="spawn_object" value="false"/>
+      <param name="robot_count" value="$(arg robot_count)"/>
+    </node>
+    <node pkg="rviz" type="rviz" name="bee_mujoco_multi_rviz"
+          args="-d $(find bee)/config/mujoco/mujoco_multi.rviz" output="screen"/>
+  </group>
+  <node if="$(arg auto_start)" pkg="bee" type="grasp_sim_autostart.py" name="bee_grasp_sim_autostart" output="screen" required="true">
+    <param name="robot_count" value="$(arg robot_count)"/>
+  </node>
+</launch>

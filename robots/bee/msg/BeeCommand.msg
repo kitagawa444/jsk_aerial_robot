@@ -2,6 +2,10 @@
 # navigation retains its own FlightNav control_frame and target conventions.
 std_msgs/Header header
 bool stop
+# World-frame XY displacement for operator cancel during this reference [m].
+geometry_msgs/Vector3 cancel_offset
+# With stop=true, apply the last fresh reference's cancel_offset once.
+bool operator_cancel
 aerial_robot_msgs/FlightNav navigation
 # Absolute world-frame baselink RPY [rad]. Leave all navigation rotation modes at NO_NAVIGATION.
 geometry_msgs/Vector3 baselink_rpy

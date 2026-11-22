@@ -112,7 +112,6 @@ namespace aerial_robot_navigation
     bool joy_roll_negative_flag_;
     bool joy_pitch_positive_flag_;
     bool joy_pitch_negative_flag_;
-    bool joy_duplicated_flag_ = false;
 
     bool roll_pitch_control_flag_;
     bool pre_assembled_ ;

@@ -61,6 +61,24 @@ class StartupTest(unittest.TestCase):
             message.pose.position.x = float('nan')
             self.assertFalse(self.runner.object_ready())
 
+    def test_odometry_must_stay_aligned_before_arming(self):
+        self.runner.odometry = {}
+        self.runner.aligned_since = None
+        with patch.object(startup.rospy, 'get_time') as clock:
+            for now, error, ready in [(1., 0., False), (1.5, .84, False),
+                                      (2., 0., False), (3., 0., True)]:
+                clock.return_value = now
+                for name in self.runner.names:
+                    for topic in ('ground_truth', 'uav/baselink/odom'):
+                        msg = startup.Odometry()
+                        msg.header.stamp = startup.rospy.Time.from_sec(now)
+                        if name == 'bee3' and topic == 'uav/baselink/odom':
+                            msg.pose.pose.position.x = error
+                        self.runner.odometry_callback(msg, (name, topic))
+                self.assertEqual(self.runner.odometry_ready(), ready)
+            clock.return_value = 4.
+            self.assertFalse(self.runner.odometry_ready())
+
     def test_stale_object_rejected(self):
         message = startup.PoseStamped()
         message.header.frame_id = 'world'

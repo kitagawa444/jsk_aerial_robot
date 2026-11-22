@@ -3,8 +3,6 @@
   ###########  launch config  ###########
   <arg name="real_machine" default="True" />
   <arg name="simulation" default="False" />
-  <arg name="force_observer" default="false" />
-  <arg name="gravity_compensation" default="false" />
   <arg name="force_observer_profile" value="$(eval 'simulation' if arg('simulation') else 'hardware')"/>
   <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
   <arg name="reference_tracking_config" default=""/>
@@ -28,6 +26,7 @@
   <arg name="livox_model_option" default="$(eval 'enable_livox:=true' if arg('lidar_sim') else 'enable_livox:=false')" />
   <arg name="launch_mujoco_backend" default="True" />
   <arg name="launch_mujoco_controller" default="True" />
+  <arg name="mujoco_real_time_factor" default="$(eval 0.0 if arg('headless') else 1.0)"/>
   <arg name="mujoco_render_fps" default="30.0" />
   <arg name="mujoco_vsync" default="false" />
   <arg name="mujoco_render_shadows" default="false" />
@@ -37,6 +36,7 @@
 
   ###########  Parameters  ###########
   <group ns="$(arg robot_ns)">
+    <param if="$(eval arg('simulation') and arg('mujoco') and arg('launch_mujoco_backend') and not arg('real_machine'))" name="mujoco_ros_control/real_time_factor" value="$(arg mujoco_real_time_factor)"/>
     <rosparam command="load" file="$(arg force_control_config)" ns="controller" subst_value="true"/>
     <rosparam if="$(eval arg('reference_tracking_config') != '')" command="load" file="$(arg reference_tracking_config)" ns="controller/reference_tracking"/>
     <param name="controller/reference_tracking/base_topic" value="$(eval 'ground_truth' if arg('mujoco') else 'uav/baselink/odom')"/>
@@ -66,10 +66,8 @@
    ###########  Control  ###########
    <rosparam file="$(arg config_dir)/BeeControl.yaml" command="load" if="$(eval not simulation)"/>
    <rosparam file="$(arg config_dir)/BeeControl_sim.yaml" command="load" if="$(eval simulation)"/>
-   <param name="controller/wrench_estimate_flag" value="true"
-          if="$(eval arg('force_observer') and not arg('simulation'))"/>
-   <param name="controller/gravity_compensation" value="true"
-          if="$(eval arg('gravity_compensation') and not arg('simulation'))"/>
+   <param name="controller/wrench_estimate_flag" value="true"/>
+   <param name="controller/gravity_compensation" value="true"/>
    ###########  Sensor Fusion  ###########
    <rosparam file="$(arg config_dir)/StateEstimation.yaml" command="load" />
    <rosparam file="$(arg config_dir)/Simulation.yaml" command="load" if="$(eval arg('simulation') and not arg('real_machine'))"/>

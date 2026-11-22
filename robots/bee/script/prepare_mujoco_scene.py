@@ -57,7 +57,9 @@ def wait_for_vehicle_parameters(names, timeout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--robot-count", type=int, choices=(3, 4, 5), required=True)
+    parser.add_argument("--world", choices=("default", "0066"), default="default")
     parser.add_argument("--scene-config", required=True)
+    parser.add_argument("--object-model")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--manifest-namespace", default="/bee_grasp/scene")
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -77,6 +79,10 @@ def main():
     rospy.set_param(args.manifest_namespace, {"schema_version": 1, "available": False})
     try:
         parameters = load_scene(args.scene_config, args.robot_count)
+        parameters["world"] = args.world
+        if args.object_model:
+            from grasp_cad import load_model
+            load_model(args.object_model, parameters)
         packages = rospkg.RosPack()
         generator = MujocoSceneGenerator(parameters, packages.get_path("bee"),
                                         packages.get_path("mujoco_ros_control"),

@@ -62,10 +62,15 @@ def main():
             clock = rospy.Publisher('/clock', Clock, queue_size=1)
             obj = rospy.Publisher('/test/object', PoseStamped, queue_size=1)
             names = ['bee1', 'bee2', 'bee3']
+            for name in names:
+                rospy.set_param('/'+name+'/robot_description', '<robot name="fixture"><link name="root"/>'
+                    '<link name="body"><inertial><mass value="1.84199"/>'
+                    '<inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/></inertial></link>'
+                    '<joint name="base" type="fixed"><parent link="root"/><child link="body"/></joint></robot>')
             angles = [math.pi / 3 + i * 2 * math.pi / 3 for i in range(3)]
             rospy.set_param('/test/scene', dict(schema_version=1, available=True, robot_names=names,
                 face_angles=angles, face_radii=[.2] * 3, object_mass=.5, object_height=.6,
-                staging_clearance=.8, object_position=[0., 1., .95], destination_position=[.4, 1., .95], has_destination=True))
+                staging_clearance=.8, object_position=[0., 1., .95], destination_position=[1.5, 1., .95], has_destination=True))
             pubs = []
             for name in names:
                 pubs.append((rospy.Publisher('/'+name+'/ground_truth', Odometry, queue_size=1),
@@ -103,12 +108,29 @@ def main():
             for name in names[1:]:
                 subs.extend([rospy.Subscriber('/'+name+'/uav/nav', FlightNav, lambda msg: None),
                              rospy.Subscriber('/'+name+'/final_target_baselink_rpy', Vector3Stamped, lambda msg: None)])
+            # Model metadata is mandatory; unsupported heterogeneous teams must
+            # fail before publishing any commands, rather than averaging masses.
+            original_model = rospy.get_param('/bee2/robot_description')
+            for case, reason in [('missing', 'missing model'), ('different', 'equal Bee model masses')]:
+                if case == 'missing': rospy.delete_param('/bee2/robot_description')
+                else: rospy.set_param('/bee2/robot_description', original_model.replace('1.84199', '2.5'))
+                rospy.set_param('/bad_model_test', dict(execute=False, scene_namespace='/test/scene'))
+                with open(Path(directory)/(case+'.log'), 'w+') as model_log:
+                    failed = subprocess.Popen([args.node, '__name:=bad_model_test'], stdout=model_log, stderr=subprocess.STDOUT)
+                    processes.append(failed)
+                    assert failed.wait(timeout=10) != 0
+                    model_log.seek(0)
+                    model_output = model_log.read()
+                    # ROS_FATAL may exit before rosout connects; exit status is
+                    # authoritative. Successful models are exercised below.
+                rospy.set_param('/bee2/robot_description', original_model)
+            print('model: missing description and unequal masses rejected')
             for execute in (False, True):
                 namespace = '/preview_test' if not execute else '/execution_test'
                 enabled.set(); flight_messages.clear()
                 rospy.set_param(namespace, dict(execute=execute, scene_namespace='/test/scene',
                     object_pose_topic='/test/object', allow_empty_base_frame=True,
-                    safety={'input_timeout': .3}))
+                    controller={'robot_mass': 99.0}, safety={'input_timeout': .3}))
                 previews, phases = [], []
                 mode_subs = [rospy.Subscriber(namespace+'/preview/bee1/nav', FlightNav, lambda msg: previews.append(msg)),
                              rospy.Subscriber(namespace+'/phase', String, lambda msg: phases.append(msg.data))]
@@ -116,6 +138,8 @@ def main():
                 proc = subprocess.Popen([args.node, '__name:='+namespace[1:]], stdout=log, stderr=subprocess.STDOUT)
                 processes.append(proc)
                 rospy.wait_for_service(namespace+'/start', timeout=10)
+                assert abs(rospy.get_param(namespace+'/model_mass') - 1.84199) < 1e-9
+                assert abs(rospy.get_param(namespace+'/controller/robot_mass') - 1.84199) < 1e-9
                 start = rospy.ServiceProxy(namespace+'/start', Trigger)
                 last = [None]
                 def start_ready():

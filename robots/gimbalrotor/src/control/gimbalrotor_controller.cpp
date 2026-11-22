@@ -70,6 +70,9 @@ void GimbalrotorController::reset()
 {
   PoseLinearController::reset();
   gravity_compensation_acc_ = 0.0;
+  force_point_torque_cog_.setZero();
+  hover_z_residual_.reset();
+  acc_hover_trim_ = 0.0;
 
   setAttitudeGains();
 }
@@ -102,6 +105,7 @@ bool GimbalrotorController::update()
 
 void GimbalrotorController::controlCore()
 {
+  hover_z_residual_.reset();
   if (!robot_model_->initialized())
   {
     ROS_WARN_THROTTLE(1.0, "[GimbalrotorController] robot model is not initialized yet, skip controlCore");
@@ -157,6 +161,13 @@ void GimbalrotorController::controlCore()
     // tilted.  The translational allocation matrix contains 1 / mass, making
     // this acceleration feed-forward equivalent to an mg force command.
     target_acc_w.setZ(target_acc_w.z() + gravity_compensation_acc_);
+    if (navigator_->getZControlMode() == aerial_robot_navigation::ACC_CONTROL_MODE)
+      target_acc_w.setZ(target_acc_w.z() + acc_hover_trim_);
+    else if (navigator_->getNaviState() == aerial_robot_navigation::HOVER_STATE &&
+             navigator_->getZControlMode() == aerial_robot_navigation::POS_CONTROL_MODE &&
+             std::abs(target_vel_.z()) < 1e-6 &&
+             std::abs(vel_.z()) < 0.05 && std::isfinite(target_acc_w.z()))
+      hover_z_residual_ = target_acc_w.z() - robot_model_->getGravity()(Z);
   }
   tf::Vector3 target_acc_dash = (tf::Matrix3x3(tf::createQuaternionFromYaw(rpy_.z()))).inverse() * target_acc_w;
   tf::Vector3 target_acc_cog = uav_rot.inverse() * target_acc_w;
@@ -201,7 +212,6 @@ void GimbalrotorController::controlCore()
   target_wrench_acc_cog_for_est.tail(3) =
       Eigen::Vector3d(target_ang_acc_x_for_est, target_ang_acc_y_for_est, target_ang_acc_z_for_est);
 
-  setTargetWrenchAccCog(target_wrench_acc_cog_for_est);
 
   Eigen::Matrix3d inertia = gimbalrotor_robot_model_->getInertia<Eigen::Matrix3d>();
   Eigen::Vector3d omega;
@@ -235,6 +245,10 @@ void GimbalrotorController::controlCore()
   double mass_inv = 1 / gimbalrotor_robot_model_->getMass();
 
   Eigen::Matrix3d inertia_inv = inertia.inverse();
+
+  const Eigen::Vector3d point_alpha = inertia_inv * force_point_torque_cog_;
+  target_wrench_acc_cog_for_est.tail(3) += point_alpha;
+  setTargetWrenchAccCog(target_wrench_acc_cog_for_est);
 
   std::vector<Eigen::Vector3d> rotors_origin_from_cog =
       gimbalrotor_robot_model_->getRotorsOriginFromCog<Eigen::Vector3d>();
@@ -312,6 +326,7 @@ void GimbalrotorController::controlCore()
     target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog(0);
   else
     target_vectoring_f_trans_ = integrated_map_inv_trans_ * target_wrench_acc_cog.topRows(3);
+  target_vectoring_f_trans_ += integrated_map_inv_rot_ * point_alpha;
   target_vectoring_f_rot_ = integrated_map_inv_rot_ * target_wrench_acc_cog.bottomRows(3);  // debug
   target_vectoring_f_ = target_vectoring_f_trans_ + target_vectoring_f_rot_;
   last_col = 0;

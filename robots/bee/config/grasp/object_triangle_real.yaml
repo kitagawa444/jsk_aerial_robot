@@ -1,0 +1,28 @@
+schema_version: 1
+robot_names: [bee1, bee2, bee3]
+object_shape: triangular_prism
+object_mass: 1.248
+object_height: 0.6064
+object_bottom_offset: 0.3032
+# CAD coordinate system 1, at the centre of mass, kg m^2.
+object_inertia: [0.07641167887, 0.00001527030, 0.0, 0.00001527030, 0.07641527202, 0.0, 0.0, 0.0, 0.05618877224]
+face_angles: [1.0471975512, 3.1415926536, 5.2359877560]
+face_radii: [0.171527, 0.171613, 0.171613]
+contact_height: 0.0
+marker_to_model_xyz: [0.0, 0.0, 0.0]
+marker_to_model_rpy: [0.0, 0.0, 0.0]
+staging_clearance: 0.80
+object_position: [-1.093, -0.282, 1.0124]
+has_destination: true
+destination_position: [0.680, -0.234, 1.0124]
+object_mesh: package://bee/urdf/mesh/triangular_prism/assembly.stl
+collision_meshes:
+  - package://bee/urdf/mesh/triangular_prism/cap_1.stl
+  - package://bee/urdf/mesh/triangular_prism/cap_2.stl
+  - package://bee/urdf/mesh/triangular_prism/cap_3.stl
+  - package://bee/urdf/mesh/triangular_prism/panel_4.stl
+  - package://bee/urdf/mesh/triangular_prism/panel_5.stl
+  - package://bee/urdf/mesh/triangular_prism/cap_6.stl
+  - package://bee/urdf/mesh/triangular_prism/panel_7.stl
+  - package://bee/urdf/mesh/triangular_prism/cap_8.stl
+  - package://bee/urdf/mesh/triangular_prism/cap_9.stl

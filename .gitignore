@@ -111,6 +111,11 @@ tags
 # mujoco
 MUJOCO_LOG.txt
 robots/**/mujoco
+# Source launch/config directories are not generated MuJoCo assets.
+!robots/bee/launch/mujoco/
+!robots/bee/launch/mujoco/**
+!robots/bee/config/mujoco/
+!robots/bee/config/mujoco/**
 
 # acados
 *c_generated_code/

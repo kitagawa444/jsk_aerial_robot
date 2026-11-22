@@ -1,13 +1,38 @@
 <launch>
   <!-- Central controller only. Start the scene/vehicles separately. -->
+  <arg name="object_only" default="false"/>
   <arg name="execute" default="false"/>
   <arg name="controller_config" default="$(find bee)/config/grasp/controller.yaml"/>
   <arg name="task_config" default="$(find bee)/config/grasp/task.yaml"/>
-  <arg name="interface_config" default="$(find bee)/config/grasp/interface_mujoco.yaml"/>
-  <node pkg="bee" type="bee_cooperative_grasp_node" name="bee_cooperative_grasp" output="screen">
+  <arg name="object_model" default=""/>
+  <arg name="interface_config" default="$(eval find('bee') + ('/config/grasp/interface.yaml' if arg('object_model') else '/config/mujoco/interface_mujoco.yaml'))"/>
+  <arg name="object_pose_topic" default=""/>
+  <arg name="object_mocap_id" default="10"/>
+  <group if="$(eval bool(arg('object_mocap_id')) and bool(arg('object_model')))" ns="object_tracking">
+    <include file="$(find aerial_robot_base)/launch/external_module/mocap.launch">
+      <arg name="child_frame" value="grasp_object_marker"/>
+      <arg name="robot_id" value="$(arg object_mocap_id)"/>
+      <arg name="pose_topic" value="$(eval arg('object_pose_topic') or '/mocap/object/pose')"/>
+    </include>
+  </group>
+  <group if="$(eval bool(arg('object_model')))" ns="bee_cooperative_grasp/object_model" clear_params="true">
+    <rosparam command="load" file="$(arg object_model)"/>
+    <param name="available" value="true"/>
+  </group>
+  <node pkg="bee" type="grasp_object_frame.py" name="grasp_object_frame">
+    <rosparam command="load" file="$(arg interface_config)"/>
+    <param if="$(eval bool(arg('object_model')))" name="scene_namespace" value="/bee_cooperative_grasp/object_model"/>
+    <param if="$(eval bool(arg('object_pose_topic')))" name="object_pose_topic" value="$(arg object_pose_topic)"/>
+  </node>
+  <node if="$(arg object_only)" pkg="rviz" type="rviz" name="object_rviz" args="-d $(find bee)/config/rviz_config"/>
+  <node unless="$(arg object_only)" pkg="bee" type="bee_cooperative_grasp_node" name="bee_cooperative_grasp" output="screen">
     <rosparam command="load" file="$(arg controller_config)"/>
     <rosparam command="load" file="$(arg task_config)"/>
     <rosparam command="load" file="$(arg interface_config)"/>
+    <param if="$(eval bool(arg('object_model')))" name="scene_namespace" value="~object_model"/>
+    <param if="$(eval bool(arg('object_pose_topic')))" name="object_pose_topic" value="$(arg object_pose_topic)"/>
+    <!-- Same fixed geometry as the model, also with a custom controller_config. -->
+    <rosparam command="load" ns="controller" file="$(find bee)/config/contact_point.yaml"/>
     <param name="execute" value="$(arg execute)"/>
   </node>
 </launch>

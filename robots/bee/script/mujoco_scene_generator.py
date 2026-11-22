@@ -14,6 +14,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 import yaml
+from grasp_geometry import EXTRA_SHAPES, extra_shape_geometry
 
 
 class MujocoSceneGenerator:
@@ -40,7 +41,8 @@ class MujocoSceneGenerator:
 
         object_shape = str(self.param(
             "object_shape", "triangular_prism")).lower()
-        box_shape = object_shape in ("box", "rectangular_prism")
+        extra = extra_shape_geometry(self.parameters)
+        box_shape = object_shape in ("box", "rectangular_prism", "sphere", "ellipsoid") or extra is not None
         pentagon_shape = object_shape == "pentagonal_prism"
         grasp_robot_count = 5 if pentagon_shape else (4 if box_shape else 3)
         if (self.param("grasp_staging_layout", True) and
@@ -62,6 +64,8 @@ class MujocoSceneGenerator:
                                3.0 * math.pi / 2.0)
                 face_radii = (size_x / 2.0, size_y / 2.0,
                               size_x / 2.0, size_y / 2.0)
+                if extra:
+                    face_radii = extra['radii']
             elif pentagon_shape:
                 pentagon_side = self.param(
                     "object_pentagon_side", 0.60)
@@ -86,6 +90,8 @@ class MujocoSceneGenerator:
 
             # After base_link rolls +pi/2, the physical feet point along body
             # +Y, so body +Y is aligned with the inward face normal.
+            base_angles = self.param("face_angles", base_angles)
+            face_radii = self.param("face_radii", face_radii)
             robots = []
             for index, (base_angle, face_radius) in enumerate(
                     zip(base_angles, face_radii)):
@@ -129,7 +135,7 @@ class MujocoSceneGenerator:
     def ensure_single_robot_model(self):
         force_regenerate = self.param("regenerate_single_model", False)
         model_path = os.path.join(self.bee_path, "mujoco", "bee", "robot.xml")
-        config_path = os.path.join(self.bee_path, "config", "mujoco_model.yaml")
+        config_path = os.path.join(self.bee_path, "config", "mujoco", "mujoco_model.yaml")
         generator_path = os.path.join(self.mujoco_ros_control_path, "scripts", "mujoco_model_generator.py")
         model_is_current = (
             os.path.isfile(model_path) and
@@ -163,7 +169,7 @@ class MujocoSceneGenerator:
         if object_shape == "rectangular_prism":
             object_shape = "box"
         if object_shape not in (
-                "triangular_prism", "pentagonal_prism", "box"):
+                "triangular_prism", "pentagonal_prism", "box", "sphere", "ellipsoid") + EXTRA_SHAPES:
             raise RuntimeError("unsupported object_shape '{}'".format(
                 object_shape))
         height = self.param("object_height", 0.60)
@@ -174,12 +180,17 @@ class MujocoSceneGenerator:
             raise RuntimeError("object dimensions must be positive")
         if density <= 0.0:
             raise RuntimeError("object_density must be positive")
-        if object_shape == "box":
+        extra = extra_shape_geometry(self.parameters)
+        if extra:
+            volume = extra['volume']
+        elif object_shape in ("box", "sphere", "ellipsoid"):
             size_x = self.param("object_size_x", 0.60)
             size_y = self.param("object_size_y", 0.60)
             if size_x <= 0.0 or size_y <= 0.0:
                 raise RuntimeError("object box dimensions must be positive")
-            volume = size_x * size_y * height
+            if object_shape == "sphere" and (abs(size_x-height) > 1e-9 or abs(size_y-height) > 1e-9):
+                raise RuntimeError("sphere dimensions must be equal")
+            volume = size_x * size_y * height * (math.pi / 6.0 if object_shape != "box" else 1.0)
         elif object_shape == "pentagonal_prism":
             outer_side = self.param("object_pentagon_side", 0.60)
             inner_side = 0.0
@@ -205,11 +216,14 @@ class MujocoSceneGenerator:
         # Controllers use this resolved value for gravity feed-forward.  Keep
         # the public parameter numeric even when launch selected density mode.
         self.resolved_mass = object_mass
-        if object_shape == "box":
+        if extra:
+            self.log_info("grasp %s: size %s, volume %.6f m^3, mass %.4f kg",
+                          object_shape, extra['size'], volume, object_mass)
+        elif object_shape in ("box", "sphere", "ellipsoid"):
             self.log_info(
-                "grasp box: %.3f x %.3f x %.3f m, density %.3f kg/m^3, "
+                "grasp %s: %.3f x %.3f x %.3f m, density %.3f kg/m^3, "
                 "volume %.6f m^3, mass %.4f kg%s",
-                size_x, size_y, height, density, volume, object_mass,
+                object_shape, size_x, size_y, height, density, volume, object_mass,
                 " (override)" if mass_override > 0.0 else "")
         elif object_shape == "pentagonal_prism":
             self.log_info(
@@ -241,7 +255,7 @@ class MujocoSceneGenerator:
             "destination_pedestal_height", pedestal_height)
         destination_pedestal_radius = self.param(
             "destination_pedestal_radius", pedestal_radius)
-        sliding_friction = self.param("object_sliding_friction", 0.5)
+        sliding_friction = self.param("object_sliding_friction", 1.0)
         torsional_friction = self.param("object_torsional_friction", 0.5)
         pedestal_torsional_friction = self.param(
             "pedestal_torsional_friction", 2.0)
@@ -286,10 +300,10 @@ class MujocoSceneGenerator:
             "pos": [
                 object_x,
                 object_y,
-                pedestal_height + ground_clearance + height / 2.0,
+                pedestal_height + ground_clearance + self.param('object_bottom_offset', extra['bottom'] if extra else height / 2.0),
             ],
             "euler": [0.0, 0.0, yaw],
-            "size": ([size_x, size_y, height] if object_shape == "box" else
+            "size": (extra['size'] if extra else [size_x, size_y, height] if object_shape in ("box", "sphere", "ellipsoid") else
                      [outer_side, height]),
             "freejoint_damping": self.param("object_freejoint_damping", 0.5),
             "friction": [
@@ -303,6 +317,12 @@ class MujocoSceneGenerator:
         }
         if object_shape == "triangular_prism":
             grasp_object["inner_triangle_side"] = inner_side
+        if extra:
+            grasp_object["free"] = True  # Cylinders otherwise denote fixed pedestals.
+            if object_shape == 'rock':
+                for key in ('vertices', 'faces', 'unit_inertia', 'volume'):
+                    grasp_object[key] = extra[key]
+                grasp_object['rgba'] = [.48, .46, .43, 1.]
         objects.append(grasp_object)
         if mass_override > 0.0:
             objects[-1]["mass"] = object_mass
@@ -325,7 +345,7 @@ class MujocoSceneGenerator:
             "robots": [],
             "objects": objects,
             "option": {
-                "impratio": self.param("contact_impratio", 50.0),
+                "impratio": self.param("contact_impratio", 500.0),
                 "cone": self.param("friction_cone", "elliptic"),
                 "solver": self.param("constraint_solver", "Newton"),
             },
@@ -364,31 +384,46 @@ class MujocoSceneGenerator:
         if payload is None:
             return {"schema_version": 1, "available": False}
         shape = payload["type"]
-        count = {"triangular_prism": 3, "box": 4, "pentagonal_prism": 5}[shape]
+        extra = extra_shape_geometry(self.parameters)
+        count = 4 if extra else {"triangular_prism": 3, "box": 4, "sphere": 4, "ellipsoid": 4, "pentagonal_prism": 5}[shape]
         if len(robots) != count:
             # The simulator also supports arbitrary robot layouts; the new
             # cooperative controller requires one vehicle per side face.
             return {"schema_version": 1, "available": False}
-        if shape == "box":
+        if extra:
+            angles = [index * math.pi / 2.0 for index in range(4)]
+            radii = extra['radii']
+        elif shape in ("box", "sphere", "ellipsoid"):
             angles = [index * math.pi / 2.0 for index in range(4)]
             radii = [payload["size"][index % 2] / 2.0 for index in range(4)]
         else:
             angles = [math.pi / count + 2.0 * math.pi * i / count for i in range(count)]
             radii = [payload["size"][0] / (2.0 * math.tan(math.pi / count))] * count
         destination = next((item for item in objects if item["name"] == "place_pedestal"), None)
-        height = payload["size"][-1]
+        height = extra['height'] if extra else payload["size"][-1]
+        bottom = self.param('object_bottom_offset', extra['bottom'] if extra else height / 2.0)
         return {
-            "schema_version": 1, "available": True,
+            # Old controllers must reject new analytic shapes instead of
+            # silently interpreting them as planar faces.
+            "schema_version": 3 if shape == 'rock' else 2 if extra else 1, "available": True,
             "robot_names": [robot["name"] for robot in robots],
             "object_shape": shape, "object_mass": self.resolved_mass,
             "object_height": height,
+            "object_bottom_offset": bottom,
+            "surface_radius": extra['radius'] if extra else 0.0,
+            "surface_top_radius": extra['top_radius'] if extra else 0.0,
+            "surface_length": extra['length'] if extra else 0.0,
+            "surface_vertices": ([v for vertex in extra['vertices'] for v in vertex] if shape == 'rock' else []),
+            "contact_normals": ([v for normal in extra['contact_normals'] for v in normal] if shape == 'rock' else []),
+            "surface_radii": ([v / 2.0 for v in payload["size"]] if shape in ("sphere", "ellipsoid") else [0., 0., 0.]),
+            "contact_height": self.param("contact_height", 0.0),
             "object_position": payload["pos"], "object_yaw": payload["euler"][2],
-            "face_angles": angles, "face_radii": radii,
+            "face_angles": self.param("face_angles", angles), "face_radii": self.param("face_radii", radii),
             "staging_clearance": self.param("grasp_staging_clearance", 0.80),
             "has_destination": destination is not None,
             "destination_position": (
                 [destination["pos"][0], destination["pos"][1],
-                 destination["size"][1] + self.param("object_ground_clearance", 0.0) + height / 2.0]
+                 destination["size"][1] + self.param("object_ground_clearance", 0.0) + bottom]
                 if destination else payload["pos"]),
         }
 
@@ -401,6 +436,30 @@ class MujocoSceneGenerator:
         self.ensure_single_robot_model()
         model = self.compose_scene(count, robots, objects)
         manifest = self.control_manifest(robots, objects)
+        # Export the actual composer's inertia, including hollow payloads.
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(model)
+        if self.param("world", "default") == "0066":
+            from mujoco_room_0066 import add_room
+            add_room(tree, self.output_dir)
+        if self.param('object_mesh', None):
+            from grasp_cad import apply_mesh
+            apply_mesh(tree, self.parameters)
+            for key in ('object_mesh', 'mesh_scale', 'mesh_xyz', 'mesh_rpy', 'marker_to_model_xyz', 'marker_to_model_rpy'):
+                if key in self.parameters:
+                    manifest[key] = self.parameters[key]
+        if self.param("world", "default") == "0066" or self.param("object_mesh", None):
+            tree.write(model, encoding="utf-8", xml_declaration=True)
+        inertial = tree.find(".//body[@name='grasp_prism']/inertial")
+        if inertial is not None:
+            if 'quat' in inertial.attrib:
+                raise ValueError('rotated inertial frame is not supported by grasp manifest')
+            if 'diaginertia' in inertial.attrib:
+                x, y, z = map(float, inertial.get('diaginertia').split())
+                manifest['object_inertia'] = [x, 0., 0., 0., y, 0., 0., 0., z]
+            elif 'fullinertia' in inertial.attrib:
+                x, y, z, xy, xz, yz = map(float, inertial.get('fullinertia').split())
+                manifest['object_inertia'] = [x, xy, xz, xy, y, yz, xz, yz, z]
         manifest_path = os.path.join(self.output_dir, "bee_scene_{}_control.yaml".format(count))
         with open(manifest_path, "w") as output:
             yaml.safe_dump(manifest, output, default_flow_style=False)
@@ -410,6 +469,7 @@ class MujocoSceneGenerator:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", help="flat scene-parameter YAML (not a composer YAML)")
+    parser.add_argument("--object-model")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--bee-path")
     parser.add_argument("--mujoco-ros-control-path")
@@ -424,6 +484,9 @@ def main():
         parameters = yaml.safe_load(source)
     if not isinstance(parameters, dict):
         parser.error("config must contain a mapping of scene parameters")
+    if args.object_model:
+        from grasp_cad import load_model
+        load_model(args.object_model, parameters)
     generator = MujocoSceneGenerator(parameters, args.bee_path,
                                     args.mujoco_ros_control_path, args.output_dir)
     _, model, _, manifest = generator.generate()

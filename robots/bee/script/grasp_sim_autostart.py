@@ -7,6 +7,7 @@ import rospy
 from std_msgs.msg import Empty, UInt8
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 
 
 class AutoStart:
@@ -20,14 +21,37 @@ class AutoStart:
         self.subscribers = [rospy.Subscriber('/%s/flight_state' % name, UInt8,
                                             self.state_callback, callback_args=name)
                             for name in self.names]
-        self.subscribers.append(rospy.Subscriber('/bee1/mujoco/grasp_object_pose',
+        self.subscribers.append(rospy.Subscriber('/mocap/object/pose',
                                                 PoseStamped, self.object_callback))
+        self.odometry = {}
+        self.aligned_since = None
+        for name in self.names:
+            for topic in ('ground_truth', 'uav/baselink/odom'):
+                self.subscribers.append(rospy.Subscriber('/%s/%s' % (name, topic), Odometry,
+                    self.odometry_callback, callback_args=(name, topic), queue_size=1))
         self.publishers = {action: {name: rospy.Publisher(
             '/%s/teleop_command/%s' % (name, action), Empty, queue_size=1)
             for name in self.names} for action in ('start', 'takeoff')}
 
     def state_callback(self, message, name):
         self.states[name] = (message.data, time.monotonic())
+
+    def odometry_callback(self, message, key):
+        self.odometry[key] = (message.header.stamp.to_sec(), message.pose.pose.position)
+
+    def odometry_ready(self):
+        now = rospy.get_time()
+        for name in self.names:
+            truth = self.odometry.get((name, 'ground_truth'))
+            estimate = self.odometry.get((name, 'uav/baselink/odom'))
+            if (not truth or not estimate or
+                    not all(t > 0 and -.05 <= now - t <= .5 for t, _ in (truth, estimate)) or
+                    not math.hypot(truth[1].x - estimate[1].x, truth[1].y - estimate[1].y) < .05):
+                self.aligned_since = None
+                return False
+        if self.aligned_since is None or now < self.aligned_since:
+            self.aligned_since = now
+        return now - self.aligned_since >= 1.
 
     def object_callback(self, message):
         self.object_pose = (message, time.monotonic())
@@ -74,7 +98,8 @@ class AutoStart:
         self.wait(self.simulation_ready, 'MuJoCo, controller and disarmed vehicles')
         initial_time = rospy.get_time()
         self.wait(lambda: rospy.get_time() > initial_time, 'advancing simulation clock', 10)
-        self.wait(self.object_ready, 'fresh world-frame /bee1/mujoco/grasp_object_pose', 30)
+        self.wait(self.object_ready, 'fresh world-frame /mocap/object/pose', 30)
+        self.wait(self.odometry_ready, 'vehicle XY estimates to match MuJoCo before arming', 30)
         for p in self.publishers['start'].values():
             p.publish(Empty())
         self.wait(lambda: self.all_states({2}), 'all vehicles ARMED', 30)

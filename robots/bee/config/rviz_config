@@ -150,6 +150,20 @@ Visualization Manager:
       Update Interval: 0
       Value: true
       Visual Enabled: true
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Payload CAD
+      Marker Topic: /bee_cooperative_grasp/object_mesh
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /bee_cooperative_grasp/force_markers
+      Name: Bee contact forces (cyan command, orange observer)
+      Namespaces:
+        command: true
+        observer: true
+      Queue Size: 2
+      Value: true
     - Class: rviz/TF
       Enabled: true
       Filter (blacklist): ""

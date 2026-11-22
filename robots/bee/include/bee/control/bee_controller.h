@@ -43,7 +43,8 @@ public:
   ReferenceTracker(ros::NodeHandle nh, ros::NodeHandle parameters, double model_mass, bool enabled = true);
   ~ReferenceTracker();
   bool update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude,
-              bool& release, bool available);
+              bool& release, bool available, const std::optional<double>& hover_z_residual, double& acc_hover_trim,
+              Eigen::Vector3d* force_point_torque_cog = nullptr);
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;

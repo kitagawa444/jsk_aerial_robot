@@ -129,7 +129,8 @@ bool BeeController::update()
   geometry_msgs::Vector3Stamped attitude;
   bool release = false;
   if(reference_tracker_ && reference_tracker_->update(command, attitude, release,
-                                               bee_navigator_->getModuleState() == SEPARATED))
+                                               bee_navigator_->getModuleState() == SEPARATED,
+                                               hover_z_residual_, acc_hover_trim_, &force_point_torque_cog_))
     bee_navigator_->applyBeeCommand(command, attitude, release);
   return GimbalrotorController::update();
 }
@@ -678,7 +679,8 @@ public:
   // mode change, arming, flight-state or contact-state requirement is introduced here.
   bool update(double wall, double now, double timeout, double wrench_receipt, double wrench_stamp, const Wrench& raw,
               double cog_receipt, double cog_stamp, const Eigen::Quaterniond& orientation,
-              Wrench& baseline, Vec3& world_baseline)
+              Wrench& baseline, Vec3& world_baseline, const std::optional<double>& hover_z_residual,
+              double& acc_hover_trim)
   {
     const auto fresh = [&](double receipt, double stamp) {
       return receipt > 0 && wall - receipt <= timeout && stamp > 0 &&
@@ -699,6 +701,7 @@ public:
         collecting_ = true; start_wall_ = wall; start_ros_ = now;
         last_stamp_ = wrench_stamp; first_stamp_ = 0;
         sum_ = Wrench{}; world_sum_.setZero(); samples_ = 0;
+        hover_trim_sum_ = 0.0;
         status_.samples = 0;
         publish(bee::ObserverCalibrationStatus::COLLECTING, "collecting observer zero-reference samples");
       }
@@ -712,9 +715,11 @@ public:
               "calibration input stale, invalid or clock moved backwards");
       return false;
     }
+    if (!hover_z_residual) hover_trim_sum_.reset();
     if (wrench_stamp > last_stamp_)
     {
       if (!samples_) first_stamp_ = wrench_stamp;
+      if (hover_trim_sum_) *hover_trim_sum_ += *hover_z_residual;
       sum_.force += raw.force; sum_.moment += raw.moment;
       world_sum_ += orientation.normalized() * raw.force;
       last_stamp_ = wrench_stamp; ++samples_;
@@ -735,6 +740,7 @@ public:
       publish(bee::ObserverCalibrationStatus::FAILED, "nonfinite calibration average");
       return false;
     }
+    if (hover_trim_sum_) acc_hover_trim = *hover_trim_sum_ / samples_;
     // The owner commits first, then calls applied() to publish the shared result.
     return true;
   }
@@ -751,6 +757,7 @@ public:
     status_.samples = samples;
     publish(bee::ObserverCalibrationStatus::SUCCEEDED, detail);
   }
+  bool updatedHoverTrim() const { return hover_trim_sum_.has_value(); }
   unsigned samples() const { return samples_; }
 
 private:
@@ -771,6 +778,7 @@ private:
   double duration_, start_wall_ = 0, start_ros_ = 0, first_stamp_ = 0, last_stamp_ = 0;
   int min_samples_;
   unsigned samples_ = 0;
+  std::optional<double> hover_trim_sum_;
   Wrench sum_;
   Vec3 world_sum_ = Vec3::Zero();
 };
@@ -804,6 +812,7 @@ public:
     config_.mass = model_mass;
     priv_.setParam("model_mass", config_.mass);  // Diagnostic; never read as configuration.
     priv_.setParam("gravity", config_.gravity);
+    priv_.param("force_at_velocity_point", force_at_velocity_point_, false);
     priv_.param("thrust_limit", config_.thrust_limit, config_.thrust_limit);
     priv_.param("correction_reserve", config_.correction_reserve, config_.correction_reserve);
     std::vector<double> kp;
@@ -857,7 +866,7 @@ public:
     emergency_sub_ = nh_.subscribe<std_msgs::Empty>("/bee_cooperative_grasp/emergency_stop", 1,
         [this](const std_msgs::Empty::ConstPtr&) {
           std::lock_guard<std::mutex> lock(mutex_);
-          if (enabled_ && fault_.empty()) fail("operator emergency stop");
+          if (enabled_ && fault_.empty()) fail("operator emergency stop", true);
         });
     ref_sub_ = nh_.subscribe("command", 1, &Impl::reference, this);
     mode_service_ = nh_.advertiseService("controller/set_reference_mode", &Impl::setMode, this);
@@ -872,12 +881,22 @@ public:
 
   }
   ~Impl() = default;
-  bool update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude, bool& release, bool available)
+  bool update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude, bool& release, bool available,
+              const std::optional<double>& hover_z_residual, double& acc_hover_trim, Vec3* torque)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     controller_available_ = available;
     // One update path: the existing BeeController loop also advances force feedback.
-    tick();
+    tick(available ? hover_z_residual : std::nullopt, acc_hover_trim);
+    if (torque)
+    {
+      torque->setZero();
+      if (available && active_ && force_at_velocity_point_ && reference_.enable_force_control)
+      {
+        const Vec3 arm = base_.position + base_.orientation * vec(reference_.velocity_point) - cog_.position;
+        *torque = cog_.orientation.conjugate() * arm.cross(vec(reference_.force));
+      }
+    }
     if (!pending_) return false;
     nav = command_; attitude = attitude_; release = release_;
     pending_ = false;
@@ -997,7 +1016,8 @@ private:
     if (!enabled_) return;
     if (m->stop)
     {
-      stop(); active_ = false;
+      if (m->operator_cancel) fail("operator emergency stop", true);
+      else { stop(); active_ = false; }
       return;
     }
     if (!fault_.empty()) return;  // restart required after a liveness/safety fault
@@ -1033,33 +1053,49 @@ private:
     reference_receipt_ = steadyNow();
     active_ = true;
   }
-  void stop()
+  void stop(bool operator_cancel = false)
   {
     force_state_.reset(); force_control_active_ = false;
     if (!active_) return;
     aerial_robot_msgs::FlightNav m;
     m.header.stamp = ros::Time::now(); m.target = m.COG; m.control_frame = m.WORLD_FRAME;
     m.pos_xy_nav_mode = m.pos_z_nav_mode = m.VEL_MODE;
+    if (operator_cancel && inputsReady(false) && steadyNow() - reference_receipt_ <= reference_timeout_ &&
+        (m.header.stamp - reference_.header.stamp).toSec() >= -.05 &&
+        (m.header.stamp - reference_.header.stamp).toSec() <= reference_timeout_)
+    {
+      const Vec3 offset = vec(reference_.cancel_offset);
+      if (offset.allFinite() && offset.z() == 0 && offset.head<2>().norm() <= 0.100001 &&
+          offset.head<2>().squaredNorm() > 0)
+      {
+        m.pos_xy_nav_mode = m.POS_MODE;
+        m.target_pos_x = cog_.position.x() + offset.x();
+        m.target_pos_y = cog_.position.y() + offset.y();
+      }
+    }
     command_ = m; pending_ = true; release_ = true;
   }
-  void fail(const std::string& reason)
+  void fail(const std::string& reason, bool operator_cancel = false)
   {
     if (fault_.empty()) ROS_ERROR_STREAM("Bee reference tracking: " << reason);
     fault_ = reason;
-    stop(); active_ = false;
+    stop(operator_cancel); active_ = false;
   }
-  void tick()
+  void tick(const std::optional<double>& hover_z_residual, double& acc_hover_trim)
   {
     const double now = ros::Time::now().toSec();
     Wrench baseline;
     Vec3 world_baseline;
     if (calibration_->update(steadyNow(), now, input_timeout_,
           receipt_[2], source_[2], Wrench{raw_force_, raw_moment_},
-          receipt_[1], source_[1], cog_.orientation, baseline, world_baseline))
+          receipt_[1], source_[1], cog_.orientation, baseline, world_baseline,
+          hover_z_residual, acc_hover_trim))
     {
       bias_ = baseline.force; calibrated_ = true;
       external_.setZero(); force_state_.reset();
-      calibration_->applied(baseline, world_baseline, calibration_->samples(), "topic calibration applied");
+      const std::string detail = calibration_->updatedHoverTrim() ?
+          "hover Z trim saved: " + std::to_string(acc_hover_trim) + " m/s^2" : "observer baseline only";
+      calibration_->applied(baseline, world_baseline, calibration_->samples(), detail);
     }
     const bool ready = inputsReady(active_ && reference_.enable_force_control);
     bee::ControllerStatus status = last_status_;
@@ -1075,14 +1111,14 @@ private:
       {
         const double dt = std::min(.05, now - last_time_);
         last_time_ = now;
-        control(dt, status);
+        control(dt, status, acc_hover_trim);
       }
     }
     status.ready = enabled_ && ready && fault_.empty(); status.active = active_;
     status.calibrated = calibrated_; status.fault = fault_;
     last_status_ = status; status_pub_.publish(status);
   }
-  void control(double dt, bee::ControllerStatus& status)
+  void control(double dt, bee::ControllerStatus& status, double acc_hover_trim)
   {
     const auto& r = reference_;
     auto nav = r.navigation;
@@ -1102,12 +1138,14 @@ private:
       if (r.acceleration_bounds)
         axes = Eigen::Quaterniond(r.acceleration_orientation.w, r.acceleration_orientation.x,
             r.acceleration_orientation.y, r.acceleration_orientation.z).normalized().toRotationMatrix();
+      ForceConfig thrust_config = config_;
+      if (nav.pos_z_nav_mode == nav.ACC_MODE) thrust_config.gravity += acc_hover_trim;
       const Vec3 acceleration = forceTrackingAcceleration(
           Vec3(nav.pos_xy_nav_mode == nav.ACC_MODE ? nav.target_acc_x : 0.0,
                nav.pos_xy_nav_mode == nav.ACC_MODE ? nav.target_acc_y : 0.0, nav.pos_z_nav_mode == nav.ACC_MODE ? nav.target_acc_z : 0.0),
           error, vec(r.force), external_,
           axes, vec(r.acceleration_min), vec(r.acceleration_max), r.acceleration_bounds,
-          force_state_, dt, config_, r.force_integral_enabled);
+          force_state_, dt, thrust_config, r.force_integral_enabled);
       bee::ForceFeedback diagnostic;
       diagnostic.header = nav.header; diagnostic.header.frame_id = world_;
       diagnostic.force_error = message(vec(r.force) + external_);
@@ -1146,6 +1184,7 @@ private:
   ros::Publisher status_pub_, mode_pub_, feedback_pub_, parameters_pub_;
   ros::ServiceServer mode_service_, parameters_service_;
   std::mutex mutex_;
+  bool force_at_velocity_point_ = false;
   bool enabled_ = false, pending_ = false, release_ = false, controller_available_ = false;
   aerial_robot_msgs::FlightNav command_;
   geometry_msgs::Vector3Stamped attitude_;
@@ -1173,9 +1212,10 @@ ReferenceTracker::ReferenceTracker(ros::NodeHandle nh, ros::NodeHandle parameter
   : impl_(new Impl(nh, parameters, model_mass, enabled)) {}
 ReferenceTracker::~ReferenceTracker() = default;
 bool ReferenceTracker::update(aerial_robot_msgs::FlightNav& nav, geometry_msgs::Vector3Stamped& attitude,
-                            bool& release, bool available)
+                            bool& release, bool available, const std::optional<double>& hover_z_residual,
+                            double& acc_hover_trim, Vec3* torque)
 {
-  return impl_->update(nav, attitude, release, available);
+  return impl_->update(nav, attitude, release, available, hover_z_residual, acc_hover_trim, torque);
 }
 }
 

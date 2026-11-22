@@ -1,0 +1,4 @@
+world_frame: world
+object_pose_topic: /mocap/object/pose
+base_odom_suffix: uav/baselink/odom
+allow_empty_base_frame: false
