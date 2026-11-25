@@ -114,7 +114,7 @@ def build_shared(bee, backend, output):
         shutil.copytree(build, output)
 
 
-def robot_model(bee, backend, robot_id=1, livox=False, regenerate=False):
+def robot_model(bee, backend, robot_id=1, livox=False, regenerate=False, force_test_wall=False):
     bee, backend = Path(bee), Path(backend)
     inputs = [Path(__file__), bee / 'robots/bee.urdf.xacro', bee / 'robots/bee_sim.urdf.xacro',
               bee / 'config/mujoco/mujoco_model.yaml', bee / 'config/contact_point.yaml',
@@ -137,7 +137,8 @@ def robot_model(bee, backend, robot_id=1, livox=False, regenerate=False):
                 generated.rename(shared)
         colors = vehicle_colors(bee, robot_id)
         color_key = hashlib.sha256('|'.join(colors.values()).encode()).hexdigest()[:10]
-        variant = shared / f'bee{robot_id}-livox{int(livox)}-{color_key}.xml'
+        wall_suffix = '-wall' if force_test_wall else ''
+        variant = shared / f'bee{robot_id}-livox{int(livox)}-{color_key}{wall_suffix}.xml'
         if not variant.is_file():
             tree = ET.parse(shared / 'robot.xml')
             if not livox:
@@ -147,6 +148,10 @@ def robot_model(bee, backend, robot_id=1, livox=False, regenerate=False):
                                 parent.tag == 'asset' and 'livox_module' in child.get('name', '')):
                             parent.remove(child)
             set_vehicle_colors(tree, '', colors)
+            if force_test_wall:
+                ET.SubElement(tree.find('worldbody'), 'geom', name='force_test_wall', type='box',
+                              pos='-0.775 0 0.75', size='0.025 0.6 0.75', friction='1 0.02 0.001',
+                              rgba='0.25 0.52 0.65 1', contype='1', conaffinity='1')
             staging = variant.with_suffix('.tmp')
             tree.write(staging)
             staging.replace(variant)
@@ -157,7 +162,8 @@ if __name__ == '__main__':
     cli = argparse.ArgumentParser()
     cli.add_argument('robot_id', type=int)
     cli.add_argument('livox', type=lambda s: s.lower() in ('true', '1'))
+    cli.add_argument('--force-test-wall', action='store_true')
     args = cli.parse_args()
     packages = rospkg.RosPack()
     print(robot_model(packages.get_path('bee'), packages.get_path('mujoco_ros_control'),
-                      args.robot_id, args.livox), end='')
+                      args.robot_id, args.livox, force_test_wall=args.force_test_wall), end='')

@@ -21,6 +21,8 @@
   <arg name="robot_id" default="1" />
   <arg name="robot_ns" value="bee$(arg robot_id)" />
   <arg name="mujoco" default="False" />
+  <arg name="force_test_wall" default="false"/>
+  <arg name="force_test_wall_option" value="$(eval '--force-test-wall' if arg('force_test_wall') else '')"/>
   <arg name="lidar_sim" default="False" />
   <arg name="livox_enable" default="false"/>
   <arg name="livox" default="$(eval arg('livox_enable') or arg('lidar_sim'))"/>
@@ -144,5 +146,5 @@
 
   <param if="$(eval arg('simulation') and not arg('real_machine') and arg('mujoco') and arg('launch_mujoco_backend'))"
          name="$(arg robot_ns)/mujoco_ros_control/mujoco_model_path" type="str"
-         command="$(find bee)/script/bee_mujoco_model.py $(arg robot_id) $(arg livox)"/>
+         command="$(find bee)/script/bee_mujoco_model.py $(arg robot_id) $(arg livox) $(arg force_test_wall_option)"/>
 </launch>

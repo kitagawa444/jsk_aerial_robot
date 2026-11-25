@@ -1,4 +1,5 @@
 #include <aerial_robot_simulation/mujoco/mujoco_aerial_robot_hw_sim.h>
+#include <geometry_msgs/Vector3Stamped.h>
 
 #include <algorithm>
 #include <map>
@@ -127,6 +128,9 @@ namespace mujoco_ros_control
     simulation_nh.param("external_force_limit", external_force_limit_, 10.0);
     simulation_nh.param("external_torque_limit", external_torque_limit_, 2.0);
     ground_truth_pub_ = model_nh.advertise<nav_msgs::Odometry>("ground_truth", 1);
+    wall_geom_id_ = mj_name2id(mujoco_model_, mjOBJ_GEOM, "force_test_wall");
+    if(wall_geom_id_ >= 0)
+      wall_force_pub_ = model_nh.advertise<geometry_msgs::Vector3Stamped>("mujoco/wall_force", 1);
     mocap_pub_ = model_nh.advertise<geometry_msgs::PoseStamped>("mocap/pose", 1);
     external_wrench_sub_ = model_nh.subscribe(
       "mujoco/external_wrench", 1, &AerialRobotHWSim::externalWrenchCallback, this);
@@ -370,11 +374,31 @@ namespace mujoco_ros_control
 
     // Object tracking is also required by the C++ controller on models without
     // force/contact sensors. Do not gate its pose on those optional sensors.
-    if((grasp_object_body_id_ >= 0 || !force_site_sensors_.empty() || !grasp_force_site_sensors_.empty() ||
+    if((wall_geom_id_ >= 0 || grasp_object_body_id_ >= 0 || !force_site_sensors_.empty() || !grasp_force_site_sensors_.empty() ||
         !grasp_contact_sensors_.empty()) &&
        force_sensor_pub_rate_ > 0.0 &&
        (time - last_force_sensor_time_).toSec() >= force_sensor_pub_rate_)
       {
+        if(wall_geom_id_ >= 0)
+          {
+            geometry_msgs::Vector3Stamped force;
+            force.header.stamp = time;
+            force.header.frame_id = "world";
+            for(int i = 0; i < mujoco_data_->ncon; ++i)
+              {
+                const mjContact& contact = mujoco_data_->contact[i];
+                if(contact.geom1 != wall_geom_id_ && contact.geom2 != wall_geom_id_) continue;
+                mjtNum wrench[6], world_force[3];
+                mj_contactForce(mujoco_model_, mujoco_data_, i, wrench);
+                mju_rotVecMatT(world_force, wrench, contact.frame);
+                // MuJoCo reports the wrench exerted on geom2.
+                const int sign = contact.geom2 == wall_geom_id_ ? 1 : -1;
+                force.vector.x += sign * world_force[0];
+                force.vector.y += sign * world_force[1];
+                force.vector.z += sign * world_force[2];
+              }
+            wall_force_pub_.publish(force);
+          }
         const std::string frame_id = name_prefix_.empty() ? std::string("fc") : robot_namespace_ + "/fc";
         const auto publish_force_list = [&](const std::vector<ForceSiteSensor>& sensors,
                                             const ros::Publisher& publisher,

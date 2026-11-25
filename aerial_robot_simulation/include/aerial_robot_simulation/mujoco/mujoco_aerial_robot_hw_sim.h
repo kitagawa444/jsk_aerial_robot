@@ -58,12 +58,14 @@ namespace mujoco_ros_control
     ros::Publisher grasp_force_pub_;
     ros::Publisher grasp_force_world_pub_;
     ros::Publisher grasp_contact_state_pub_;
+    ros::Publisher wall_force_pub_;
     ros::Publisher grasp_object_pose_pub_;
     ros::Subscriber external_wrench_sub_;
     std::vector<ForceSiteSensor> force_site_sensors_;
     std::vector<ForceSiteSensor> grasp_force_site_sensors_;
     std::vector<GraspContactSensor> grasp_contact_sensors_;
     int grasp_object_body_id_ = -1;
+    int wall_geom_id_ = -1;
     int root_body_id_ = -1;
     geometry_msgs::Wrench external_wrench_;
     ros::Time last_external_wrench_time_;
