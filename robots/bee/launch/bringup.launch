@@ -23,6 +23,7 @@
   <arg name="mujoco" default="False" />
   <arg name="lidar_sim" default="False" />
   <arg name="livox_enable" default="false"/>
+  <arg name="livox" default="$(eval arg('livox_enable') or arg('lidar_sim'))"/>
   <arg name="livox_model_option" default="$(eval 'enable_livox:=true' if arg('lidar_sim') else 'enable_livox:=false')" />
   <arg name="launch_mujoco_backend" default="True" />
   <arg name="launch_mujoco_controller" default="True" />
@@ -94,7 +95,7 @@
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="rviz_config" value="$(arg config_dir)/rviz_config" />
     <arg name="rviz_init_pose" value="$(arg config_dir)/RvizInit.yaml" />
-    <arg name="model_options" value="$(arg livox_model_option)" />
+    <arg name="model_options" value="$(arg livox_model_option) livox:=$(arg livox) robot_id:=$(arg robot_id)" />
     <arg name="need_joint_state" value="false" if ="$(eval arg('simulation') or arg('real_machine'))"/>
   </include >
 
@@ -131,7 +132,6 @@
   <include file="$(find aerial_robot_simulation)/launch/mujoco.launch" if="$(eval arg('simulation') and not arg('real_machine') and arg('mujoco'))" >
     <arg name="robot_ns" value="$(arg robot_ns)" />
     <arg name="headless" value="$(arg headless)"/>
-    <arg name="mujoco_model" value="$(find bee)/mujoco/bee/robot.xml"/>
     <arg name="launch_backend" value="$(arg launch_mujoco_backend)"/>
     <arg name="launch_controller" value="$(arg launch_mujoco_controller)"/>
     <arg name="render_fps" value="$(arg mujoco_render_fps)"/>
@@ -142,6 +142,7 @@
     <arg name="window_height" value="$(arg mujoco_window_height)"/>
   </include>
 
-
-
+  <param if="$(eval arg('simulation') and not arg('real_machine') and arg('mujoco') and arg('launch_mujoco_backend'))"
+         name="$(arg robot_ns)/mujoco_ros_control/mujoco_model_path" type="str"
+         command="$(find bee)/script/bee_mujoco_model.py $(arg robot_id) $(arg livox)"/>
 </launch>

@@ -1,6 +1,7 @@
 <launch>
   <!-- Simulation entry point: environment, vehicles, and central control. -->
   <arg name="object_model" default=""/>
+  <arg name="livox" default="false"/>
   <arg name="robot_count" default="3"/>
   <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
   <arg name="reference_tracking_config" default=""/>
@@ -18,6 +19,7 @@
 
   <include file="$(find bee)/launch/mujoco/mujoco_world.launch">
     <arg name="object_model" value="$(arg object_model)"/>
+    <arg name="livox" value="$(arg livox)"/>
     <arg name="robot_count" value="$(arg robot_count)"/>
     <arg name="scene_config" value="$(arg scene_config)"/>
     <arg name="world" value="$(arg world)"/>
@@ -29,6 +31,7 @@
   <include file="$(find bee)/launch/mujoco/multi_robot_bringup.launch">
     <arg name="force_control_config" value="$(arg force_control_config)"/>
     <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="livox" value="$(arg livox)"/>
     <arg name="robot_count" value="$(arg robot_count)"/>
   </include>
 

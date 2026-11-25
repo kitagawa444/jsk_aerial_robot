@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 import yaml
 
@@ -156,37 +157,48 @@ class SceneGeneratorTest(unittest.TestCase):
         robots = generator.build_robot_layout(4)
         self.assertEqual([r['pos'][:2] for r in robots], [[-2., 0.], [-1., 0.], [-2., 1.], [-1., 1.]])
 
-    def test_new_cache_without_configured_feet_is_regenerated(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
-            (base / 'config/mujoco').mkdir(parents=True)
-            (base / 'scripts').mkdir()
-            (base / 'mujoco/bee').mkdir(parents=True)
-            (base / 'config/mujoco/mujoco_model.yaml').write_text('bee:\n  compliant_feet:\n    feet: [{name: front}]\n')
-            (base / 'scripts/mujoco_model_generator.py').write_text('')
-            model = base / 'mujoco/bee/robot.xml'
-            model.write_text('<mujoco/>')
-            generator = MujocoSceneGenerator({}, directory, directory)
-            with patch('mujoco_scene_generator.subprocess.check_call') as generate:
-                generator.ensure_single_robot_model()
-                generate.assert_called_once()
-            model.write_text('<mujoco><geom name="spring_foot_front_ball"/></mujoco>')
-            with patch('mujoco_scene_generator.subprocess.check_call') as generate:
-                generator.ensure_single_robot_model()
-                generate.assert_not_called()
+    def test_incomplete_generated_geometry_is_rejected_before_caching(self):
+        from bee_mujoco_model import validate_shared
+        tree = ET.fromstring('<mujoco/>')
+        for mesh in ('base_link_0', 'rotor_module_1', 'livox_module_0', 'body_trim'):
+            ET.SubElement(tree, 'geom', mesh=mesh)
+        for _ in range(4):
+            ET.SubElement(tree, 'geom', mesh='propeller')
+        config = {'compliant_feet': {'feet': [{'name': 'front'}]}}
+        with self.assertRaisesRegex(ValueError, 'spring_foot_front_ball'):
+            validate_shared(tree, config)
+        ET.SubElement(tree, 'geom', name='spring_foot_front_ball')
+        validate_shared(tree, config)
+        tree.remove(tree.find("geom[@mesh='livox_module_0']"))
+        with self.assertRaisesRegex(ValueError, 'livox_module'):
+            validate_shared(tree, config)
 
     def test_model_and_manifest_written_to_requested_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             generator = self.builder(robot_count=5, object_shape='pentagonal_prism')
             generator.output_dir = directory
+            generator.bee_path = str(Path(__file__).resolve().parents[1])
             def write_model(command):
                 config = yaml.safe_load(Path(command[-1]).read_text())
-                Path(config['output_model']).write_text(
-                    '<mujoco><worldbody><body name="grasp_prism">'
-                    '<inertial mass="0.5" diaginertia="0.02 0.03 0.04"/>'
-                    '</body></worldbody></mujoco>')
-            with patch.object(generator, 'ensure_single_robot_model'), patch('mujoco_scene_generator.subprocess.check_call', side_effect=write_model) as composer:
+                scene = ET.Element('mujoco')
+                world = ET.SubElement(scene, 'worldbody')
+                for robot in config['robots']:
+                    body = ET.SubElement(world, 'body', name=robot['name'])
+                    ET.SubElement(body, 'geom', mesh=robot['name'] + '_body_trim')
+                    for _ in range(4):
+                        ET.SubElement(body, 'geom', mesh=robot['name'] + '_propeller')
+                payload = ET.SubElement(world, 'body', name='grasp_prism')
+                ET.SubElement(payload, 'inertial', mass='0.5', diaginertia='0.02 0.03 0.04')
+                ET.ElementTree(scene).write(config['output_model'])
+            with patch.object(generator, 'ensure_single_robot_model', return_value='source.xml'), patch('mujoco_scene_generator.subprocess.check_call', side_effect=write_model) as composer:
                 robots, model, manifest, manifest_path = generator.generate()
+            scene = ET.parse(model)
+            for index, color in enumerate(['1 1 0 1', '1 0 0 1', '0 0 0 1', '0 0 0 1', '0 0 0 1'], start=1):
+                geoms = scene.findall(f".//geom[@mesh='bee{index}_propeller']")
+                self.assertEqual([g.get('rgba') for g in geoms], [color] * 4)
+            colors = [g.get('rgba') for g in scene.findall('.//geom') if g.get('mesh').endswith('_body_trim')]
+            self.assertEqual(colors[1:3], ['1 1 1 1', '0.035 0.075 0.22 1'])
+            self.assertEqual(colors[0], colors[3])
             self.assertEqual(manifest['object_inertia'], [.02, 0., 0., 0., .03, 0., 0., 0., .04])
             self.assertEqual(len(robots), 5)
             self.assertTrue(model.startswith(directory))

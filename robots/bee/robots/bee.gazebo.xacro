@@ -4,7 +4,7 @@
   <xacro:arg name="robot_name" default="bee" />
   <xacro:arg name="enable_livox" default="false" />
 
-  <xacro:include filename="$(find bee)/robots/bee.urdf.xacro" />
+  <xacro:include filename="$(find bee)/robots/bee_sim.urdf.xacro" />
 
   <!-- Gazebo-only spring-loaded rubber feet. The regular URDF used for the
        real robot remains unchanged. -->

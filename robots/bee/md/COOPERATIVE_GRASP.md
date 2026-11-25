@@ -113,8 +113,8 @@ MuJoCo は `roslaunch bee grasp_demo.launch object_model:=/absolute/path/to/tria
 中央ノードなしの単機`bringup.launch`でも表示できます。中央からの重複配信はありません。
 姿勢は`fc`と同じで、物体の法線方向を表すフレームではありません。
 
-既定の`contact_offset: [0.0175, 0, -0.161]`はBeeの飛行基準`fc`からの変位です。
-URDFの`base_link`からは`[0, 0, -0.107] m`に相当し、4個のゴム球の無圧縮時の中心を
+既定の`contact_offset: [0.0175, 0, -0.143]`はBeeの飛行基準`fc`からの変位です。
+URDFの`base_link`からは`[0, 0, -0.089] m`に相当し、4個のゴム球の無圧縮時の中心を
 まとめた代表点です。球表面の先端、ばねの圧縮を反映した点、実接触点/CoPではありません。
 既存の`beeN/contact_point`は旧結合処理の前方26 cmの点なので、今回のTFと区別します。
 

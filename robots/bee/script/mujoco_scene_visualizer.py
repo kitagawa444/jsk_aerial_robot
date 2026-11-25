@@ -4,6 +4,10 @@ from __future__ import division
 
 import math
 import threading
+from pathlib import Path
+
+import rospkg
+import yaml
 
 import rospy
 import tf2_ros
@@ -14,18 +18,14 @@ from grasp_geometry import extra_shape_geometry, surface_triangles
 
 
 class MujocoSceneVisualizer(object):
-    LANDING_FEET = (
-        ("front", 0.069, 0.0),
-        ("rear", -0.069, 0.0),
-        ("left", 0.0, 0.069),
-        ("right", 0.0, -0.069),
-    )
     def __init__(self):
         self.lock = threading.Lock()
         self.robot_count = rospy.get_param("~robot_count", 3)
         self.robot_names = [
             "bee{}".format(index + 1) for index in range(self.robot_count)
         ]
+        model = Path(rospkg.RosPack().get_path('bee')) / 'config/mujoco/mujoco_model.yaml'
+        self.feet = yaml.safe_load(model.read_text())['bee']['compliant_feet']['feet']
         self.foot_compressions = {}
         self.spawn_object = rospy.get_param("~spawn_object", True)
         self.spawn_pedestal = rospy.get_param("~spawn_object_pedestal", True)
@@ -319,13 +319,12 @@ class MujocoSceneVisualizer(object):
 
     def publish_landing_foot_transforms(self, stamp, foot_compressions):
         transforms = []
-        # The passive MuJoCo landing-foot joints are intentionally excluded
-        # from ros_control. Publish sensed compression as TF so RViz renders
-        # the actual physical feet without separate contact-point markers.
+        # Passive foot joints are excluded from ros_control joint states.
         for name in self.robot_names:
             robot_compressions = foot_compressions.get(name, {})
-            for foot_name, foot_x, foot_y in self.LANDING_FEET:
-                joint_name = "spring_foot_{}".format(foot_name)
+            for foot in self.feet:
+                foot_x, foot_y, mount_z = foot['pos']
+                joint_name = "spring_foot_{}".format(foot['name'])
                 transform = TransformStamped()
                 transform.header.stamp = stamp
                 transform.header.frame_id = "{}/base_link".format(name)
@@ -333,7 +332,7 @@ class MujocoSceneVisualizer(object):
                 transform.transform.translation.x = foot_x
                 transform.transform.translation.y = foot_y
                 transform.transform.translation.z = (
-                    -0.083 + robot_compressions.get(joint_name, 0.0)
+                    mount_z + robot_compressions.get(joint_name, 0.0)
                 )
                 transform.transform.rotation.w = 1.0
                 transforms.append(transform)

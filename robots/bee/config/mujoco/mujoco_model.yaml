@@ -2,7 +2,7 @@ package:
   ["bee"]
 
 bee:
-  input: ["robots/bee.urdf.xacro"]
+  input: ["robots/bee_sim.urdf.xacro"]
   filename: ["bee"]
   meshdir: urdf/mesh
   # Preserve the true motor-off command.  The URDF minimum thrust remains 1 N
@@ -23,17 +23,17 @@ bee:
     free_length: 0.024
     shaft_radius: 0.003
     shaft_mass: 0.001
-    ball_radius: 0.012
+    ball_radius: 0.010
     ball_mass: 0.006
     friction: [1.0, 0.02, 0.001]
     # Keep approximately the same normal-contact stiffness (time constant x
     # damping ratio is unchanged) while doubling constraint damping.
     solref: [0.01, 2.0]
     solimp: [0.9, 0.95, 0.01]
-    ball_rgba: [0.04, 0.04, 0.04, 1.0]
-    shaft_rgba: [0.65, 0.65, 0.65, 1.0]
+    ball_rgba: [0.04, 0.04, 0.04, 0.0]
+    shaft_rgba: [0.65, 0.65, 0.65, 0.0]
     feet:
-      - {name: front, pos: [0.069, 0.0, -0.083]}
-      - {name: rear, pos: [-0.069, 0.0, -0.083]}
-      - {name: left, pos: [0.0, 0.069, -0.083]}
-      - {name: right, pos: [0.0, -0.069, -0.083]}
+      - {name: front, pos: [0.067179, 0.0, -0.065]}
+      - {name: rear, pos: [-0.067179, 0.0, -0.065]}
+      - {name: left, pos: [0.0, 0.067179, -0.065]}
+      - {name: right, pos: [0.0, -0.067179, -0.065]}

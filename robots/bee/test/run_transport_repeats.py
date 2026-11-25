@@ -43,14 +43,15 @@ def main():
     paths += [Path(__file__), bee / 'test/run_grasp_shape.py', bee / 'test/analyze_transport_run.py']
     paths += list((bee / 'src/cooperative_grasp').glob('*.cpp')) + list((bee / 'include/bee/cooperative_grasp').glob('*'))
     # Hash scripts actually used by the mission, not unrelated offline analyses.
-    paths += [bee/'script'/name for name in ['prepare_mujoco_scene.py', 'mujoco_scene_generator.py',
+    paths += [bee/'script'/name for name in ['prepare_mujoco_scene.py', 'mujoco_scene_generator.py', 'bee_mujoco_model.py',
               'grasp_geometry.py', 'grasp_sim_autostart.py', 'mujoco_scene_visualizer.py']]
     devel = bee.parents[3] / 'devel'
     paths += list((devel / 'lib/bee').glob('bee_*'))
     paths += list((devel / 'lib').glob('libbee*.so')) + list((devel / 'lib').glob('libkf*.so'))
     thirdparty = bee.parents[2] / 'aerial_robot_3rdparty/mujoco_ros_control/scripts'
     paths += [thirdparty / 'mujoco_scene_composer.py', thirdparty / 'mujoco_model_generator.py']
-    paths += [bee/'mujoco/bee/robot.xml', devel/'lib/mujoco_ros_control/mujoco_ros_control',
+    paths += list((bee/'urdf/mesh').glob('*.dae')) + [bee/'urdf/mesh/body_trim.stl', bee/'urdf/mesh/propeller.stl', bee/'config/body_colors.yaml']
+    paths += [devel/'lib/mujoco_ros_control/mujoco_ros_control',
               devel/'lib/aerial_robot_base/aerial_robot_base_node']
     hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
     metadata = dict(started_utc=datetime.now(timezone.utc).isoformat(), conditions=args.shapes,

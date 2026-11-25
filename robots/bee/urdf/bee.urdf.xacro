@@ -2,6 +2,21 @@
 <robot
     xmlns:xacro="http://www.ros.org/wiki/xacro" name="bee_link" >
 
+  <xacro:property name="grasp_geometry" value="${xacro.load_yaml('$(find bee)/config/contact_point.yaml')}"/>
+  <xacro:property name="foot_spacing" value="${grasp_geometry['foot_spacing']}"/>
+  <xacro:property name="foot_depth" value="${grasp_geometry['foot_contact_offset']}"/>
+  <xacro:macro name="bee_foot_visual" params="name x y z yaw">
+    <visual name="foot_ball_${name}">
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 ${yaw}"/>
+      <geometry><mesh filename="package://bee/urdf/mesh/foot_ball.dae"/></geometry>
+    </visual>
+  </xacro:macro>
+  <xacro:property name="body_colors" value="${xacro.load_yaml('$(find bee)/config/body_colors.yaml')}"/>
+  <xacro:property name="propeller_colors" value="${body_colors['propeller']}"/>
+  <xacro:property name="propeller_rgba" value="${propeller_colors.get(int('$(arg robot_id)'), propeller_colors['default'])}"/>
+  <material name="propeller_color"><color rgba="${propeller_rgba}"/></material>
+
+  <xacro:property name="separate_foot_inertia" default="${False}"/>
   <xacro:macro name="bee_center_link" params="child1 child2 child3 child4">
     ## dummy
     <link name="root">
@@ -24,15 +39,19 @@
     ## link
     <link name="base_link">
       <inertial>
-	<origin xyz="0.00174386 0.00024903 0.01814134" rpy="0 0 0" />	
-	<mass value="1.4720004" />
-	<inertia 
-            ixx="0.005803188" 
-            ixy="0.000063056" 
-            ixz="0.000010760" 
-            iyy="0.005983301" 
-            iyz="-0.000007741" 
-            izz="0.004644027" />
+        <xacro:unless value="${separate_foot_inertia}">
+          <mass value="1.18844686"/>
+          <origin xyz="0.00167307 0.00029896 -0.00372872" rpy="0 0 0"/>
+          <inertia ixx="0.00354563" ixy="-0.00006477" ixz="-0.00005943"
+                   iyy="0.00368400" iyz="-0.00000043" izz="0.00454564"/>
+        </xacro:unless>
+        <xacro:if value="${separate_foot_inertia}">
+          <!-- CAD assembly minus the four 7 g sliding feet at zero compression. -->
+          <mass value="1.16044686"/>
+          <origin xyz="0.0017134388972 0.00030617349705 -0.00171260369115" rpy="0 0 0"/>
+          <inertia ixx="0.00328051291949" ixy="-0.00006475565701" ixz="-0.00005542124548"
+                   iyy="0.00341880521474" iyz="0.00000028632224" izz="0.00441821517851"/>
+        </xacro:if>
       </inertial>
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -40,6 +59,15 @@
           <mesh filename="package://bee/urdf/mesh/base_link.dae"/>
         </geometry>
       </visual>
+      <xacro:bee_foot_visual name="front" x="${foot_spacing}" y="0" z="${-foot_depth}" yaw="0"/>
+      <xacro:bee_foot_visual name="rear" x="${-foot_spacing}" y="0" z="${-foot_depth}" yaw="${pi}"/>
+      <xacro:bee_foot_visual name="left" x="0" y="${foot_spacing}" z="${-foot_depth}" yaw="${pi/2}"/>
+      <xacro:bee_foot_visual name="right" x="0" y="${-foot_spacing}" z="${-foot_depth}" yaw="${-pi/2}"/>
+      <xacro:if value="$(arg livox)">
+        <visual name="livox_module">
+          <geometry><mesh filename="package://bee/urdf/mesh/livox_module.dae"/></geometry>
+        </visual>
+      </xacro:if>
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
@@ -47,6 +75,20 @@
         </geometry>
       </collision>
     </link>
+
+    <xacro:property name="trim_rgba" value="${body_colors.get(int('$(arg robot_id)'), body_colors['default'])}"/>
+    <link name="body_trim">
+      <visual>
+        <geometry><mesh filename="package://bee/urdf/mesh/body_trim.stl"/></geometry>
+        <material name="body_trim_color"><color rgba="${trim_rgba}"/></material>
+      </visual>
+    </link>
+    <joint name="body_trim_joint" type="fixed">
+      <parent link="base_link"/><child link="body_trim"/>
+    </joint>
+    <gazebo reference="body_trim">
+      <visual><material><ambient>${trim_rgba}</ambient><diffuse>${trim_rgba}</diffuse></material></visual>
+    </gazebo>
 
     <xacro:damping_factor link="base_link"/>
 
@@ -69,7 +111,6 @@
 
     <!-- Geometry-only frame, published by robot_state_publisher even without
          the grasp controller. No mass, collision or visual geometry. -->
-    <xacro:property name="grasp_geometry" value="${xacro.load_yaml('$(find bee)/config/contact_point.yaml')}"/>
     <xacro:property name="grasp_offset" value="${grasp_geometry['contact_offset']}"/>
     <link name="grasp_contact_point"/>
     <joint name="grasp_contact_point_joint" type="fixed">
@@ -199,7 +240,14 @@
     <xacro:damping_factor link="gimbal_link${self}"/>
 
     ## rotor parent link (virtual)
+    <gazebo reference="rotor_parent${self}">
+      <visual><material><ambient>${propeller_rgba}</ambient><diffuse>${propeller_rgba}</diffuse></material></visual>
+    </gazebo>
     <link name="rotor_parent${self}">
+      <visual>
+        <geometry><mesh filename="package://bee/urdf/mesh/propeller.stl"/></geometry>
+        <material name="propeller_color"/>
+      </visual>
       <inertial>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <mass value="0.00001"/>

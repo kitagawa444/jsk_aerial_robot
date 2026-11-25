@@ -126,8 +126,8 @@ struct ControlConfig
   double reference_velocity_limit = .08, reference_acceleration_limit = .1;
   double cooperative_admittance = .15;
   double robot_mass = 1.84199, gravity = aerial_robot_model::kGravity;
-  Vec3 contact_offset = Vec3(.0175, 0, -.161);
-  double foot_contact_offset = .107, ball_radius = .012, max_compression = .015;
+  Vec3 contact_offset = Vec3(.0175, 0, -.143);
+  double foot_contact_offset = .089, ball_radius = .010, max_compression = .015;
   double observer_force_sign = 1.0, observer_force_scale = 1.0, observer_torque_scale = 1.0;
   double force_filter_alpha = .1, twist_filter_alpha = .2;
   double radial_kp = 3, radial_kd = 3, tangent_kp = 2, tangent_kd = 3;

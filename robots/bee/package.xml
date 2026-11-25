@@ -58,6 +58,7 @@
   <run_depend>pluginlib</run_depend>
   <run_depend>diagnostic_msgs</run_depend>
   <run_depend>python3-pil</run_depend>
+  <run_depend>python3-trimesh-pip</run_depend>
   <run_depend>python3-numpy</run_depend>
   <run_depend>python3-scipy</run_depend>
   <run_depend>python3-matplotlib</run_depend>

@@ -1,5 +1,6 @@
 <launch>
   <!-- Simulation-only automatic startup. Control remains in the C++ nodes. -->
+  <arg name="livox" default="false"/>
   <arg name="robot_count" default="3"/>
   <arg name="force_control_config" default="$(find bee)/config/controller/force_control.yaml"/>
   <arg name="reference_tracking_config" default=""/>
@@ -17,6 +18,7 @@
     <arg name="object_model" value="$(arg object_model)"/>
     <arg name="force_control_config" value="$(arg force_control_config)"/>
     <arg name="reference_tracking_config" value="$(arg reference_tracking_config)"/>
+    <arg name="livox" value="$(arg livox)"/>
     <arg name="robot_count" value="$(arg robot_count)"/>
     <arg name="world" value="$(arg world)"/>
     <arg name="headless" value="$(arg headless)"/>

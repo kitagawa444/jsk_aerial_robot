@@ -57,6 +57,7 @@ def wait_for_vehicle_parameters(names, timeout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--robot-count", type=int, choices=(3, 4, 5), required=True)
+    parser.add_argument("--livox", type=lambda s: s.lower() in ("true", "1"), default=False)
     parser.add_argument("--world", choices=("default", "0066"), default="default")
     parser.add_argument("--scene-config", required=True)
     parser.add_argument("--object-model")
@@ -80,6 +81,7 @@ def main():
     try:
         parameters = load_scene(args.scene_config, args.robot_count)
         parameters["world"] = args.world
+        parameters["livox"] = args.livox
         if args.object_model:
             from grasp_cad import load_model
             load_model(args.object_model, parameters)
