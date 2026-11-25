@@ -19,22 +19,8 @@
         <!-- mocap -->
         <include file="$(find aerial_robot_base)/launch/external_module/mocap.launch" />
 
-        <!-- livox mid360 & fast lio -->
-        <include file="$(find livox_ros_driver2)/launch_ROS1/msg_MID360.launch">
-          <arg name="msg_frame_id" value="$(arg robot_ns)/lidar_imu"/>
-        </include>
-        <include file="$(find fast_lio)/launch/mapping_mid360.launch" >
-          <arg name="rviz" value="false" />
-        </include>
 
       </group>
-    </group>
-
-    <!-- livox mid360 & fast lio (simulation) -->
-    <group if="$(eval arg('simulation') and not arg('real_machine') and arg('lidar_sim'))">
-      <include file="$(find fast_lio)/launch/mapping_mid360.launch" >
-        <arg name="rviz" value="false" />
-      </include>
     </group>
 
     <!-- basic configuration for sensors (e.g. noise sigma) -->
@@ -43,4 +29,9 @@
     <rosparam file="$(find aerial_robot_base)/config/sensors/lio/livox_mid360.yaml" command="load" />
   </group>
 
+  <include file="$(find aerial_robot_base)/launch/external_module/livox_mid360.launch"
+           if="$(eval (arg('real_machine') and not arg('simulation')) or (arg('simulation') and not arg('real_machine') and arg('lidar_sim')))">
+    <arg name="robot_ns" value="$(arg robot_ns)"/>
+    <arg name="simulation" value="$(arg simulation)"/>
+  </include>
 </launch>
