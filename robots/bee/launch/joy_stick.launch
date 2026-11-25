@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <launch>
 
+  <arg name="robot_count" default="4" />
   <arg name="robot_name_1" default="/bee1" />
   <arg name="robot_name_2" default="/bee2" />
   <arg name="robot_name_3" default="/bee3" />
@@ -8,20 +9,21 @@
 
   <node pkg="joy" type="joy_node" name="joy_node1" ns="$(arg robot_name_1)" output="screen" >
     <param name="dev" value="/dev/input/js0"/>
-    <param name="coalesce_interval" value="0.025"/>
+    <param name="coalesce_interval" value="0.025" unless="$(eval arg('robot_count') == 1)"/>
+    <param name="autorepeat_rate" value="20.0" if="$(eval arg('robot_count') == 1)"/>
   </node>
 
-  <node pkg="joy" type="joy_node" name="joy_node2" ns="$(arg robot_name_2)" output="screen" >
+  <node pkg="joy" type="joy_node" name="joy_node2" if="$(eval arg('robot_count') >= 2)" ns="$(arg robot_name_2)" output="screen" >
     <param name="dev" value="/dev/input/js0"/>
     <param name="coalesce_interval" value="0.025"/>
   </node>
 
-  <node pkg="joy" type="joy_node" name="joy_node3" ns="$(arg robot_name_3)" output="screen" >
+  <node pkg="joy" type="joy_node" name="joy_node3" if="$(eval arg('robot_count') >= 3)" ns="$(arg robot_name_3)" output="screen" >
     <param name="dev" value="/dev/input/js0"/>
     <param name="coalesce_interval" value="0.025"/>
   </node>
 
-  <node pkg="joy" type="joy_node" name="joy_node4" ns="$(arg robot_name_4)" output="screen" >
+  <node pkg="joy" type="joy_node" name="joy_node4" if="$(eval arg('robot_count') >= 4)" ns="$(arg robot_name_4)" output="screen" >
     <param name="dev" value="/dev/input/js0"/>
     <param name="coalesce_interval" value="0.025"/>
   </node>

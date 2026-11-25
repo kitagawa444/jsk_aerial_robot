@@ -14,7 +14,7 @@
 
 ## Joy での開始と緊急停止
 
-単機の手動操縦では、操縦 PC で `rosrun joy joy_node __ns:=/bee1 _dev:=/dev/input/js0 _autorepeat_rate:=20.0` を起動する。
+単機の手動操縦では、操縦 PC で `roslaunch bee joy_stick.launch robot_count:=1` を起動する。
 HOVER 中は左スティック上下で世界 X、左右で世界 Y を指令する。既定の位置制御では軸入力の絶対値が 0.2 未満だと速度目標はゼロになる。
 同じ傾きを保持している間も再送する設定にして、ナビゲータの入力タイムアウト（既定 0.5 秒）を超えないようにする。
 
