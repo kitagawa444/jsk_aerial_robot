@@ -1,0 +1,382 @@
+# Simulation identification example. Not loaded by any launch or controller.
+schema_version: 1
+identified_on: '2026-11-14'
+domain: MuJoCo simulation
+hardware_validated: false
+loaded_by_controller: false
+model: tau * dy/dt + y = gain * u(t-delay) + offset
+input: Bee-on-object commanded contact force [N]
+output: Minus filtered observer external force on Bee [N]
+scope: Local command-to-observer closed-loop models, not independently measured true
+  contact-force dynamics.
+conditions:
+  robots: 4
+  object: box
+  mass_kg: 0.5
+  phase: Hold
+  excitation_amplitude_N: 0.16
+  dwell_s: 2.5
+  settle_time_s: 120.0
+  training_s: 20.0
+  validation_s: 12.5
+controller_parameters:
+  contact_force_kp: 0.4
+  contact_force_ki: 0.1
+  contact_force_i_limit: 0.4
+  contact_damping: 3.0
+  robot_mass: 1.84199
+  external_filter_tau: 0.2
+provenance:
+  p:
+    bag_sha256: 7a01a9de935385c864656b3a97f60596a4bad55937d059d79e904ff5abe5d8c2
+    analysis_source_sha256:
+      identify_grasp_force_response.py: 2a1148ff3c151699a1ccf24365595ef8231696e181c43cf95277211a51b025ec
+      force_response_model.py: e6fa1c29ad66502596edc31464811bf081d314e99357cd043f4df7a9a5272f76
+    software_versions:
+      python: 3.10.12
+      numpy: 1.23.4
+      scipy: 1.13.1
+      matplotlib: 3.5.1
+      pyyaml: 5.4.1
+    source_revision: develop/bee @ 06ec6b75f5ba9e545d38bdc4ea9b35eb613d9925 plus uncommitted
+      changes recorded in WORK_LOG.md
+    experiment: experiment-06-p
+    analysis: analysis-06-p
+  pi:
+    bag_sha256: 6a68288ca67184ba00e364a11571932434758e14866236bf32629a9804dd36a6
+    analysis_source_sha256:
+      identify_grasp_force_response.py: 2a1148ff3c151699a1ccf24365595ef8231696e181c43cf95277211a51b025ec
+      force_response_model.py: e6fa1c29ad66502596edc31464811bf081d314e99357cd043f4df7a9a5272f76
+    software_versions:
+      python: 3.10.12
+      numpy: 1.23.4
+      scipy: 1.13.1
+      matplotlib: 3.5.1
+      pyyaml: 5.4.1
+    source_revision: develop/bee @ 06ec6b75f5ba9e545d38bdc4ea9b35eb613d9925 plus uncommitted
+      changes recorded in WORK_LOG.md
+    experiment: experiment-05
+    analysis: analysis-05-final
+models:
+  p:
+    bee1:
+      normal:
+        gain: 1.0180531640543518
+        tau_s: 0.21843651232360353
+        delay_s: 0.1462270939881704
+        offset_N: -0.08004854670359851
+        model_t90_s: 0.6491957510301101
+        model_t95_s: 0.8006044036785636
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003416436229182582
+          fit_percent: 94.26670162000777
+          output_range_N: 0.16371343695754437
+        force_integral_enabled: false
+      up:
+        gain: 0.9991067308627009
+        tau_s: 0.11643476396223074
+        delay_s: 0.24286899315294333
+        offset_N: -9.87266382757035e-06
+        model_t90_s: 0.5109699449586562
+        model_t95_s: 0.5916763733182391
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.0129096093188149
+          fit_percent: 87.07873472173841
+          output_range_N: 0.332363429326225
+        force_integral_enabled: false
+      side:
+        gain: 1.0002218592823984
+        tau_s: 0.13430064889751867
+        delay_s: 0.21580884209023946
+        offset_N: -0.0053660142363400375
+        model_t90_s: 0.5250475142210932
+        model_t95_s: 0.6181376303517794
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007393205753508941
+          fit_percent: 92.53268264130183
+          output_range_N: 0.3245167371719455
+        force_integral_enabled: false
+    bee2:
+      normal:
+        gain: 1.0179926819932685
+        tau_s: 0.21456107478693598
+        delay_s: 0.14558594491350196
+        offset_N: -0.08010448620075472
+        model_t90_s: 0.6396310772546814
+        model_t95_s: 0.7883534813011576
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003463700389132793
+          fit_percent: 94.19313523367904
+          output_range_N: 0.16402622311519632
+        force_integral_enabled: false
+      up:
+        gain: 0.9981171477053556
+        tau_s: 0.11990535174324846
+        delay_s: 0.24288291100109757
+        offset_N: 0.0014115493922295386
+        model_t90_s: 0.518975186495309
+        model_t95_s: 0.6020872429901902
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.01332833031840552
+          fit_percent: 86.63800520330365
+          output_range_N: 0.3333938981533908
+        force_integral_enabled: false
+      side:
+        gain: 0.9990547856595612
+        tau_s: 0.13396563915200785
+        delay_s: 0.21501294129788398
+        offset_N: -0.005404959877001908
+        model_t90_s: 0.5234802249827167
+        model_t95_s: 0.616338130052842
+        effective_sampling_resolution_s: 0.028999999999996362
+        validation:
+          rmse_N: 0.007490524402659998
+          fit_percent: 92.50385958486311
+          output_range_N: 0.3269337804073692
+        force_integral_enabled: false
+    bee3:
+      normal:
+        gain: 1.0173522854963895
+        tau_s: 0.21744483275403176
+        delay_s: 0.14820226037707254
+        offset_N: -0.07697556728540977
+        model_t90_s: 0.6488874908250895
+        model_t95_s: 0.7996087635758754
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003393686977037882
+          fit_percent: 94.30915445368785
+          output_range_N: 0.1632357218475935
+        force_integral_enabled: false
+      up:
+        gain: 0.9992942037730229
+        tau_s: 0.12230077770934146
+        delay_s: 0.23682589227449902
+        offset_N: -0.0005948473233132745
+        model_t90_s: 0.5184338398896071
+        model_t95_s: 0.6032062791391257
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.013190576298765414
+          fit_percent: 86.8104132445414
+          output_range_N: 0.3342132897043557
+        force_integral_enabled: false
+      side:
+        gain: 0.9993388170451641
+        tau_s: 0.13392098927786902
+        delay_s: 0.21384750076430697
+        offset_N: -0.005839793625120547
+        model_t90_s: 0.5222119743145437
+        model_t95_s: 0.6150389304502972
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.0076139466493349165
+          fit_percent: 92.32249112050228
+          output_range_N: 0.32559733942835056
+        force_integral_enabled: false
+    bee4:
+      normal:
+        gain: 1.0155655736661233
+        tau_s: 0.21818604039280312
+        delay_s: 0.1448967979213795
+        offset_N: -0.06972905023908105
+        model_t90_s: 0.6472887220292447
+        model_t95_s: 0.7985237607650544
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.0034843395381718417
+          fit_percent: 94.13111869445757
+          output_range_N: 0.16295971086238836
+        force_integral_enabled: false
+      up:
+        gain: 0.9998444240773852
+        tau_s: 0.12215708238604171
+        delay_s: 0.23681931428056877
+        offset_N: -0.0008343316237950926
+        model_t90_s: 0.5180963911863139
+        model_t95_s: 0.6027692284276277
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.013321547261951984
+          fit_percent: 86.68959089056085
+          output_range_N: 0.3335052044003237
+        force_integral_enabled: false
+      side:
+        gain: 0.998071253560216
+        tau_s: 0.1316542177747753
+        delay_s: 0.2158403085943833
+        offset_N: -0.005170201168124466
+        model_t90_s: 0.5189853478723726
+        model_t95_s: 0.6102410977317831
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007434582466299927
+          fit_percent: 92.5680376201234
+          output_range_N: 0.32756504157794086
+        force_integral_enabled: false
+  pi:
+    bee1:
+      normal:
+        gain: 1.053122640698451
+        tau_s: 0.22105438390753568
+        delay_s: 0.13726769209334574
+        offset_N: -0.22817897932474196
+        model_t90_s: 0.6462642212198203
+        model_t95_s: 0.7994874441757444
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.0038815948124007902
+          fit_percent: 93.70603294258694
+          output_range_N: 0.17028897235230733
+        force_integral_enabled: true
+      up:
+        gain: 1.0352240302920037
+        tau_s: 0.1254827828885071
+        delay_s: 0.23521184986209162
+        offset_N: -0.043461307556220685
+        model_t90_s: 0.5241466351685764
+        model_t95_s: 0.6111246723365608
+        effective_sampling_resolution_s: 0.025999999999953616
+        validation:
+          rmse_N: 0.013289399881718383
+          fit_percent: 87.13865160317448
+          output_range_N: 0.34452230853109533
+        force_integral_enabled: true
+      side:
+        gain: 1.0353931229380628
+        tau_s: 0.13622087555338877
+        delay_s: 0.21628503825443549
+        offset_N: -0.00064273851451019
+        model_t90_s: 0.5299451956582655
+        model_t95_s: 0.6243663114815041
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007936617866868856
+          fit_percent: 92.38783718885342
+          output_range_N: 0.34150230065949544
+        force_integral_enabled: true
+    bee2:
+      normal:
+        gain: 1.0531122848803314
+        tau_s: 0.22430622804367867
+        delay_s: 0.13770980161736193
+        offset_N: -0.22786943559686534
+        model_t90_s: 0.6541939785764594
+        model_t95_s: 0.8096712081269714
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003714743588563837
+          fit_percent: 93.96582546486954
+          output_range_N: 0.16946416959401578
+        force_integral_enabled: true
+      up:
+        gain: 1.0360735060845296
+        tau_s: 0.12640728893217076
+        delay_s: 0.23524697071189177
+        offset_N: -0.04399447402852408
+        model_t90_s: 0.5263105098528994
+        model_t95_s: 0.6139293657784599
+        effective_sampling_resolution_s: 0.025999999999953616
+        validation:
+          rmse_N: 0.01311189100234814
+          fit_percent: 87.30485883687099
+          output_range_N: 0.34473583571153865
+        force_integral_enabled: true
+      side:
+        gain: 1.035749322147331
+        tau_s: 0.13876728493498922
+        delay_s: 0.2149947112013559
+        offset_N: 0.00015770140475314127
+        model_t90_s: 0.5345181928879194
+        model_t95_s: 0.6307043451945656
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007636760673552449
+          fit_percent: 92.5233378774086
+          output_range_N: 0.33488786309528495
+        force_integral_enabled: true
+    bee3:
+      normal:
+        gain: 1.0502401073601393
+        tau_s: 0.21991432390109497
+        delay_s: 0.14503005478164058
+        offset_N: -0.2156625485005197
+        model_t90_s: 0.651401498732166
+        model_t95_s: 0.8038344923089565
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003660231915127691
+          fit_percent: 94.06778076903004
+          output_range_N: 0.1696923709807363
+        force_integral_enabled: true
+      up:
+        gain: 1.0321870344580895
+        tau_s: 0.12387085400802084
+        delay_s: 0.23649509166203642
+        offset_N: -0.03981753164082025
+        model_t90_s: 0.5217182735573469
+        model_t95_s: 0.6075790067665592
+        effective_sampling_resolution_s: 0.024999999999977263
+        validation:
+          rmse_N: 0.012785939814250094
+          fit_percent: 87.57517727739838
+          output_range_N: 0.3427642241898201
+        force_integral_enabled: true
+      side:
+        gain: 1.0358244710728697
+        tau_s: 0.1361278782379969
+        delay_s: 0.22268937505053799
+        offset_N: -0.00058576591160211
+        model_t90_s: 0.5361353982222583
+        model_t95_s: 0.6304920532185333
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007769582116963559
+          fit_percent: 92.53598921105444
+          output_range_N: 0.3425313843406981
+        force_integral_enabled: true
+    bee4:
+      normal:
+        gain: 1.053472223183579
+        tau_s: 0.21881796772447432
+        delay_s: 0.14532624797423288
+        offset_N: -0.2295125332912109
+        model_t90_s: 0.6491732385358597
+        model_t95_s: 0.8008462959199362
+        effective_sampling_resolution_s: 0.02600000000001046
+        validation:
+          rmse_N: 0.003749568664189291
+          fit_percent: 93.94543088864606
+          output_range_N: 0.17004896070800868
+        force_integral_enabled: true
+      up:
+        gain: 1.0337966056131311
+        tau_s: 0.1270764408428005
+        delay_s: 0.23642859643290717
+        offset_N: -0.04124640121152057
+        model_t90_s: 0.5290329147882794
+        model_t95_s: 0.6171155914740591
+        effective_sampling_resolution_s: 0.024999999999977263
+        validation:
+          rmse_N: 0.01327043152611835
+          fit_percent: 87.1490907374154
+          output_range_N: 0.3436667489526881
+        force_integral_enabled: true
+      side:
+        gain: 1.0366663890137269
+        tau_s: 0.1353022399858237
+        delay_s: 0.22418413876644885
+        offset_N: 0.00012117158406543035
+        model_t90_s: 0.5357290596065094
+        model_t95_s: 0.6295134257761281
+        effective_sampling_resolution_s: 0.02800000000002001
+        validation:
+          rmse_N: 0.007650618287485849
+          fit_percent: 92.50508190588093
+          output_range_N: 0.3338834428419587
+        force_integral_enabled: true

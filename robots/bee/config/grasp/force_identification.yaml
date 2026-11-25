@@ -1,0 +1,28 @@
+# Read-only identify_grasp_force_response.py configuration.
+# Simulation experiment markers supply segments automatically. For a hardware
+# bag without markers, specify measured segment start/duration below. These are
+# analysis windows, not commands sent to a robot.
+robot_names: [bee1, bee2, bee3, bee4]
+time_origin: absolute
+minimum_input_range_N: 0.08
+metadata:
+  model_output: filtered_observer_force
+  hardware_validation: false
+  airframe_ids: []
+  firmware_ids: {}
+  firmware_verified_against_source: false
+  host_source_revision: null
+  payload_mass_kg: null
+  battery_voltage_V: null
+  contact_condition: null
+  clock_synchronization: null
+  note: Fill in airframe, firmware, payload, foot/contact geometry, and gains for hardware data.
+segments: []
+# Example (replace values, and use time_origin: bag_start for relative times):
+# segments:
+#   - {name: normal_test, axis: normal, start: 120.0, duration: 32.5,
+#      validation_after: 20.0, integral_enabled: true}
+#   - {name: up_test, axis: up, start: 152.5, duration: 32.5,
+#      validation_after: 20.0, integral_enabled: true}
+#   - {name: side_test, axis: side, start: 185.0, duration: 32.5,
+#      validation_after: 20.0, integral_enabled: true}
